@@ -1,11 +1,14 @@
 #include "quality_analyzer.h"
 #include <iostream>
+#include <fstream>
 #include <iomanip>
 #include <algorithm>
 
-QualityAnalyzer::QualityAnalyzer(size_t maxReadLength) {
+QualityAnalyzer::QualityAnalyzer(size_t maxReadLength) 
+    : maxLength(0), totalGC(0), totalBases(0), totalReads(0) {
     qualitySum.resize(maxReadLength, 0);
     qualityCount.resize(maxReadLength, 0);
+    adapterCounts.resize(100, 0);   // резерв под адаптеры
 }
 
 void QualityAnalyzer::processRecord(const FastqRecord& record) {
@@ -52,9 +55,50 @@ void QualityAnalyzer::printSummary() const {
     std::cout << "Average GC: " << std::fixed << std::setprecision(2) 
               << stats.avgGC << "%\n";
     
-    std::cout << "\nMean quality per position (first 50):\n";
-    for (size_t i = 0; i < std::min<size_t>(50, stats.meanQualityPerPosition.size()); ++i) {
+    std::cout << "\nMean quality per position:\n";
+    for (size_t i = 0; i < (size_t)(stats.meanQualityPerPosition.size()); ++i) {
         std::cout << "Pos " << i+1 << ": " << std::fixed << std::setprecision(2) 
                   << stats.meanQualityPerPosition[i] << "\n";
+    }
+}
+
+void QualityAnalyzer::analyzeAdapters(const FastqRecord& record) {
+    const std::string& seq = record.sequence;
+    if (seq.length() < illuminaUniversal.length()) return;
+
+    // Ищем адаптер в последовательности
+    for (size_t i = 0; i <= seq.length() - illuminaUniversal.length(); ++i) {
+        if (seq.substr(i, illuminaUniversal.length()) == illuminaUniversal) {
+            if (i >= adapterCounts.size()) {
+                adapterCounts.resize(i + 1, 0);
+            }
+            adapterCounts[i]++;
+            break;
+        }
+    }
+}
+
+void QualityAnalyzer::printAdapterStats(const std::string& filename) const {
+    std::cout << "\n=== Adapter Content ===\n";
+    bool found = false;
+    //TODO: Надо выделить отдельный файл utils.hpp для такого рода вещей как формирование имени файла
+    std::ofstream outputFile("../results/adapter_stats_"+filename.substr(8, filename.length() - 8 - 9)+".txt");
+
+    for (size_t i = 0; i < adapterCounts.size(); ++i) {
+        if (adapterCounts[i] > 0) {
+            double percent = (double)adapterCounts[i] / totalReads * 100.0;
+            if (outputFile.is_open()) {
+                outputFile << i+1 << " " << percent << "\n";
+            }
+            if (percent > 0.1) {  
+                std::cout << "Pos " << i+1 << ": " << percent << "% adapters\n";
+                found = true;
+            }
+        }
+    }
+    outputFile.close();
+    
+    if (!found) {
+        std::cout << "No significant adapter content detected.\n";
     }
 }

@@ -16,6 +16,8 @@ public:
     void processRecord(const FastqRecord& record);
     QualityStats getStats() const;
     void printSummary() const;
+    void analyzeAdapters(const FastqRecord& record);
+    void printAdapterStats(const std::string& filename) const;
 
 private:
     std::vector<long long> qualitySum;   // sum of quality scores per position
@@ -24,4 +26,6 @@ private:
     long long totalBases = 0;
     size_t totalReads = 0;
     size_t maxLength = 0;
+    std::vector<long long> adapterCounts;
+    const std::string illuminaUniversal = "AGATCGGAAGAG";
 };

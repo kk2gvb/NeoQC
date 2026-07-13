@@ -3,7 +3,7 @@
 #include <iostream>
 
 int main(int argc, char* argv[]) {
-    std::string filename = argc > 1 ? argv[1] : "../data/test/test10k.fastq.gz";
+    std::string filename = argc > 1 ? argv[1] : "../data/SRR27872625_1.fastq.gz";
 
     try {
         FastqReader reader(filename);
@@ -15,6 +15,7 @@ int main(int argc, char* argv[]) {
 
         while (reader.readNext(rec) && count < maxReads) {
             analyzer.processRecord(rec);
+            analyzer.analyzeAdapters(rec);
             count++;
             if (count % 10000 == 0) {
                 std::cout << "Processed " << count << " reads...\n";
@@ -22,6 +23,9 @@ int main(int argc, char* argv[]) {
         }
 
         analyzer.printSummary();
+        analyzer.printAdapterStats(filename);
+        // TODO: Надо сделать так чтобы передавалось имя файла в скрипт, а не хардкодить его 
+        system("python3 ../scripts/plot_results.py");
         std::cout << "\nDone. Total reads: " << count << std::endl;
 
     } catch (const std::exception& e) {
