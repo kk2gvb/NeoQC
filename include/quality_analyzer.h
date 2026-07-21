@@ -1,5 +1,5 @@
 #pragma once
-#include "fastq_reader.h"
+#include "../include/fastq_reader.h"
 #include <vector>
 #include <string>
 
@@ -12,12 +12,12 @@ struct QualityStats {
 
 class QualityAnalyzer {
 public:
-    QualityAnalyzer(size_t maxReadLength = 150);
+    QualityAnalyzer();
     void processRecord(const FastqRecord& record);
     QualityStats getStats() const;
     void printSummary() const;
     void analyzeAdapters(const FastqRecord& record);
-    void printAdapterStats(const std::string& filename) const;
+    void printAdapterStats(const std::string& filename, const std::string& folder) const;
 
 private:
     std::vector<long long> qualitySum;   // sum of quality scores per position

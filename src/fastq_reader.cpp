@@ -1,8 +1,10 @@
-#include "fastq_reader.h"
+#include "../include/fastq_reader.h"
 #include <zlib.h>
 #include <stdexcept>
 
 FastqReader::FastqReader(const std::string& filename) {
+    system("pwd");
+    std::cout << filename << std::endl;
     fileHandle = gzopen(filename.c_str(), "rb");
     if (!fileHandle) {
         throw std::runtime_error("Cannot open file: " + filename);

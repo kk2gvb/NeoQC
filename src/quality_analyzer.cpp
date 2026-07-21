@@ -1,19 +1,21 @@
-#include "quality_analyzer.h"
+#include "../include/quality_analyzer.h"
 #include <iostream>
 #include <fstream>
 #include <iomanip>
 #include <algorithm>
+#include "../include/utils.hpp"
 
-QualityAnalyzer::QualityAnalyzer(size_t maxReadLength) 
-    : maxLength(0), totalGC(0), totalBases(0), totalReads(0) {
-    qualitySum.resize(maxReadLength, 0);
-    qualityCount.resize(maxReadLength, 0);
-    adapterCounts.resize(100, 0);   // резерв под адаптеры
+QualityAnalyzer::QualityAnalyzer(){
+
 }
+
 
 void QualityAnalyzer::processRecord(const FastqRecord& record) {
     size_t len = record.sequence.length();
-    if (len > maxLength) maxLength = len;
+    if (len > qualitySum.size()) {
+        qualitySum.resize(len, 0);
+        qualityCount.resize(len, 0);
+    }
 
     // Quality
     for (size_t i = 0; i < len && i < qualitySum.size(); ++i) {
@@ -70,7 +72,7 @@ void QualityAnalyzer::analyzeAdapters(const FastqRecord& record) {
     for (size_t i = 0; i <= seq.length() - illuminaUniversal.length(); ++i) {
         if (seq.substr(i, illuminaUniversal.length()) == illuminaUniversal) {
             if (i >= adapterCounts.size()) {
-                adapterCounts.resize(i + 1, 0);
+                adapterCounts.resize(i + 100, 0);
             }
             adapterCounts[i]++;
             break;
@@ -78,11 +80,10 @@ void QualityAnalyzer::analyzeAdapters(const FastqRecord& record) {
     }
 }
 
-void QualityAnalyzer::printAdapterStats(const std::string& filename) const {
+void QualityAnalyzer::printAdapterStats(const std::string& filename, const std::string& folder) const {
     std::cout << "\n=== Adapter Content ===\n";
     bool found = false;
-    //TODO: Надо выделить отдельный файл utils.hpp для такого рода вещей как формирование имени файла
-    std::ofstream outputFile("../results/adapter_stats_"+filename.substr(8, filename.length() - 8 - 9)+".txt");
+    std::ofstream outputFile("../results/adapter_stats_"+Utils::trim_path(filename, folder)+".txt");
 
     for (size_t i = 0; i < adapterCounts.size(); ++i) {
         if (adapterCounts[i] > 0) {
