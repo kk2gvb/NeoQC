@@ -1,105 +1,137 @@
 #include "../include/quality_analyzer.h"
-#include <iostream>
-#include <fstream>
-#include <iomanip>
 #include <algorithm>
-#include "../include/utils.hpp"
+#include <cmath>
 
-QualityAnalyzer::QualityAnalyzer(){
-
+QualityAnalyzer::QualityAnalyzer() {
+    adapterPosCounts.resize(adapters.size());
+    qualityDistribution.assign(50, 0); // Phred scores 0..49
 }
 
-
 void QualityAnalyzer::processRecord(const FastqRecord& record) {
-    size_t len = record.sequence.length();
+    const std::string& seq = record.sequence;
+    const std::string& qual = record.quality;
+    size_t len = seq.length();
+
+    if (len == 0) return;
+
+    // Длина
+    totalReads++;
+    totalLength += len;
+    if (len < minLength) minLength = len;
+    if (len > maxLength) maxLength = len;
+
+    // Расширение массивов качества, если нужно
     if (len > qualitySum.size()) {
         qualitySum.resize(len, 0);
         qualityCount.resize(len, 0);
     }
 
-    // Quality
-    for (size_t i = 0; i < len && i < qualitySum.size(); ++i) {
-        int q = record.quality[i] - 33;  // Phred+33
-        if (q >= 0) {
-            qualitySum[i] += q;
-            qualityCount[i]++;
+    // Подсчёт оснований и качества
+    uint64_t readQualSum = 0;
+    for (size_t i = 0; i < len; ++i) {
+        char c = seq[i];
+        // Подсчёт оснований
+        switch (c) {
+            case 'A': case 'a': countA++; totalBases++; break;
+            case 'C': case 'c': countC++; totalBases++; totalGC++; break;
+            case 'G': case 'g': countG++; totalBases++; totalGC++; break;
+            case 'T': case 't': countT++; totalBases++; break;
+            case 'N': case 'n': countN++; totalBases++; break;
+            default:
+                // Неизвестный символ — считаем как N
+                countN++; totalBases++;
+                break;
+        }
+
+        // Качество (только если строка качества достаточно длинная)
+        if (i < qual.length()) {
+            int q = static_cast<int>(qual[i]) - 33; // Phred+33
+            if (q >= 0) {
+                qualitySum[i] += q;
+                qualityCount[i]++;
+                readQualSum += q;
+                if (q >= 20) q20Count++;
+                if (q >= 30) q30Count++;
+            }
         }
     }
 
-    // GC content
-    for (char c : record.sequence) {
-        if (c == 'G' || c == 'C') totalGC++;
-        totalBases++;
-    }
-
-    totalReads++;
-}
-
-QualityStats QualityAnalyzer::getStats() const {
-    QualityStats stats;
-    stats.totalReads = totalReads;
-    stats.totalBases = totalBases;
-    stats.avgGC = totalBases > 0 ? (double)totalGC / totalBases * 100.0 : 0.0;
-
-    stats.meanQualityPerPosition.resize(maxLength);
-    for (size_t i = 0; i < maxLength; ++i) {
-        stats.meanQualityPerPosition[i] = qualityCount[i] > 0 ? 
-            (double)qualitySum[i] / qualityCount[i] : 0.0;
-    }
-    return stats;
-}
-
-void QualityAnalyzer::printSummary() const {
-    auto stats = getStats();
-    std::cout << "\n=== Quality Analysis Summary ===\n";
-    std::cout << "Processed reads: " << stats.totalReads << "\n";
-    std::cout << "Total bases: " << stats.totalBases << "\n";
-    std::cout << "Average GC: " << std::fixed << std::setprecision(2) 
-              << stats.avgGC << "%\n";
-    
-    std::cout << "\nMean quality per position:\n";
-    for (size_t i = 0; i < (size_t)(stats.meanQualityPerPosition.size()); ++i) {
-        std::cout << "Pos " << i+1 << ": " << std::fixed << std::setprecision(2) 
-                  << stats.meanQualityPerPosition[i] << "\n";
+    // Среднее качество прочтения → в гистограмму
+    if (len > 0) {
+        int avgQ = static_cast<int>(readQualSum / len);
+        if (avgQ >= 0 && avgQ < static_cast<int>(qualityDistribution.size())) {
+            qualityDistribution[avgQ]++;
+        }
     }
 }
 
 void QualityAnalyzer::analyzeAdapters(const FastqRecord& record) {
     const std::string& seq = record.sequence;
-    if (seq.length() < illuminaUniversal.length()) return;
+    bool foundInRead = false;
 
-    // Ищем адаптер в последовательности
-    for (size_t i = 0; i <= seq.length() - illuminaUniversal.length(); ++i) {
-        if (seq.substr(i, illuminaUniversal.length()) == illuminaUniversal) {
-            if (i >= adapterCounts.size()) {
-                adapterCounts.resize(i + 100, 0);
+    for (size_t aid = 0; aid < adapters.size(); ++aid) {
+        const std::string& adapter = adapters[aid].sequence;
+        size_t alen = adapter.length();
+        if (seq.length() < alen) continue;
+
+        // Поиск без substr (прямое сравнение)
+        for (size_t i = 0; i <= seq.length() - alen; ++i) {
+            bool match = true;
+            for (size_t j = 0; j < alen; ++j) {
+                if (seq[i + j] != adapter[j]) {
+                    match = false;
+                    break;
+                }
             }
-            adapterCounts[i]++;
-            break;
+            if (match) {
+                if (i >= adapterPosCounts[aid].size()) {
+                    adapterPosCounts[aid].resize(i + 1, 0);
+                }
+                adapterPosCounts[aid][i]++;
+                foundInRead = true;
+                break; // только первое вхождение на позицию
+            }
         }
+    }
+
+    if (foundInRead) {
+        readsWithAdapter++;
     }
 }
 
-void QualityAnalyzer::printAdapterStats(const std::string& filename, const std::string& folder) const {
-    std::cout << "\n=== Adapter Content ===\n";
-    bool found = false;
-    std::ofstream outputFile("../results/adapter_stats_"+Utils::trim_path(filename, folder)+".txt");
+QualityStats QualityAnalyzer::getStats() const {
+    QualityStats stats;
 
-    for (size_t i = 0; i < adapterCounts.size(); ++i) {
-        if (adapterCounts[i] > 0) {
-            double percent = (double)adapterCounts[i] / totalReads * 100.0;
-            if (outputFile.is_open()) {
-                outputFile << i+1 << " " << percent << "\n";
-            }
-            if (percent > 0.1) {  
-                std::cout << "Pos " << i+1 << ": " << percent << "% adapters\n";
-                found = true;
-            }
+    stats.totalReads = totalReads;
+    stats.totalBases = totalBases;
+    stats.minLength  = (totalReads > 0) ? minLength : 0;
+    stats.maxLength  = maxLength;
+    stats.avgLength  = (totalReads > 0) ? static_cast<double>(totalLength) / totalReads : 0.0;
+
+    stats.countA = countA;
+    stats.countC = countC;
+    stats.countG = countG;
+    stats.countT = countT;
+    stats.countN = countN;
+
+    stats.avgGC      = (totalBases > 0) ? static_cast<double>(totalGC) / totalBases * 100.0 : 0.0;
+    stats.percentN   = (totalBases > 0) ? static_cast<double>(countN) / totalBases * 100.0 : 0.0;
+    stats.percentQ20 = (totalBases > 0) ? static_cast<double>(q20Count) / totalBases * 100.0 : 0.0;
+    stats.percentQ30 = (totalBases > 0) ? static_cast<double>(q30Count) / totalBases * 100.0 : 0.0;
+    stats.percentWithAdapter = (totalReads > 0) ? static_cast<double>(readsWithAdapter) / totalReads * 100.0 : 0.0;
+
+    // Качество по позициям
+    stats.meanQualityPerPosition.resize(maxLength);
+    for (size_t i = 0; i < maxLength; ++i) {
+        if (i < qualityCount.size() && qualityCount[i] > 0) {
+            stats.meanQualityPerPosition[i] = static_cast<double>(qualitySum[i]) / qualityCount[i];
+        } else {
+            stats.meanQualityPerPosition[i] = 0.0;
         }
     }
-    outputFile.close();
-    
-    if (!found) {
-        std::cout << "No significant adapter content detected.\n";
-    }
+
+    // Распределение качества
+    stats.qualityDistribution = qualityDistribution;
+
+    return stats;
 }

@@ -1,31 +1,98 @@
 #pragma once
-#include "../include/fastq_reader.h"
-#include <vector>
-#include <string>
 
+#include <string>
+#include <vector>
+#include <cstdint>
+#include "fastq_reader.h"
+
+// ---------------------------------------------------------------------------
+// Структура результатов анализа
+// ---------------------------------------------------------------------------
 struct QualityStats {
+    uint64_t totalReads = 0;
+    uint64_t totalBases = 0;
+    uint64_t minLength  = 0;
+    uint64_t maxLength  = 0;
+    double   avgLength  = 0.0;
+
+    uint64_t countA = 0;
+    uint64_t countC = 0;
+    uint64_t countG = 0;
+    uint64_t countT = 0;
+    uint64_t countN = 0;
+
+    double avgGC      = 0.0;
+    double percentN   = 0.0;
+    double percentQ20 = 0.0;
+    double percentQ30 = 0.0;
+    double percentWithAdapter = 0.0;
+
+    // Качество по позициям (среднее Phred-значение на каждой позиции)
     std::vector<double> meanQualityPerPosition;
-    double avgGC = 0.0;
-    size_t totalReads = 0;
-    size_t totalBases = 0;
+
+    // Распределение среднего качества прочтений (гистограмма)
+    std::vector<uint64_t> qualityDistribution; // индекс = Phred score
 };
 
+// ---------------------------------------------------------------------------
+// Анализатор качества
+// ---------------------------------------------------------------------------
 class QualityAnalyzer {
 public:
     QualityAnalyzer();
+
+    // Обработка одной FASTQ-записи
     void processRecord(const FastqRecord& record);
-    QualityStats getStats() const;
-    void printSummary() const;
+
+    // Поиск адаптеров в записи
     void analyzeAdapters(const FastqRecord& record);
-    void printAdapterStats(const std::string& filename, const std::string& folder) const;
+
+    // Получить итоговую статистику
+    QualityStats getStats() const;
+
+    // -----------------------------------------------------------------------
+    // Публичные поля (нужны для вывода в TSV)
+    // -----------------------------------------------------------------------
+    // Список адаптеров (название, последовательность)
+    struct Adapter {
+        std::string name;
+        std::string sequence;
+    };
+
+    std::vector<Adapter> adapters = {
+        {"Universal",    "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA"},
+        {"SmallRNA3'",   "TGGAATTCTCGGGTGCCAAGG"},
+        {"SmallRNA5'",   "GTTCAGAGTTCTACAGTCCGACGATC"},
+        {"Nextera",      "CTGTCTCTTATACACATCT"}
+    };
+
+    // Счётчики позиций адаптеров: adapterPosCounts[aid][position]
+    std::vector<std::vector<uint64_t>> adapterPosCounts;
 
 private:
-    std::vector<long long> qualitySum;   // sum of quality scores per position
-    std::vector<long long> qualityCount;
-    long long totalGC = 0;
-    long long totalBases = 0;
-    size_t totalReads = 0;
-    size_t maxLength = 0;
-    std::vector<long long> adapterCounts;
-    const std::string illuminaUniversal = "AGATCGGAAGAG";
+    // Базовые счётчики
+    uint64_t totalGC   = 0;
+    uint64_t totalBases = 0;
+    uint64_t totalReads = 0;
+
+    uint64_t countA = 0;
+    uint64_t countC = 0;
+    uint64_t countG = 0;
+    uint64_t countT = 0;
+    uint64_t countN = 0;
+
+    uint64_t minLength = UINT64_MAX;
+    uint64_t maxLength = 0;
+    uint64_t totalLength = 0; // для avgLength
+
+    uint64_t q20Count = 0;
+    uint64_t q30Count = 0;
+    uint64_t readsWithAdapter = 0;
+
+    // Качество по позициям
+    std::vector<uint64_t> qualitySum;
+    std::vector<uint64_t> qualityCount;
+
+    // Распределение среднего качества прочтений
+    std::vector<uint64_t> qualityDistribution;
 };
