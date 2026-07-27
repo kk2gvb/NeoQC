@@ -86,6 +86,32 @@ void printConsoleSummary(const QualityStats& stats, const std::string& readName)
     std::cout << "% with adapter  : " << stats.percentWithAdapter << "%\n";
 }
 
+
+// ---------------------------------------------------------------------------
+// Нормализация идентификатора считывания (удаление '@', '/1' и '/2', обрезка по пробелу)
+// ---------------------------------------------------------------------------
+std::string normalizeReadId(const std::string& header)
+{
+    std::string id = header;
+
+    if (!id.empty() && id.front() == '@')
+        id.erase(0, 1);
+
+    auto space = id.find(' ');
+    if (space != std::string::npos)
+        id.erase(space);
+
+    if (id.size() >= 2)
+    {
+        auto tail = id.substr(id.size() - 2);
+
+        if (tail == "/1" || tail == "/2")
+            id.erase(id.size() - 2);
+    }
+
+    return id;
+}
+
 void writeSummaryTxt(const QualityStats& stats,
                      const std::string& outDir,
                      const std::string& filename) {
@@ -216,8 +242,16 @@ void processPairedFiles(const std::string& r1Path,
                 "FASTQ validation error:\n"
                 "reason: R2 contains fewer reads than R1");
         }
-
-
+        
+        // Проверка идентификаторов считываний
+        if (normalizeReadId(rec1.header) != normalizeReadId(rec2.header))
+        {
+            throw std::runtime_error(
+                "FASTQ validation error:\n"
+                "reason: paired read identifiers do not match\n"
+                "R1: " + rec1.header + "\n"
+                "R2: " + rec2.header);
+        }
 
         analyzerR1.processRecord(rec1);
         analyzerR1.analyzeAdapters(rec1);
