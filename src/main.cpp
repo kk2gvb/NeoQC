@@ -173,6 +173,103 @@ void processOneFile(const std::string& path,
 }
 
 // ---------------------------------------------------------------------------
+// Обработка парных файлов (R1 и R2)
+// ---------------------------------------------------------------------------
+
+void processPairedFiles(const std::string& r1Path,
+                        const std::string& r2Path,
+                        const std::string& outDir,
+                        const std::string& sampleId)
+{
+    FastqReader readerR1(r1Path);
+    FastqReader readerR2(r2Path);
+
+    QualityAnalyzer analyzerR1;
+    QualityAnalyzer analyzerR2;
+
+    FastqRecord rec1;
+    FastqRecord rec2;
+
+    size_t count = 0;
+
+    while (true)
+    {
+        bool ok1 = readerR1.readNext(rec1);
+        bool ok2 = readerR2.readNext(rec2);
+
+        // Оба файла закончились
+        if (!ok1 && !ok2)
+            break;
+
+        // R1 закончился раньше
+        if (!ok1)
+        {
+            throw std::runtime_error(
+                "FASTQ validation error:\n"
+                "reason: R1 contains fewer reads than R2");
+        }
+
+        // R2 закончился раньше
+        if (!ok2)
+        {
+            throw std::runtime_error(
+                "FASTQ validation error:\n"
+                "reason: R2 contains fewer reads than R1");
+        }
+
+
+
+        analyzerR1.processRecord(rec1);
+        analyzerR1.analyzeAdapters(rec1);
+
+        analyzerR2.processRecord(rec2);
+        analyzerR2.analyzeAdapters(rec2);
+
+        ++count;
+
+        if (count % 1000000 == 0)
+        {
+            std::cout << "Processed "
+                      << count
+                      << " paired reads...\n";
+        }
+    }
+
+    std::cout << "R1: total reads = "
+              << analyzerR1.getStats().totalReads
+              << "\n";
+
+    std::cout << "R2: total reads = "
+              << analyzerR2.getStats().totalReads
+              << "\n";
+
+    QualityStats statsR1 = analyzerR1.getStats();
+    QualityStats statsR2 = analyzerR2.getStats();
+
+    printConsoleSummary(statsR1, "R1");
+    printConsoleSummary(statsR2, "R2");
+
+    writeSummaryTxt(statsR1, outDir, sampleId + "_R1");
+    writeSummaryTxt(statsR2, outDir, sampleId + "_R2");
+
+    writeAdapterTsv(
+        analyzerR1.adapters,
+        analyzerR1.adapterPosCounts,
+        statsR1.totalReads,
+        statsR1.maxLength,
+        outDir,
+        "R1");
+
+    writeAdapterTsv(
+        analyzerR2.adapters,
+        analyzerR2.adapterPosCounts,
+        statsR2.totalReads,
+        statsR2.maxLength,
+        outDir,
+        "R2");
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 int main(int argc, char* argv[]) {
@@ -223,22 +320,29 @@ int main(int argc, char* argv[]) {
     if (isPaired) std::cout << "R2        : " << args.r2 << "\n";
     std::cout << "Output    : " << args.outDir << "\n";
 
-    // Обработка R1
-    try {
-        processOneFile(args.r1, "R1", args.outDir, args.sampleId);
-    } catch (const std::exception& e) {
-        std::cerr << "Error processing R1: " << e.what() << "\n";
-        return 1;
-    }
-
-    // Обработка R2 (если есть)
-    if (isPaired) {
-        try {
-            processOneFile(args.r2, "R2", args.outDir, args.sampleId);
-        } catch (const std::exception& e) {
-            std::cerr << "Error processing R2: " << e.what() << "\n";
-            return 1;
+    try
+    {
+        if (isPaired)
+        {
+            processPairedFiles(
+                args.r1,
+                args.r2,
+                args.outDir,
+                args.sampleId);
         }
+        else
+        {
+            processOneFile(
+                args.r1,
+                "R1",
+                args.outDir,
+                args.sampleId);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << e.what() << '\n';
+        return 1;
     }
 
     // Построение графиков (опционально, через PlotRunner)
