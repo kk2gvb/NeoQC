@@ -82,12 +82,18 @@ void QualityAnalyzer::analyzeAdapters(const FastqRecord& record) {
                 }
             }
             if (match) {
-                if (i >= adapterPosCounts[aid].size()) {
-                    adapterPosCounts[aid].resize(i + 1, 0);
+
+                // Учитываем все позиции адаптера, а не только начало
+                if (adapterPosCounts[aid].size() < i + alen) {
+                    adapterPosCounts[aid].resize(i + alen, 0);
                 }
-                adapterPosCounts[aid][i]++;
+
+                for (size_t j = 0; j < alen; ++j) {
+                    adapterPosCounts[aid][i + j]++;
+                }
+
                 foundInRead = true;
-                break; // только первое вхождение на позицию
+                break; // только первое вхождение в риде
             }
         }
     }
