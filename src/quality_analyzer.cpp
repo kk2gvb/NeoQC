@@ -50,19 +50,17 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
                 qualitySum[i] += q;
                 qualityCount[i]++;
                 readQualSum += q;
+
+                if (q < static_cast<int>(qualityDistribution.size())) {
+                    qualityDistribution[q]++;
+                }
+
                 if (q >= 20) q20Count++;
                 if (q >= 30) q30Count++;
             }
         }
     }
 
-    // Среднее качество прочтения → в гистограмму
-    if (len > 0) {
-        int avgQ = static_cast<int>(readQualSum / len);
-        if (avgQ >= 0 && avgQ < static_cast<int>(qualityDistribution.size())) {
-            qualityDistribution[avgQ]++;
-        }
-    }
 }
 
 void QualityAnalyzer::analyzeAdapters(const FastqRecord& record) {

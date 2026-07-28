@@ -77,12 +77,24 @@ void writeSummary(std::ostream& out,
 
     out << "Processed reads : " << stats.totalReads << "\n";
     out << "Total bases     : " << stats.totalBases << "\n";
-    out << "Avg length      : " << stats.avgLength << "\n";
 
-    out << "GC content      : "
+    out << "Min length      : " << stats.minLength << "\n";
+    out << "Max length      : " << stats.maxLength << "\n";
+    out << "Avg length      : "
         << std::fixed << std::setprecision(2)
-        << stats.avgGC << "%\n";
+        << stats.avgLength << "\n";
 
+    out << "\nBase composition\n";
+
+    out << "A               : " << stats.countA << "\n";
+    out << "C               : " << stats.countC << "\n";
+    out << "G               : " << stats.countG << "\n";
+    out << "T               : " << stats.countT << "\n";
+    out << "N               : " << stats.countN << "\n";
+
+    out << "\n";
+
+    out << "GC content      : " << stats.avgGC << "%\n";
     out << "%N              : " << stats.percentN << "%\n";
     out << "%Q20            : " << stats.percentQ20 << "%\n";
     out << "%Q30            : " << stats.percentQ30 << "%\n";
@@ -135,6 +147,54 @@ void writeSummaryTxt(const QualityStats& stats,
     if (!out) throw std::runtime_error("Cannot write to " + path);
     writeSummary(out, stats, filename);
 
+}
+
+void writePerCycleQualityTsv(const std::vector<double>& meanQuality,
+                             const std::string& outDir,
+                             const std::string& readName)
+{
+    std::string path = outDir + "/per_cycle_" + readName + ".tsv";
+
+    std::ofstream out(path);
+
+    if (!out)
+        throw std::runtime_error("Cannot write to " + path);
+
+    out << "cycle\tmean_quality\n";
+
+    for (size_t i = 0; i < meanQuality.size(); ++i)
+    {
+        out << (i + 1)
+            << "\t"
+            << std::fixed
+            << std::setprecision(4)
+            << meanQuality[i]
+            << "\n";
+    }
+}
+
+void writeQualityDistributionTsv(
+    const std::vector<uint64_t>& distribution,
+    const std::string& outDir,
+    const std::string& readName)
+{
+    std::string path =
+        outDir + "/quality_distribution_" + readName + ".tsv";
+
+    std::ofstream out(path);
+
+    if (!out)
+        throw std::runtime_error("Cannot write to " + path);
+
+    out << "quality\tcount\n";
+
+    for (size_t q = 0; q < distribution.size(); ++q)
+    {
+        out << q
+            << "\t"
+            << distribution[q]
+            << "\n";
+    }
 }
 
 void writeAdapterTsv(const std::vector<QualityAnalyzer::Adapter>& adapters,
@@ -198,6 +258,14 @@ void processOneFile(const std::string& path,
 
     printConsoleSummary(stats, readName);
     writeSummaryTxt(stats, outDir, sampleId + "_" + readName);
+    writePerCycleQualityTsv(
+        stats.meanQualityPerPosition,
+        outDir,
+        "R1");
+    writeQualityDistributionTsv(
+        stats.qualityDistribution,
+        outDir,
+        "R1");
     writeAdapterTsv(analyzer.adapters,
                     analyzer.adapterPosCounts,
                     stats.totalReads,
@@ -293,6 +361,26 @@ void processPairedFiles(const std::string& r1Path,
 
     writeSummaryTxt(statsR1, outDir, sampleId + "_R1");
     writeSummaryTxt(statsR2, outDir, sampleId + "_R2");
+
+    writePerCycleQualityTsv(
+        statsR1.meanQualityPerPosition,
+        outDir,
+        "R1");
+
+    writePerCycleQualityTsv(
+        statsR2.meanQualityPerPosition,
+        outDir,
+        "R2");
+
+    writeQualityDistributionTsv(
+        statsR1.qualityDistribution,
+        outDir,
+        "R1");
+
+    writeQualityDistributionTsv(
+        statsR2.qualityDistribution,
+        outDir,
+        "R2");    
 
     writeAdapterTsv(
         analyzerR1.adapters,
