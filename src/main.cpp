@@ -69,21 +69,35 @@ void printUsage(const char* progName) {
         "  --plot            Build plots via plot_results.py (optional)\n";
 }
 
+void writeSummary(std::ostream& out,
+                  const QualityStats& stats,
+                  const std::string& readName)
+{
+    out << "\n=== " << readName << " Summary ===\n";
+
+    out << "Processed reads : " << stats.totalReads << "\n";
+    out << "Total bases     : " << stats.totalBases << "\n";
+    out << "Avg length      : " << stats.avgLength << "\n";
+
+    out << "GC content      : "
+        << std::fixed << std::setprecision(2)
+        << stats.avgGC << "%\n";
+
+    out << "%N              : " << stats.percentN << "%\n";
+    out << "%Q20            : " << stats.percentQ20 << "%\n";
+    out << "%Q30            : " << stats.percentQ30 << "%\n";
+    out << "% with adapter  : "
+        << stats.percentWithAdapter << "%\n";
+}
+
 // ---------------------------------------------------------------------------
 // Вывод результатов (временная реализация — позже вынесется в
 // ConsoleReporter и ResultWriter)
 // ---------------------------------------------------------------------------
-void printConsoleSummary(const QualityStats& stats, const std::string& readName) {
-    std::cout << "\n=== " << readName << " Summary ===\n";
-    std::cout << "Processed reads : " << stats.totalReads << "\n";
-    std::cout << "Total bases     : " << stats.totalBases << "\n";
-    std::cout << "Avg length      : " << stats.avgLength << "\n";
-    std::cout << "GC content      : " << std::fixed << std::setprecision(2)
-              << stats.avgGC << "%\n";
-    std::cout << "%N              : " << stats.percentN << "%\n";
-    std::cout << "%Q20            : " << stats.percentQ20 << "%\n";
-    std::cout << "%Q30            : " << stats.percentQ30 << "%\n";
-    std::cout << "% with adapter  : " << stats.percentWithAdapter << "%\n";
+void printConsoleSummary(const QualityStats& stats,
+                         const std::string& readName)
+{
+    writeSummary(std::cout, stats, readName);
 }
 
 
@@ -117,22 +131,16 @@ void writeSummaryTxt(const QualityStats& stats,
                      const std::string& filename) {
     std::string path = outDir + "/" + filename + "_summary.txt";
     std::ofstream out(path);
-    if (!out) throw std::runtime_error("Cannot write to " + path);
 
-    out << "Processed reads: " << stats.totalReads << "\n"
-        << "Total bases: "     << stats.totalBases << "\n"
-        << "Avg length: "      << stats.avgLength  << "\n"
-        << "GC: "              << stats.avgGC      << "%\n"
-        << "%N: "              << stats.percentN   << "%\n"
-        << "%Q20: "            << stats.percentQ20 << "%\n"
-        << "%Q30: "            << stats.percentQ30 << "%\n"
-        << "% with adapter: "  << stats.percentWithAdapter << "%\n";
+    if (!out) throw std::runtime_error("Cannot write to " + path);
+    writeSummary(out, stats, filename);
+
 }
 
 void writeAdapterTsv(const std::vector<QualityAnalyzer::Adapter>& adapters,
                      const std::vector<std::vector<uint64_t>>& adapterPosCounts,
                      size_t totalReads,
-                     size_t maxLength,              // <-- новый параметр
+                     size_t maxLength,
                      const std::string& outDir,
                      const std::string& readName) {
     std::string path = outDir + "/adapter_content_" + readName + ".tsv";
