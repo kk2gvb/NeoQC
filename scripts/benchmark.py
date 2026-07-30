@@ -27,6 +27,16 @@ except ImportError as exc:  # pragma: no cover - depends on local environment
 
 
 SAMPLE_INTERVAL_SECONDS = 0.02
+TIMING_LABELS = (
+    "File opening",
+    "Reading and decompression",
+    "FASTQ structure validation",
+    "Paired-read validation",
+    "Metrics calculation",
+    "Adapter search",
+    "Report writing",
+    "Plot generation",
+)
 
 
 @dataclass
@@ -43,6 +53,7 @@ class RunResult:
     peak_rss_bytes: int
     r1: Summary
     r2: Summary | None
+    timings_ms: dict[str, float]
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,6 +70,8 @@ def parse_args() -> argparse.Namespace:
         help="Number of benchmark runs (default: 3)",
     )
     parser.add_argument("--plot", action="store_true", help="Pass --plot to NeoQC")
+    parser.add_argument("--skip-adapters", action="store_true", help="Pass --skip-adapters to NeoQC")
+    parser.add_argument("--timings", action="store_true", help="Collect NeoQC per-stage timings")
     args = parser.parse_args()
     if args.runs < 1:
         parser.error("--runs must be at least 1")
@@ -106,6 +119,28 @@ def parse_summary(path: Path) -> Summary:
     )
 
 
+def parse_performance_timings(stdout: str) -> dict[str, float]:
+    """Read the timing block printed by NeoQC after a successful run."""
+    marker = "=== Performance timings ==="
+    if marker not in stdout:
+        raise RuntimeError("NeoQC did not print performance timings")
+
+    timing_block = stdout.split(marker, maxsplit=1)[1]
+    timings: dict[str, float] = {}
+    for line in timing_block.splitlines():
+        match = re.match(r"^(.+?)\s*:\s*([0-9]+(?:\.[0-9]+)?) ms$", line.strip())
+        if match and match.group(1) in TIMING_LABELS:
+            timings[match.group(1)] = float(match.group(2))
+
+    missing = set(TIMING_LABELS) - set(timings)
+    if missing:
+        raise RuntimeError(
+            "Cannot parse NeoQC performance timings; missing: "
+            + ", ".join(sorted(missing))
+        )
+    return timings
+
+
 def process_tree_rss(process: psutil.Process) -> int:
     """Return RSS of NeoQC and any currently running child processes."""
     total = 0
@@ -121,7 +156,8 @@ def process_tree_rss(process: psutil.Process) -> int:
     return total
 
 
-def run_neoqc(command: list[str], output_dir: Path, sample_id: str, paired: bool) -> RunResult:
+def run_neoqc(command: list[str], output_dir: Path, sample_id: str, paired: bool,
+              collect_timings: bool) -> RunResult:
     peak_rss = 0
     stop_sampling = threading.Event()
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -148,7 +184,8 @@ def run_neoqc(command: list[str], output_dir: Path, sample_id: str, paired: bool
 
     r1 = parse_summary(output_dir / f"{sample_id}_R1_summary.txt")
     r2 = parse_summary(output_dir / f"{sample_id}_R2_summary.txt") if paired else None
-    return RunResult(elapsed, peak_rss, r1, r2)
+    timings = parse_performance_timings(stdout) if collect_timings else {}
+    return RunResult(elapsed, peak_rss, r1, r2, timings)
 
 
 def file_size(path: Path) -> str:
@@ -224,14 +261,25 @@ def render_report(args: argparse.Namespace, results: list[RunResult]) -> str:
         lines.append(
             f"  Run {index}: {item.seconds:.3f} s | peak RSS {bytes_to_mib(item.peak_rss_bytes)} | {throughput[index - 1]:,.0f} {throughput_unit}"
         )
+        if args.timings:
+            for label in TIMING_LABELS:
+                lines.append(f"    {label}: {item.timings_ms[label]:.3f} ms")
     lines += [
         f"  Time, median: {statistics.median(times):.3f} s",
         f"  Time, mean:   {statistics.mean(times):.3f} s",
         f"  Peak RSS, max:  {bytes_to_mib(max(memory))}",
         f"  Throughput, median: {statistics.median(throughput):,.0f} {throughput_unit}",
         f"  Throughput, mean:   {statistics.mean(throughput):,.0f} {throughput_unit}",
-        "", "System",
+        "", "NeoQC stage timings, median",
     ]
+    if args.timings:
+        lines += [
+            f"  {label}: {statistics.median([item.timings_ms[label] for item in results]):.3f} ms"
+            for label in TIMING_LABELS
+        ]
+    else:
+        lines.pop()
+    lines += ["", "System"]
     lines += [f"  {name}: {value}" for name, value in system_info()]
     return "\n".join(lines) + "\n"
 
@@ -249,8 +297,14 @@ def main() -> int:
                 command.extend(["--r2", str(args.r2.resolve())])
             if args.plot:
                 command.append("--plot")
+            if args.skip_adapters:
+                command.append("--skip-adapters")
+            if args.timings:
+                command.append("--timings")
             print(f"Running NeoQC: {run}/{args.runs}", file=sys.stderr)
-            results.append(run_neoqc(command, output_dir, args.sample_id, args.r2 is not None))
+            results.append(run_neoqc(
+                command, output_dir, args.sample_id, args.r2 is not None, args.timings
+            ))
 
     report = render_report(args, results)
     report_dir = Path("benchmarks")

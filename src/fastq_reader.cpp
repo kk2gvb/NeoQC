@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <sstream>
 #include <cstring> 
+#include <chrono>
 
-FastqReader::FastqReader(const std::string& filename) : filename(filename) {
+FastqReader::FastqReader(const std::string& filename, bool collectTiming)
+    : filename(filename), collectTiming(collectTiming) {
     fileHandle = gzopen(filename.c_str(), "rb");
     if (!fileHandle) {
         throw std::runtime_error("Cannot open file: " + filename);
@@ -68,14 +70,25 @@ bool FastqReader::readLine(std::string& line) {
 }
 
 bool FastqReader::readNext(FastqRecord& record) {
+    const auto readStart = collectTiming
+        ? std::chrono::steady_clock::now()
+        : std::chrono::steady_clock::time_point{};
+
     // Читаем заголовок
     if (!readLine(record.header)) {
+        if (collectTiming) timing.readAndDecompress += std::chrono::steady_clock::now() - readStart;
         return false; // конец файла
     }
 
     if (record.header.empty()) {
+        if (collectTiming) timing.readAndDecompress += std::chrono::steady_clock::now() - readStart;
         return false; // пустая строка = конец файла
     }
+
+    if (collectTiming) timing.readAndDecompress += std::chrono::steady_clock::now() - readStart;
+    const auto validationStart = collectTiming
+        ? std::chrono::steady_clock::now()
+        : std::chrono::steady_clock::time_point{};
 
     // Проверяем, что заголовок начинается с @
     if (record.header[0] != '@') {
@@ -154,6 +167,8 @@ bool FastqReader::readNext(FastqRecord& record) {
     readCount++;
     record.recordNumber = readCount;
 
+    if (collectTiming) timing.validation += std::chrono::steady_clock::now() - validationStart;
+
     return true;
 }
 
@@ -163,4 +178,8 @@ std::size_t FastqReader::getReadCount() const {
 
 const std::string& FastqReader::getFilename() const {
     return filename;
+}
+
+const FastqReaderTiming& FastqReader::getTiming() const {
+    return timing;
 }

@@ -9,8 +9,51 @@
 #include <fstream>
 #include <iomanip>
 #include <stdexcept>
+#include <chrono>
 
 namespace fs = std::filesystem;
+using Duration = std::chrono::nanoseconds;
+using Clock = std::chrono::steady_clock;
+
+struct PerformanceTimers {
+    Duration fileOpen{};
+    Duration readAndDecompress{};
+    Duration validation{};
+    Duration pairValidation{};
+    Duration metrics{};
+    Duration adapterSearch{};
+    Duration reportWriting{};
+    Duration plotting{};
+};
+
+class ScopedTimer {
+public:
+    ScopedTimer(Duration& total, bool enabled)
+        : total(total), enabled(enabled), start(enabled ? Clock::now() : Clock::time_point{}) {}
+    ~ScopedTimer() { if (enabled) total += Clock::now() - start; }
+
+private:
+    Duration& total;
+    bool enabled;
+    Clock::time_point start;
+};
+
+void printPerformanceTimers(const PerformanceTimers& timers) {
+    const auto milliseconds = [](Duration duration) {
+        return std::chrono::duration<double, std::milli>(duration).count();
+    };
+
+    std::cout << "\n=== Performance timings ===\n" << std::fixed
+              << std::setprecision(3)
+              << "File opening                 : " << milliseconds(timers.fileOpen) << " ms\n"
+              << "Reading and decompression    : " << milliseconds(timers.readAndDecompress) << " ms\n"
+              << "FASTQ structure validation   : " << milliseconds(timers.validation) << " ms\n"
+              << "Paired-read validation       : " << milliseconds(timers.pairValidation) << " ms\n"
+              << "Metrics calculation          : " << milliseconds(timers.metrics) << " ms\n"
+              << "Adapter search               : " << milliseconds(timers.adapterSearch) << " ms\n"
+              << "Report writing               : " << milliseconds(timers.reportWriting) << " ms\n"
+              << "Plot generation              : " << milliseconds(timers.plotting) << " ms\n";
+}
 
 // ---------------------------------------------------------------------------
 // Аргументы командной строки
@@ -21,6 +64,8 @@ struct Args {
     std::string sampleId;
     std::string outDir;
     bool        plot = false;
+    bool        skipAdapters = false;
+    bool        timings = false;
 };
 
 Args parseArgs(int argc, char* argv[]) {
@@ -39,6 +84,8 @@ Args parseArgs(int argc, char* argv[]) {
         else if (arg == "--sample-id") args.sampleId = needValue("--sample-id");
         else if (arg == "--out")       args.outDir   = needValue("--out");
         else if (arg == "--plot")      args.plot     = true;
+        else if (arg == "--skip-adapters") args.skipAdapters = true;
+        else if (arg == "--timings")   args.timings  = true;
         else if (arg == "--help" || arg == "-h") {
             throw std::runtime_error("help");
         } else {
@@ -58,20 +105,23 @@ void printUsage(const char* progName) {
         "NeoQC — FASTQ quality analysis\n\n"
         "Usage:\n"
         "  single-end:\n"
-        "    " << progName << " --r1 <file> --sample-id <id> --out <dir> [--plot]\n\n"
+        "    " << progName << " --r1 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters] [--timings]\n\n"
         "  paired-end:\n"
-        "    " << progName << " --r1 <file> --r2 <file> --sample-id <id> --out <dir> [--plot]\n\n"
+        "    " << progName << " --r1 <file> --r2 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters] [--timings]\n\n"
         "Options:\n"
         "  --r1 <file>       Path to R1 FASTQ (plain or .gz)\n"
         "  --r2 <file>       Path to R2 FASTQ (optional, for paired-end)\n"
         "  --sample-id <id>  Sample identifier (used in output filenames)\n"
         "  --out <dir>       Output directory (created if missing)\n"
-        "  --plot            Build plots via plot_results.py (optional)\n";
+        "  --plot            Build plots via plot_results.py (optional)\n"
+        "  --skip-adapters   Disable adapter search (for performance measurements)\n"
+        "  --timings         Measure and print per-stage execution times\n";
 }
 
 void writeSummary(std::ostream& out,
                   const QualityStats& stats,
-                  const std::string& readName)
+                  const std::string& readName,
+                  bool adaptersSkipped)
 {
     out << "\n=== " << readName << " Summary ===\n";
 
@@ -98,8 +148,12 @@ void writeSummary(std::ostream& out,
     out << "%N              : " << stats.percentN << "%\n";
     out << "%Q20            : " << stats.percentQ20 << "%\n";
     out << "%Q30            : " << stats.percentQ30 << "%\n";
-    out << "% with adapter  : "
-        << stats.percentWithAdapter << "%\n";
+    if (adaptersSkipped) {
+        out << "% with adapter  : not calculated (--skip-adapters)\n";
+    } else {
+        out << "% with adapter  : "
+            << stats.percentWithAdapter << "%\n";
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -107,9 +161,10 @@ void writeSummary(std::ostream& out,
 // ConsoleReporter и ResultWriter)
 // ---------------------------------------------------------------------------
 void printConsoleSummary(const QualityStats& stats,
-                         const std::string& readName)
+                         const std::string& readName,
+                         bool adaptersSkipped)
 {
-    writeSummary(std::cout, stats, readName);
+    writeSummary(std::cout, stats, readName, adaptersSkipped);
 }
 
 
@@ -140,12 +195,13 @@ std::string normalizeReadId(const std::string& header)
 
 void writeSummaryTxt(const QualityStats& stats,
                      const std::string& outDir,
-                     const std::string& filename) {
+                     const std::string& filename,
+                     bool adaptersSkipped) {
     std::string path = outDir + "/" + filename + "_summary.txt";
     std::ofstream out(path);
 
     if (!out) throw std::runtime_error("Cannot write to " + path);
-    writeSummary(out, stats, filename);
+    writeSummary(out, stats, filename, adaptersSkipped);
 
 }
 
@@ -232,59 +288,90 @@ void writeAdapterTsv(const std::vector<QualityAnalyzer::Adapter>& adapters,
 // ---------------------------------------------------------------------------
 // Обработка одного файла (R1 или R2)
 // ---------------------------------------------------------------------------
-void processOneFile(const std::string& path,
-                    const std::string& readName,
-                    const std::string& outDir,
-                    const std::string& sampleId) {
+PerformanceTimers processOneFile(const std::string& path,
+                                 const std::string& readName,
+                                 const std::string& outDir,
+                                 const std::string& sampleId,
+                                 bool skipAdapters,
+                                 bool collectTimings) {
+    PerformanceTimers timers;
     QualityAnalyzer analyzer;
 
     {
-        FastqReader reader(path);
+        const auto openStart = collectTimings ? Clock::now() : Clock::time_point{};
+        FastqReader reader(path, collectTimings);
+        if (collectTimings) timers.fileOpen += Clock::now() - openStart;
         FastqRecord rec;
         size_t count = 0;
 
         while (reader.readNext(rec)) {
-            analyzer.processRecord(rec);
-            analyzer.analyzeAdapters(rec);
+            {
+                ScopedTimer timer(timers.metrics, collectTimings);
+                analyzer.processRecord(rec);
+            }
+            if (!skipAdapters) {
+                ScopedTimer timer(timers.adapterSearch, collectTimings);
+                analyzer.analyzeAdapters(rec);
+            }
             ++count;
             if (count % 1'000'000 == 0) {
                 std::cout << readName << ": processed " << count << " reads...\n";
             }
         }
         std::cout << readName << ": total reads = " << count << "\n";
+        if (collectTimings) {
+            timers.readAndDecompress += reader.getTiming().readAndDecompress;
+            timers.validation += reader.getTiming().validation;
+        }
     }
 
-    QualityStats stats = analyzer.getStats();
+    QualityStats stats;
+    {
+        ScopedTimer timer(timers.metrics, collectTimings);
+        stats = analyzer.getStats();
+    }
 
-    printConsoleSummary(stats, readName);
-    writeSummaryTxt(stats, outDir, sampleId + "_" + readName);
-    writePerCycleQualityTsv(
-        stats.meanQualityPerPosition,
-        outDir,
-        "R1");
-    writeQualityDistributionTsv(
-        stats.qualityDistribution,
-        outDir,
-        "R1");
-    writeAdapterTsv(analyzer.adapters,
-                    analyzer.adapterPosCounts,
-                    stats.totalReads,
-                    stats.maxLength,             // <-- передаём maxLength
-                    outDir,
-                    readName);
+    printConsoleSummary(stats, readName, skipAdapters);
+    {
+        ScopedTimer timer(timers.reportWriting, collectTimings);
+        writeSummaryTxt(stats, outDir, sampleId + "_" + readName, skipAdapters);
+        writePerCycleQualityTsv(
+            stats.meanQualityPerPosition,
+            outDir,
+            "R1");
+        writeQualityDistributionTsv(
+            stats.qualityDistribution,
+            outDir,
+            "R1");
+        if (!skipAdapters) {
+            writeAdapterTsv(analyzer.adapters,
+                            analyzer.adapterPosCounts,
+                            stats.totalReads,
+                            stats.maxLength,
+                            outDir,
+                            readName);
+        }
+    }
+
+    return timers;
 }
 
 // ---------------------------------------------------------------------------
 // Обработка парных файлов (R1 и R2)
 // ---------------------------------------------------------------------------
 
-void processPairedFiles(const std::string& r1Path,
-                        const std::string& r2Path,
-                        const std::string& outDir,
-                        const std::string& sampleId)
+PerformanceTimers processPairedFiles(const std::string& r1Path,
+                                     const std::string& r2Path,
+                                     const std::string& outDir,
+                                     const std::string& sampleId,
+                                     bool skipAdapters,
+                                     bool collectTimings)
 {
-    FastqReader readerR1(r1Path);
-    FastqReader readerR2(r2Path);
+    PerformanceTimers timers;
+    const auto openStart = collectTimings ? Clock::now() : Clock::time_point{};
+    FastqReader readerR1(r1Path, collectTimings);
+    FastqReader readerR2(r2Path, collectTimings);
+    if (collectTimings) timers.fileOpen += Clock::now() - openStart;
 
     QualityAnalyzer analyzerR1;
     QualityAnalyzer analyzerR2;
@@ -320,7 +407,12 @@ void processPairedFiles(const std::string& r1Path,
         }
         
         // Проверка идентификаторов считываний
-        if (normalizeReadId(rec1.header) != normalizeReadId(rec2.header))
+        bool matchingReadIds;
+        {
+            ScopedTimer timer(timers.pairValidation, collectTimings);
+            matchingReadIds = normalizeReadId(rec1.header) == normalizeReadId(rec2.header);
+        }
+        if (!matchingReadIds)
         {
             throw std::runtime_error(
                 "FASTQ validation error:\n"
@@ -329,11 +421,16 @@ void processPairedFiles(const std::string& r1Path,
                 "R2: " + rec2.header);
         }
 
-        analyzerR1.processRecord(rec1);
-        analyzerR1.analyzeAdapters(rec1);
-
-        analyzerR2.processRecord(rec2);
-        analyzerR2.analyzeAdapters(rec2);
+        {
+            ScopedTimer timer(timers.metrics, collectTimings);
+            analyzerR1.processRecord(rec1);
+            analyzerR2.processRecord(rec2);
+        }
+        if (!skipAdapters) {
+            ScopedTimer timer(timers.adapterSearch, collectTimings);
+            analyzerR1.analyzeAdapters(rec1);
+            analyzerR2.analyzeAdapters(rec2);
+        }
 
         ++count;
 
@@ -353,50 +450,43 @@ void processPairedFiles(const std::string& r1Path,
               << analyzerR2.getStats().totalReads
               << "\n";
 
-    QualityStats statsR1 = analyzerR1.getStats();
-    QualityStats statsR2 = analyzerR2.getStats();
+    if (collectTimings) {
+        timers.readAndDecompress += readerR1.getTiming().readAndDecompress;
+        timers.readAndDecompress += readerR2.getTiming().readAndDecompress;
+        timers.validation += readerR1.getTiming().validation;
+        timers.validation += readerR2.getTiming().validation;
+    }
 
-    printConsoleSummary(statsR1, "R1");
-    printConsoleSummary(statsR2, "R2");
+    QualityStats statsR1;
+    QualityStats statsR2;
+    {
+        ScopedTimer timer(timers.metrics, collectTimings);
+        statsR1 = analyzerR1.getStats();
+        statsR2 = analyzerR2.getStats();
+    }
 
-    writeSummaryTxt(statsR1, outDir, sampleId + "_R1");
-    writeSummaryTxt(statsR2, outDir, sampleId + "_R2");
+    printConsoleSummary(statsR1, "R1", skipAdapters);
+    printConsoleSummary(statsR2, "R2", skipAdapters);
 
-    writePerCycleQualityTsv(
-        statsR1.meanQualityPerPosition,
-        outDir,
-        "R1");
+    {
+        ScopedTimer timer(timers.reportWriting, collectTimings);
+        writeSummaryTxt(statsR1, outDir, sampleId + "_R1", skipAdapters);
+        writeSummaryTxt(statsR2, outDir, sampleId + "_R2", skipAdapters);
 
-    writePerCycleQualityTsv(
-        statsR2.meanQualityPerPosition,
-        outDir,
-        "R2");
+        writePerCycleQualityTsv(statsR1.meanQualityPerPosition, outDir, "R1");
+        writePerCycleQualityTsv(statsR2.meanQualityPerPosition, outDir, "R2");
+        writeQualityDistributionTsv(statsR1.qualityDistribution, outDir, "R1");
+        writeQualityDistributionTsv(statsR2.qualityDistribution, outDir, "R2");
 
-    writeQualityDistributionTsv(
-        statsR1.qualityDistribution,
-        outDir,
-        "R1");
+        if (!skipAdapters) {
+            writeAdapterTsv(analyzerR1.adapters, analyzerR1.adapterPosCounts,
+                            statsR1.totalReads, statsR1.maxLength, outDir, "R1");
+            writeAdapterTsv(analyzerR2.adapters, analyzerR2.adapterPosCounts,
+                            statsR2.totalReads, statsR2.maxLength, outDir, "R2");
+        }
+    }
 
-    writeQualityDistributionTsv(
-        statsR2.qualityDistribution,
-        outDir,
-        "R2");    
-
-    writeAdapterTsv(
-        analyzerR1.adapters,
-        analyzerR1.adapterPosCounts,
-        statsR1.totalReads,
-        statsR1.maxLength,
-        outDir,
-        "R1");
-
-    writeAdapterTsv(
-        analyzerR2.adapters,
-        analyzerR2.adapterPosCounts,
-        statsR2.totalReads,
-        statsR2.maxLength,
-        outDir,
-        "R2");
+    return timers;
 }
 
 // ---------------------------------------------------------------------------
@@ -449,24 +539,30 @@ int main(int argc, char* argv[]) {
               << "R1        : " << args.r1 << "\n";
     if (isPaired) std::cout << "R2        : " << args.r2 << "\n";
     std::cout << "Output    : " << args.outDir << "\n";
+    if (args.skipAdapters) std::cout << "Adapters  : skipped\n";
 
+    PerformanceTimers timers;
     try
     {
         if (isPaired)
         {
-            processPairedFiles(
+            timers = processPairedFiles(
                 args.r1,
                 args.r2,
                 args.outDir,
-                args.sampleId);
+                args.sampleId,
+                args.skipAdapters,
+                args.timings);
         }
         else
         {
-            processOneFile(
+            timers = processOneFile(
                 args.r1,
                 "R1",
                 args.outDir,
-                args.sampleId);
+                args.sampleId,
+                args.skipAdapters,
+                args.timings);
         }
     }
     catch (const std::exception& e)
@@ -476,14 +572,18 @@ int main(int argc, char* argv[]) {
     }
 
     // Построение графиков (опционально, через PlotRunner)
-    if (args.plot) {
+    if (args.plot && !args.skipAdapters) {
+        ScopedTimer timer(timers.plotting, args.timings);
         std::string plotDir = args.outDir + "/plots";
         PlotRunner::run(args.outDir + "/adapter_content_R1.tsv", plotDir);
         if (isPaired) {
             PlotRunner::run(args.outDir + "/adapter_content_R2.tsv", plotDir);
         }
+    } else if (args.plot) {
+        std::cout << "Skipping adapter plots because adapter search was disabled.\n";
     }
 
+    if (args.timings) printPerformanceTimers(timers);
     std::cout << "\nDone.\n";
     return 0;
 }

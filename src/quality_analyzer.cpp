@@ -69,33 +69,23 @@ void QualityAnalyzer::analyzeAdapters(const FastqRecord& record) {
 
     for (size_t aid = 0; aid < adapters.size(); ++aid) {
         const std::string& adapter = adapters[aid].sequence;
-        size_t alen = adapter.length();
-        if (seq.length() < alen) continue;
+        const size_t position = seq.find(adapter);
 
-        // Поиск без substr (прямое сравнение)
-        for (size_t i = 0; i <= seq.length() - alen; ++i) {
-            bool match = true;
-            for (size_t j = 0; j < alen; ++j) {
-                if (seq[i + j] != adapter[j]) {
-                    match = false;
-                    break;
-                }
-            }
-            if (match) {
-
-                // Учитываем все позиции адаптера, а не только начало
-                if (adapterPosCounts[aid].size() < i + alen) {
-                    adapterPosCounts[aid].resize(i + alen, 0);
-                }
-
-                for (size_t j = 0; j < alen; ++j) {
-                    adapterPosCounts[aid][i + j]++;
-                }
-
-                foundInRead = true;
-                break; // только первое вхождение в риде
-            }
+        if (position == std::string::npos) {
+            continue;
         }
+
+        const size_t adapterLength = adapter.length();
+
+        if (adapterPosCounts[aid].size() < position + adapterLength) {
+            adapterPosCounts[aid].resize(position + adapterLength, 0);
+        }
+
+        for (size_t j = 0; j < adapterLength; ++j) {
+            adapterPosCounts[aid][position + j]++;
+        }
+
+        foundInRead = true;
     }
 
     if (foundInRead) {
