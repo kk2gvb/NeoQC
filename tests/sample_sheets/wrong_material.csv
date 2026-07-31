@@ -1,0 +1,2 @@
+patient_id,sample_id,sample_role,material,r1,r2,platform,library_type,reference
+P001,TUMOR_RNA,tumor_rna,dna,tests/data/correct_pair_R1.fq.gz,tests/data/correct_pair_R2.fq.gz,illumina,rna_seq,GRCh38

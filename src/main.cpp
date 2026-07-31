@@ -1,6 +1,7 @@
 #include "../include/fastq_reader.h"
 #include "../include/quality_analyzer.h"
 #include "../include/plot_runner.h"
+#include "../include/sample_sheet.h"
 
 #include <iostream>
 #include <string>
@@ -10,6 +11,8 @@
 #include <iomanip>
 #include <stdexcept>
 #include <chrono>
+#include <optional>
+#include <ctime>
 
 namespace fs = std::filesystem;
 using Duration = std::chrono::nanoseconds;
@@ -24,6 +27,19 @@ struct PerformanceTimers {
     Duration adapterSearch{};
     Duration reportWriting{};
     Duration plotting{};
+};
+
+struct AnalysisResult {
+    PerformanceTimers timers;
+    QualityStats r1Stats;
+    std::optional<QualityStats> r2Stats;
+};
+
+struct BatchSampleResult {
+    SampleSheetEntry entry;
+    bool passed = false;
+    std::optional<AnalysisResult> analysis;
+    std::string error;
 };
 
 class ScopedTimer {
@@ -63,6 +79,7 @@ struct Args {
     std::string r2;          // пустая строка = single-end
     std::string sampleId;
     std::string outDir;
+    std::string samples;
     bool        plot = false;
     bool        skipAdapters = false;
     bool        timings = false;
@@ -83,6 +100,7 @@ Args parseArgs(int argc, char* argv[]) {
         else if (arg == "--r2")        args.r2       = needValue("--r2");
         else if (arg == "--sample-id") args.sampleId = needValue("--sample-id");
         else if (arg == "--out")       args.outDir   = needValue("--out");
+        else if (arg == "--samples")   args.samples  = needValue("--samples");
         else if (arg == "--plot")      args.plot     = true;
         else if (arg == "--skip-adapters") args.skipAdapters = true;
         else if (arg == "--timings")   args.timings  = true;
@@ -91,6 +109,13 @@ Args parseArgs(int argc, char* argv[]) {
         } else {
             throw std::runtime_error("Unknown argument: " + arg);
         }
+    }
+
+    if (!args.samples.empty()) {
+        if (!args.r1.empty() || !args.r2.empty() || !args.sampleId.empty()) {
+            throw std::runtime_error("--samples cannot be combined with --r1, --r2, or --sample-id");
+        }
+        return args;
     }
 
     if (args.r1.empty())       throw std::runtime_error("--r1 is required");
@@ -108,11 +133,14 @@ void printUsage(const char* progName) {
         "    " << progName << " --r1 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters] [--timings]\n\n"
         "  paired-end:\n"
         "    " << progName << " --r1 <file> --r2 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters] [--timings]\n\n"
+        "  validate sample sheet:\n"
+        "    " << progName << " --samples <samples.csv> [--out <dir>] [--plot] [--skip-adapters] [--timings]\n\n"
         "Options:\n"
         "  --r1 <file>       Path to R1 FASTQ (plain or .gz)\n"
         "  --r2 <file>       Path to R2 FASTQ (optional, for paired-end)\n"
         "  --sample-id <id>  Sample identifier (used in output filenames)\n"
-        "  --out <dir>       Output directory (created if missing)\n"
+        "  --out <dir>       Output directory (created if missing); enables batch QC with --samples\n"
+        "  --samples <file>  Validate a CSV table; combine with --out to run batch QC\n"
         "  --plot            Build plots via plot_results.py (optional)\n"
         "  --skip-adapters   Disable adapter search (for performance measurements)\n"
         "  --timings         Measure and print per-stage execution times\n";
@@ -288,13 +316,14 @@ void writeAdapterTsv(const std::vector<QualityAnalyzer::Adapter>& adapters,
 // ---------------------------------------------------------------------------
 // Обработка одного файла (R1 или R2)
 // ---------------------------------------------------------------------------
-PerformanceTimers processOneFile(const std::string& path,
-                                 const std::string& readName,
-                                 const std::string& outDir,
-                                 const std::string& sampleId,
-                                 bool skipAdapters,
-                                 bool collectTimings) {
-    PerformanceTimers timers;
+AnalysisResult processOneFile(const std::string& path,
+                              const std::string& readName,
+                              const std::string& outDir,
+                              const std::string& sampleId,
+                              bool skipAdapters,
+                              bool collectTimings) {
+    AnalysisResult result;
+    PerformanceTimers& timers = result.timers;
     QualityAnalyzer analyzer;
 
     {
@@ -353,21 +382,23 @@ PerformanceTimers processOneFile(const std::string& path,
         }
     }
 
-    return timers;
+    result.r1Stats = stats;
+    return result;
 }
 
 // ---------------------------------------------------------------------------
 // Обработка парных файлов (R1 и R2)
 // ---------------------------------------------------------------------------
 
-PerformanceTimers processPairedFiles(const std::string& r1Path,
+AnalysisResult processPairedFiles(const std::string& r1Path,
                                      const std::string& r2Path,
                                      const std::string& outDir,
                                      const std::string& sampleId,
                                      bool skipAdapters,
                                      bool collectTimings)
 {
-    PerformanceTimers timers;
+    AnalysisResult result;
+    PerformanceTimers& timers = result.timers;
     const auto openStart = collectTimings ? Clock::now() : Clock::time_point{};
     FastqReader readerR1(r1Path, collectTimings);
     FastqReader readerR2(r2Path, collectTimings);
@@ -486,7 +517,96 @@ PerformanceTimers processPairedFiles(const std::string& r1Path,
         }
     }
 
-    return timers;
+    result.r1Stats = statsR1;
+    result.r2Stats = statsR2;
+    return result;
+}
+
+std::string jsonEscape(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (const char ch : value) {
+        switch (ch) {
+            case '"': escaped += "\\\""; break;
+            case '\\': escaped += "\\\\"; break;
+            case '\n': escaped += "\\n"; break;
+            case '\r': escaped += "\\r"; break;
+            case '\t': escaped += "\\t"; break;
+            default: escaped += ch; break;
+        }
+    }
+    return escaped;
+}
+
+std::string currentUtcTimestamp() {
+    const std::time_t now = std::time(nullptr);
+    std::tm timeInfo{};
+#ifdef _WIN32
+    gmtime_s(&timeInfo, &now);
+#else
+    gmtime_r(&now, &timeInfo);
+#endif
+    std::ostringstream output;
+    output << std::put_time(&timeInfo, "%Y-%m-%dT%H:%M:%SZ");
+    return output.str();
+}
+
+void writeCaseSummary(const std::string& patientId,
+                      const fs::path& caseOutputDir,
+                      const std::vector<BatchSampleResult>& results,
+                      const std::vector<std::string>& warnings)
+{
+    bool casePassed = true;
+    for (const auto& result : results) {
+        if (result.entry.patientId == patientId && !result.passed) casePassed = false;
+    }
+
+    const fs::path path = caseOutputDir / "case_summary.json";
+    std::ofstream output(path);
+    if (!output) throw std::runtime_error("Cannot write case summary: " + path.string());
+
+    output << "{\n"
+           << "  \"patient_id\": \"" << jsonEscape(patientId) << "\",\n"
+           << "  \"status\": \"" << (casePassed ? "passed" : "failed") << "\",\n"
+           << "  \"neoqc_version\": \"0.1\",\n"
+           << "  \"run_date\": \"" << currentUtcTimestamp() << "\",\n"
+           << "  \"warnings\": [";
+
+    bool firstWarning = true;
+    for (const auto& warning : warnings) {
+        if (warning.find("Patient " + patientId + ":") == std::string::npos) continue;
+        if (!firstWarning) output << ", ";
+        output << "\"" << jsonEscape(warning) << "\"";
+        firstWarning = false;
+    }
+    output << "],\n  \"samples\": [\n";
+
+    bool firstSample = true;
+    for (const auto& result : results) {
+        if (result.entry.patientId != patientId) continue;
+        if (!firstSample) output << ",\n";
+        firstSample = false;
+
+        const auto& entry = result.entry;
+        output << "    {\n"
+               << "      \"sample_id\": \"" << jsonEscape(entry.sampleId) << "\",\n"
+               << "      \"role\": \"" << jsonEscape(entry.sampleRole) << "\",\n"
+               << "      \"material\": \"" << jsonEscape(entry.material) << "\",\n"
+               << "      \"r1\": \"" << jsonEscape(entry.r1) << "\",\n"
+               << "      \"r2\": \"" << jsonEscape(entry.r2) << "\",\n"
+               << "      \"qc_status\": \"" << (result.passed ? "passed" : "failed") << "\"";
+
+        if (result.passed && result.analysis) {
+            output << ",\n      \"r1_reads\": " << result.analysis->r1Stats.totalReads;
+            if (result.analysis->r2Stats) {
+                output << ",\n      \"r2_reads\": " << result.analysis->r2Stats->totalReads;
+            }
+        } else {
+            output << ",\n      \"qc_error\": \"" << jsonEscape(result.error) << "\"";
+        }
+        output << "\n    }";
+    }
+    output << "\n  ]\n}\n";
 }
 
 // ---------------------------------------------------------------------------
@@ -510,6 +630,89 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: " << msg << "\n\n";
         printUsage(argv[0]);
         return 1;
+    }
+
+    if (!args.samples.empty()) {
+        try {
+            const auto entries = loadAndValidateSampleSheet(args.samples);
+            const auto warnings = validateCaseComposition(entries);
+            std::cout << "Sample sheet is valid: " << args.samples << "\n"
+                      << "Samples: " << entries.size() << "\n";
+            for (const auto& warning : warnings) {
+                std::cout << "Warning: " << warning << "\n";
+            }
+
+            if (args.outDir.empty()) return 0;
+
+            std::error_code ec;
+            fs::create_directories(args.outDir, ec);
+            if (ec) {
+                throw std::runtime_error("Cannot create output directory '" + args.outDir
+                                         + "': " + ec.message());
+            }
+
+            std::vector<BatchSampleResult> results;
+            bool allPassed = true;
+            for (const auto& entry : entries) {
+                const fs::path sampleOutDir = fs::path(args.outDir)
+                                              / entry.patientId / entry.sampleId;
+                fs::create_directories(sampleOutDir, ec);
+                if (ec) {
+                    throw std::runtime_error("Cannot create output directory '"
+                                             + sampleOutDir.string() + "': " + ec.message());
+                }
+
+                std::cout << "\nCase " << entry.patientId << " — checking " << entry.sampleId
+                          << "\nR1: " << entry.r1 << "\n";
+                if (!entry.r2.empty()) std::cout << "R2: " << entry.r2 << "\n";
+
+                try {
+                    AnalysisResult analysis;
+                    if (entry.r2.empty()) {
+                        analysis = processOneFile(entry.r1, "R1", sampleOutDir.string(),
+                                                  entry.sampleId, args.skipAdapters, args.timings);
+                    } else {
+                        analysis = processPairedFiles(entry.r1, entry.r2, sampleOutDir.string(),
+                                                      entry.sampleId, args.skipAdapters, args.timings);
+                    }
+
+                    if (args.plot && !args.skipAdapters) {
+                        ScopedTimer timer(analysis.timers.plotting, args.timings);
+                        const std::string plotDir = (sampleOutDir / "plots").string();
+                        PlotRunner::run((sampleOutDir / "adapter_content_R1.tsv").string(), plotDir);
+                        if (!entry.r2.empty()) {
+                            PlotRunner::run((sampleOutDir / "adapter_content_R2.tsv").string(), plotDir);
+                        }
+                    }
+                    if (args.timings) printPerformanceTimers(analysis.timers);
+                    std::cout << "Result: passed\n";
+                    results.push_back({entry, true, std::move(analysis), ""});
+                } catch (const std::exception& e) {
+                    std::cerr << "Result: failed for " << entry.sampleId << ": " << e.what() << "\n";
+                    allPassed = false;
+                    results.push_back({entry, false, std::nullopt, e.what()});
+                }
+            }
+
+            for (const auto& entry : entries) {
+                const fs::path caseOutDir = fs::path(args.outDir) / entry.patientId;
+                if (!fs::exists(caseOutDir / "case_summary.json")) {
+                    writeCaseSummary(entry.patientId, caseOutDir, results, warnings);
+                    std::cout << "Case summary: " << (caseOutDir / "case_summary.json") << "\n";
+                }
+            }
+
+            if (!allPassed) {
+                std::cerr << "One or more samples failed; the case is not successful.\n";
+                return 1;
+            }
+
+            std::cout << "\nAll samples passed.\n";
+            return 0;
+        } catch (const std::exception& e) {
+            std::cerr << e.what() << '\n';
+            return 1;
+        }
     }
 
     // Проверка входных файлов
@@ -552,7 +755,7 @@ int main(int argc, char* argv[]) {
                 args.outDir,
                 args.sampleId,
                 args.skipAdapters,
-                args.timings);
+                args.timings).timers;
         }
         else
         {
@@ -562,7 +765,7 @@ int main(int argc, char* argv[]) {
                 args.outDir,
                 args.sampleId,
                 args.skipAdapters,
-                args.timings);
+                args.timings).timers;
         }
     }
     catch (const std::exception& e)

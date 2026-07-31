@@ -19,6 +19,7 @@ add_executable(neoqc
     src/fastq_reader.cpp
     src/quality_analyzer.cpp
     src/plot_runner.cpp
+    src/sample_sheet.cpp
 )
 
 target_include_directories(neoqc PRIVATE include)
@@ -43,6 +44,38 @@ add_test(NAME test_correct_single
 # 2. Поиск адаптеров можно отключить для измерения его влияния на скорость.
 add_test(NAME test_skip_adapters
          COMMAND neoqc --r1 ${TEST_DATA_DIR}/correct_single.fq.gz --sample-id test_skip_adapters --out ${TEST_OUT_DIR} --skip-adapters)
+
+# Корректная таблица образцов (запуск QC по ней будет добавлен отдельно).
+add_test(NAME test_valid_sample_sheet
+         COMMAND neoqc --samples ${CMAKE_SOURCE_DIR}/examples/samples.csv)
+set_tests_properties(test_valid_sample_sheet PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+foreach(sheet missing_patient duplicate_sample missing_file duplicate_file different_references wrong_material missing_normal)
+    add_test(NAME test_sample_sheet_${sheet}
+             COMMAND neoqc --samples ${CMAKE_SOURCE_DIR}/tests/sample_sheets/${sheet}.csv)
+    set_tests_properties(test_sample_sheet_${sheet} PROPERTIES
+        WILL_FAIL TRUE
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+endforeach()
+
+add_test(NAME test_sample_sheet_missing_tumor_rna_warning
+         COMMAND neoqc --samples ${CMAKE_SOURCE_DIR}/tests/sample_sheets/missing_tumor_rna.csv)
+set_tests_properties(test_sample_sheet_missing_tumor_rna_warning PROPERTIES
+    PASS_REGULAR_EXPRESSION "Warning: Patient P001: tumor RNA is not specified"
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+add_test(NAME test_sample_sheet_batch_run
+         COMMAND neoqc --samples ${CMAKE_SOURCE_DIR}/tests/sample_sheets/batch_run.csv
+                       --out ${TEST_OUT_DIR}/batch_case)
+set_tests_properties(test_sample_sheet_batch_run PROPERTIES
+    PASS_REGULAR_EXPRESSION "All samples passed"
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+add_test(NAME test_case_summary
+         COMMAND ${CMAKE_COMMAND}
+                 -DCASE_SUMMARY=${TEST_OUT_DIR}/batch_case/P001/case_summary.json
+                 -P ${CMAKE_SOURCE_DIR}/tests/check_case_summary.cmake)
+set_tests_properties(test_case_summary PROPERTIES DEPENDS test_sample_sheet_batch_run)
 
 # 3. Корректная пара R1/R2
 add_test(NAME test_correct_paired

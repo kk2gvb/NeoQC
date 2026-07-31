@@ -1,0 +1,3 @@
+patient_id,sample_id,sample_role,material,r1,r2,platform,library_type,reference
+P001,TUMOR_DNA,tumor,dna,tests/data/correct_pair_R1.fq.gz,tests/data/correct_pair_R2.fq.gz,illumina,wes,GRCh38
+P001,NORMAL_DNA,normal,dna,tests/data/correct_pair_R1.fq.gz,tests/data/medium_R2.fastq.gz,illumina,wes,GRCh38
