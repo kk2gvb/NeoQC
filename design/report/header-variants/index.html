@@ -131,18 +131,23 @@
       position: relative;
       z-index: 1;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 330px;
-      align-items: center;
-      gap: 52px;
+      grid-template-columns: minmax(0, 1.9fr) minmax(320px, .9fr);
+      align-items: stretch;
+      min-height: 116px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.24);
+      border-radius: 2px;
+      background: rgba(3,30,79,.34);
+      box-shadow: 0 6px 22px rgba(3,30,79,.16);
     }
 
-    .header-one .university-lockup { display: grid; grid-template-columns: 116px minmax(0,1fr); align-items: stretch; min-height: 116px; overflow: hidden; border: 1px solid rgba(255,255,255,.24); border-radius: 2px; background: rgba(3,30,79,.34); box-shadow: 0 6px 22px rgba(3,30,79,.16); }
+    .header-one .university-lockup { display: grid; grid-template-columns: 116px minmax(0,1fr); align-items: stretch; width: 100%; min-height: 114px; }
     .header-one .university-emblem-frame { min-height: 114px; padding: 9px; }
     .header-one .university-logo { width: 96px; height: 96px; margin: 0; }
     .header-one .university-identity { padding: 13px 22px 12px; }
     .header-one .university-name { max-width: 520px; font-size: 25px; }
     .header-one .university-subtitle { color: rgba(255,255,255,.62); }
-    .header-one .sponsor { padding-left: 34px; border-left: 1px solid rgba(255,255,255,.3); }
+    .header-one .sponsor { display: flex; min-height: 114px; flex-direction: column; justify-content: center; padding: 14px 28px 13px; border-left: 1px solid rgba(255,255,255,.3); background: rgba(3,30,79,.16); }
     .header-one .sponsor-label { margin: 0 0 13px; color: rgba(255,255,255,.76); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
     .header-one .priority-logo { width: 270px; height: 54px; }
     .header-one .title-block { position: relative; z-index: 1; margin: 31px 0 0 115px; padding-top: 23px; border-top: 1px solid rgba(255,255,255,.24); }
@@ -192,9 +197,11 @@
       .header-two .identity-row,
       .header-three .sponsor-band,
       .header-three .institution-band { grid-template-columns: 1fr; gap: 25px; }
+      .header-one .topline { gap: 0; }
       .header-one .sponsor,
       .header-two .sponsor,
       .header-three .title-block { justify-self: stretch; padding-left: 0; border-left: 0; }
+      .header-one .sponsor { min-height: 100px; padding: 16px 15px; border-top: 1px solid rgba(255,255,255,.25); border-left: 0; }
       .header-one .title-block { margin-left: 0; }
       .header-one .university-lockup { grid-template-columns: 98px minmax(0,1fr); min-height: 100px; }
       .header-one .university-emblem-frame { min-height: 98px; padding: 8px; }
