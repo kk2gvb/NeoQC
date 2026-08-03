@@ -129,15 +129,30 @@
     .qc-decision small { margin-top: 8px; color: rgba(255,255,255,.7); font-size: 9px; }
     .read-name { color: var(--navy); font-weight: 700; }
     .read-name small { display: block; margin-top: 2px; color: var(--muted); font-weight: 400; }
-    .qc-summary { display: grid; grid-template-columns: 150px minmax(0,1fr); gap: 16px; align-items: center; }
-    .qc-summary strong { color: var(--navy); font-size: 11px; }
-    .module-bar { display: flex; height: 10px; overflow: hidden; border-radius: 999px; background: var(--line); }
+    .qc-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+    .qc-panel-head h4 { margin: 0; }
+    .qc-summary-card { min-height: 0; align-self: start; }
+    .qc-total { padding: 4px 8px; border-radius: 999px; background: var(--priority-blue-pale); color: var(--priority-blue-secondary); font-size: 8px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+    .qc-read-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+    .qc-read-card { padding: 13px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+    .qc-read-card header { display: flex; align-items: center; justify-content: space-between; gap: 7px; }
+    .qc-read-label { color: var(--navy); font-size: 12px; font-weight: 700; }
+    .qc-read-state { color: var(--priority-blue-secondary); font-size: 7px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+    .qc-score { display: flex; align-items: end; gap: 6px; margin: 11px 0 9px; }
+    .qc-score strong { color: var(--navy); font: 700 27px/.85 Georgia,"Times New Roman",serif; }
+    .qc-score span { color: var(--muted); font-size: 8px; line-height: 1.2; }
+    .module-bar { display: flex; height: 7px; overflow: hidden; border-radius: 999px; background: var(--line); }
     .module-bar .pass { background: var(--priority-green); }
     .module-bar .attention { background: var(--priority-blue); }
     .module-bar .fail { background: var(--navy); }
-    .module-counts { display: flex; gap: 10px; margin-top: 5px; color: var(--muted); font-size: 8px; }
-    .module-counts b { color: var(--navy); }
-    .qc-note { margin: 16px 0 0; padding: 12px 15px; border-left: 3px solid var(--priority-blue); background: var(--priority-blue-pale); color: var(--muted); font-size: 10px; }
+    .qc-breakdown { display: flex; flex-wrap: wrap; gap: 5px 8px; margin-top: 8px; color: var(--muted); font-size: 7px; }
+    .qc-breakdown span { display: inline-flex; align-items: center; gap: 4px; }
+    .qc-breakdown span::before { width: 5px; height: 5px; border-radius: 50%; background: var(--priority-green); content: ""; }
+    .qc-breakdown .attention::before { background: var(--priority-blue); }
+    .qc-breakdown .deviation::before { background: var(--navy); }
+    .qc-interpretation { display: grid; grid-template-columns: 88px minmax(0,1fr); gap: 12px; align-items: center; margin-top: 12px; padding: 11px 13px; border-left: 3px solid var(--priority-blue); background: var(--priority-blue-pale); }
+    .qc-interpretation strong { color: var(--priority-blue-secondary); font-size: 8px; letter-spacing: .06em; text-transform: uppercase; }
+    .qc-interpretation p { margin: 0; color: var(--muted); font-size: 8px; line-height: 1.4; }
 
     .funnel { display: grid; justify-items: center; gap: 7px; margin: 10px auto 20px; }
     .funnel-step { display: flex; align-items: center; justify-content: center; height: 38px; border-radius: 3px; background: var(--priority-blue); color: #fff; font-size: 11px; }
@@ -221,7 +236,7 @@
     }
 
     @media (max-width: 540px) {
-      .metric-grid, .workflow-grid, .method-grid { grid-template-columns: 1fr; }
+      .metric-grid, .workflow-grid, .method-grid, .qc-read-grid { grid-template-columns: 1fr; }
       .score-row { grid-template-columns: 110px minmax(0,1fr) 30px; }
     }
 
@@ -315,7 +330,7 @@
           </table>
         </div>
         <div class="visual-grid">
-          <div class="chart"><h4>Сводка технических проверок</h4><div class="score-list"><div class="qc-summary"><strong>R1</strong><div><div class="module-bar"><span class="pass" style="width:70%"></span><span class="attention" style="width:20%"></span><span class="fail" style="width:10%"></span></div><div class="module-counts"><span><b>7</b> пройдено</span><span><b>2</b> внимание</span><span><b>1</b> отклонение</span></div></div></div><div class="qc-summary"><strong>R2</strong><div><div class="module-bar"><span class="pass" style="width:60%"></span><span class="attention" style="width:30%"></span><span class="fail" style="width:10%"></span></div><div class="module-counts"><span><b>6</b> пройдено</span><span><b>3</b> внимание</span><span><b>1</b> отклонение</span></div></div></div></div><p class="qc-note">Отклонение в обеих библиотеках связано с уровнем дупликации. Для RNA-seq показатель интерпретируется с учётом типа библиотеки и ожидаемой представленности транскриптов.</p></div>
+          <div class="chart qc-summary-card"><div class="qc-panel-head"><h4>Сводка технических проверок</h4><span class="qc-total">10 показателей</span></div><div class="qc-read-grid"><article class="qc-read-card"><header><span class="qc-read-label">R1</span><span class="qc-read-state">требует внимания</span></header><div class="qc-score"><strong>7</strong><span>из 10<br>пройдено</span></div><div class="module-bar"><span class="pass" style="width:70%"></span><span class="attention" style="width:20%"></span><span class="fail" style="width:10%"></span></div><div class="qc-breakdown"><span>7 пройдено</span><span class="attention">2 внимания</span><span class="deviation">1 отклонение</span></div></article><article class="qc-read-card"><header><span class="qc-read-label">R2</span><span class="qc-read-state">требует внимания</span></header><div class="qc-score"><strong>6</strong><span>из 10<br>пройдено</span></div><div class="module-bar"><span class="pass" style="width:60%"></span><span class="attention" style="width:30%"></span><span class="fail" style="width:10%"></span></div><div class="qc-breakdown"><span>6 пройдено</span><span class="attention">3 внимания</span><span class="deviation">1 отклонение</span></div></article></div><div class="qc-interpretation"><strong>Интерпретация</strong><p>Отклонение связано с уровнем дупликации и оценивается с учётом типа RNA-библиотеки и ожидаемой представленности транскриптов.</p></div></div>
           <div class="chart"><h4>Ключевые наблюдения</h4><ul class="legend-list"><li><span class="legend-dot"></span><span>Качество по позициям</span><strong>R1/R2 · пройдено</strong></li><li><span class="legend-dot"></span><span>Состав оснований</span><strong>R1/R2 · внимание</strong></li><li><span class="legend-dot"></span><span>GC по чтениям</span><strong>R1/R2 · внимание</strong></li><li><span class="legend-dot"></span><span>Частые последовательности</span><strong>R2 · внимание</strong></li><li><span class="legend-dot"></span><span>Адаптеры</span><strong>R1/R2 · пройдено</strong></li></ul></div>
         </div>
         <div class="detail-grid">
