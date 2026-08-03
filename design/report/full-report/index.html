@@ -13,6 +13,8 @@
       --priority-blue-secondary: #192f70;
       --priority-green: #539d96;
       --priority-green-pale: #e8f3f1;
+      --priority-blue-pale: #eef1f8;
+      --priority-blue-track: #eaf0f8;
       --paper: #fff;
       --canvas: #e9edf2;
       --panel: #f4f7f9;
@@ -49,7 +51,7 @@
     .section { padding: 42px 0; border-bottom: 1px solid var(--line); }
     .section:last-child { border-bottom: 0; }
     .section-heading { display: grid; grid-template-columns: 108px minmax(0,1fr); align-items: stretch; gap: 0; margin-bottom: 28px; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: #fff; box-shadow: 0 7px 20px rgba(3,30,79,.06); }
-    .section-number { display: flex; min-height: 98px; flex-direction: column; align-items: center; justify-content: center; padding: 15px 16px 14px; border-right: 4px solid var(--priority-green); background: #eef1f8; color: var(--priority-blue); font: 700 45px/.88 Georgia, "Times New Roman", serif; letter-spacing: -.03em; text-align: center; }
+    .section-number { display: flex; min-height: 98px; flex-direction: column; align-items: center; justify-content: center; padding: 15px 16px 14px; border-right: 4px solid var(--priority-green); background: var(--priority-blue-pale); color: var(--priority-blue); font: 700 45px/.88 Georgia, "Times New Roman", serif; letter-spacing: -.03em; text-align: center; }
     .section-number small { margin: 0 0 9px; color: var(--priority-blue-secondary); font: 700 8px/1 Arial,Helvetica,sans-serif; letter-spacing: .14em; text-transform: uppercase; }
     .section-heading > div { display: flex; min-width: 0; flex-direction: column; justify-content: center; padding: 18px 24px 17px; }
     .section-title { margin: 0 0 7px; color: var(--navy); font: 700 25px/1.2 Georgia, "Times New Roman", serif; }
@@ -91,6 +93,31 @@
     .legend-dot { width: 9px; height: 9px; border-radius: 2px; background: var(--priority-blue); }
     .legend-list li:nth-child(2n) .legend-dot { background: var(--priority-green); }
 
+    .subsection-title { margin: 26px 0 13px; color: var(--navy); font: 700 17px/1.25 Georgia,"Times New Roman",serif; }
+    .workflow { margin-top: 22px; padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+    .workflow-grid { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 8px; }
+    .workflow-step { position: relative; min-height: 86px; padding: 15px 12px 12px; border-radius: 5px; background: #fff; box-shadow: 0 4px 12px rgba(3,30,79,.05); }
+    .workflow-step::after { position: absolute; top: 24px; right: -8px; z-index: 2; width: 8px; height: 2px; background: var(--priority-green); content: ""; }
+    .workflow-step:last-child::after { display: none; }
+    .workflow-step span { display: block; margin-bottom: 8px; color: var(--priority-blue); font-size: 9px; font-weight: 700; letter-spacing: .08em; }
+    .workflow-step strong { display: block; color: var(--navy); font-size: 11px; line-height: 1.3; }
+    .workflow-step small { display: block; margin-top: 5px; color: var(--muted); font-size: 9px; }
+
+    .detail-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px; margin-top: 20px; }
+    .check-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+    .check-list li { display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 11px; }
+    .check-list li:last-child { border-bottom: 0; }
+    .check-mark { display: flex; width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: 50%; background: var(--priority-green-pale); color: var(--navy); font-size: 10px; font-weight: 700; }
+    .check-value { color: var(--priority-blue-secondary); font-weight: 700; }
+    .score-list { display: grid; gap: 13px; }
+    .score-row { display: grid; grid-template-columns: 145px minmax(0,1fr) 34px; gap: 10px; align-items: center; font-size: 10px; }
+    .score-track { height: 7px; overflow: hidden; border-radius: 999px; background: var(--priority-blue-track); }
+    .score-fill { display: block; height: 100%; border-radius: inherit; background: var(--priority-blue); }
+    .score-row:nth-child(2n) .score-fill { background: var(--priority-green); }
+
+    .tag { display: inline-block; padding: 3px 7px; border-radius: 999px; background: var(--priority-green-pale); color: var(--navy); font-size: 9px; font-weight: 700; white-space: nowrap; }
+    .tag.blue { background: var(--priority-blue-pale); color: var(--priority-blue-secondary); }
+
     .funnel { display: grid; justify-items: center; gap: 7px; margin: 10px auto 20px; }
     .funnel-step { display: flex; align-items: center; justify-content: center; height: 38px; border-radius: 3px; background: var(--priority-blue); color: #fff; font-size: 11px; }
     .funnel-step:nth-child(2) { width: 78%; opacity: .88; }
@@ -99,13 +126,28 @@
     .funnel-step:first-child { width: 96%; }
 
     .construct { display: flex; align-items: stretch; min-height: 92px; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; }
-    .construct-part { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; padding: 12px 8px; border-right: 2px solid #fff; background: #eaf0f8; color: var(--navy); text-align: center; }
+    .construct-part { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; padding: 12px 8px; border-right: 2px solid #fff; background: var(--priority-blue-track); color: var(--navy); text-align: center; }
     .construct-part:last-child { border-right: 0; }
     .construct-part.cap { flex: .55; background: var(--priority-green); color: #fff; }
     .construct-part.orf { flex: 2.2; background: var(--priority-blue); color: #fff; }
     .construct-part.poly { flex: .75; background: #d9e7e5; }
     .construct-part strong { font-size: 12px; }
     .construct-part small { margin-top: 4px; opacity: .72; font-size: 9px; }
+
+    .method-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 13px; }
+    .method-card { min-height: 142px; padding: 18px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
+    .method-index { color: var(--priority-green); font-size: 10px; font-weight: 700; letter-spacing: .1em; }
+    .method-card h4 { margin: 10px 0 7px; color: var(--navy); font-size: 13px; }
+    .method-card p { margin: 0; color: var(--muted); font-size: 10px; }
+    .method-meta { margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--line); color: var(--priority-blue-secondary); font-size: 9px; font-weight: 700; }
+
+    .artifact-grid { display: grid; grid-template-columns: 1.25fr .75fr; gap: 18px; }
+    .artifact-list { display: grid; gap: 9px; }
+    .artifact { display: grid; grid-template-columns: 34px minmax(0,1fr) auto; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+    .artifact-icon { display: flex; width: 34px; height: 34px; align-items: center; justify-content: center; border-radius: 4px; background: var(--priority-blue-pale); color: var(--priority-blue); font-size: 9px; font-weight: 700; }
+    .artifact strong { display: block; color: var(--navy); font-size: 11px; }
+    .artifact small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; }
+    .hash { color: var(--muted); font: 9px/1.3 monospace; }
 
     .conclusion { display: grid; grid-template-columns: 1fr .36fr; gap: 20px; }
     .conclusion-box { padding: 25px; border-left: 6px solid var(--priority-green); background: var(--priority-green-pale); }
@@ -142,6 +184,10 @@
       .section-number { min-height: 88px; padding: 13px 10px 12px; font-size: 37px; }
       .section-heading > div { padding: 15px 16px 14px; }
       .metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .workflow-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .workflow-step::after { display: none; }
+      .detail-grid, .artifact-grid { grid-template-columns: 1fr; }
+      .method-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
       .construct { overflow-x: auto; }
       .construct-part { min-width: 105px; }
       .university-lockup { grid-template-columns: 98px minmax(0,1fr); min-height: 100px; }
@@ -153,12 +199,19 @@
       .confidential { text-align: left; }
     }
 
+    @media (max-width: 540px) {
+      .metric-grid, .workflow-grid, .method-grid { grid-template-columns: 1fr; }
+      .score-row { grid-template-columns: 110px minmax(0,1fr) 30px; }
+    }
+
     @media print {
       @page { size: A4; margin: 0; }
       body { background: #fff; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
       .document { width: 100%; margin: 0; box-shadow: none; }
       .report-header { min-height: 72mm; }
-      .section { break-inside: avoid; }
+      .section { break-inside: auto; }
+      .section-heading, .panel, .metric, .chart, .table-wrap, .method-card, .artifact, .construct, .conclusion { break-inside: avoid; }
+      .section-heading { break-after: avoid; }
       .report-main { padding-bottom: 12mm; }
       .back-cover { min-height: 297mm; }
     }
@@ -197,11 +250,22 @@
               <div><dt>Версия программы</dt><dd>neo-mRNA-vax X.X</dd></div>
               <div><dt>Референсный геном</dt><dd>GRChXX</dd></div>
               <div><dt>Дата формирования</dt><dd>ДД.ММ.ГГГГ</dd></div>
-              <div><dt>Тип исследования</dt><dd class="placeholder">Будет заполнено</dd></div>
-              <div><dt>Ответственный специалист</dt><dd class="placeholder">Будет заполнено</dd></div>
+              <div><dt>Тип исследования</dt><dd>—</dd></div>
+              <div><dt>Ответственный специалист</dt><dd>—</dd></div>
             </dl>
           </div>
-          <div class="summary-callout"><span>Общий статус</span><strong>Будет определён программой</strong><p>Краткий итог и ограничения анализа появятся после завершения всех обязательных этапов.</p></div>
+          <div class="summary-callout"><span>Общий статус</span><strong>—</strong><p>Итог выполнения · существенные ограничения · готовность результата</p></div>
+        </div>
+        <div class="workflow">
+          <h3 class="panel-title">Маршрут выполнения анализа</h3>
+          <div class="workflow-grid">
+            <div class="workflow-step"><span>01</span><strong>Регистрация случая</strong><small>входные данные</small></div>
+            <div class="workflow-step"><span>02</span><strong>Контроль качества</strong><small>DNA / RNA</small></div>
+            <div class="workflow-step"><span>03</span><strong>Молекулярный анализ</strong><small>события и аннотации</small></div>
+            <div class="workflow-step"><span>04</span><strong>Ранжирование</strong><small>оценка кандидатов</small></div>
+            <div class="workflow-step"><span>05</span><strong>Проектирование</strong><small>мРНК-конструкция</small></div>
+            <div class="workflow-step"><span>06</span><strong>Формирование отчёта</strong><small>результаты и файлы</small></div>
+          </div>
         </div>
       </section>
 
@@ -211,7 +275,7 @@
           <div><h2 class="section-title">Входные образцы и контроль качества</h2><p class="section-lead">Состав случая, происхождение материала и сводные показатели качества исходных данных.</p></div>
         </div>
         <div class="metric-grid">
-          <div class="metric"><div class="metric-label">Образцов обработано</div><div class="metric-value">XX</div><div class="metric-caption">значение из пайплайна</div></div>
+          <div class="metric"><div class="metric-label">Образцов обработано</div><div class="metric-value">XX</div><div class="metric-caption">всего по случаю</div></div>
           <div class="metric"><div class="metric-label">Прочтений после QC</div><div class="metric-value">—</div><div class="metric-caption">суммарно по библиотекам</div></div>
           <div class="metric"><div class="metric-label">Средняя доля Q30</div><div class="metric-value">— %</div><div class="metric-caption">с указанием порога</div></div>
           <div class="metric"><div class="metric-label">Статус комплекта</div><div class="metric-value">—</div><div class="metric-caption">прошёл / внимание / ошибка</div></div>
@@ -220,15 +284,19 @@
           <table>
             <thead><tr><th>Образец</th><th>Роль</th><th>Материал</th><th>Библиотека</th><th>QC</th></tr></thead>
             <tbody>
-              <tr><td>SAMPLE-01</td><td>Опухоль</td><td>DNA</td><td class="placeholder">Будет заполнено</td><td>—</td></tr>
-              <tr><td>SAMPLE-02</td><td>Норма</td><td>DNA</td><td class="placeholder">Будет заполнено</td><td>—</td></tr>
-              <tr><td>SAMPLE-03</td><td>Опухоль</td><td>RNA</td><td class="placeholder">Будет заполнено</td><td>—</td></tr>
+              <tr><td>SAMPLE-01</td><td>Опухоль</td><td>DNA</td><td>—</td><td><span class="tag">—</span></td></tr>
+              <tr><td>SAMPLE-02</td><td>Норма</td><td>DNA</td><td>—</td><td><span class="tag">—</span></td></tr>
+              <tr><td>SAMPLE-03</td><td>Опухоль</td><td>RNA</td><td>—</td><td><span class="tag">—</span></td></tr>
             </tbody>
           </table>
         </div>
         <div class="visual-grid">
           <div class="chart"><h4>Сводная диаграмма качества</h4><div class="chart-placeholder"><span class="bar" style="height:58%"></span><span class="bar" style="height:82%"></span><span class="bar" style="height:68%"></span><span class="bar" style="height:90%"></span><span class="bar" style="height:74%"></span><span class="bar" style="height:86%"></span></div></div>
           <div class="chart"><h4>Контролируемые показатели</h4><ul class="legend-list"><li><span class="legend-dot"></span><span>Качество оснований</span><strong>—</strong></li><li><span class="legend-dot"></span><span>GC-состав</span><strong>—</strong></li><li><span class="legend-dot"></span><span>Адаптеры</span><strong>—</strong></li><li><span class="legend-dot"></span><span>Комплектность</span><strong>—</strong></li></ul></div>
+        </div>
+        <div class="detail-grid">
+          <div class="panel"><h3 class="panel-title">Комплектность входных данных</h3><ul class="check-list"><li><span class="check-mark">✓</span><span>Опухолевая DNA-библиотека</span><strong class="check-value">—</strong></li><li><span class="check-mark">✓</span><span>Контрольная DNA-библиотека</span><strong class="check-value">—</strong></li><li><span class="check-mark">✓</span><span>Опухолевая RNA-библиотека</span><strong class="check-value">—</strong></li><li><span class="check-mark">✓</span><span>Единый референсный геном</span><strong class="check-value">—</strong></li></ul></div>
+          <div class="panel soft"><h3 class="panel-title">Критерии допуска к анализу</h3><dl class="key-values"><div><dt>Минимальный объём данных</dt><dd>—</dd></div><div><dt>Порог Q30</dt><dd>—</dd></div><div><dt>Допустимый уровень адаптеров</dt><dd>—</dd></div><div><dt>Решение по данным</dt><dd>—</dd></div></dl></div>
         </div>
       </section>
 
@@ -244,6 +312,10 @@
           <div class="metric"><div class="metric-label">Требуют проверки</div><div class="metric-value">XX</div><div class="metric-caption">ограничения анализа</div></div>
         </div>
         <div class="table-wrap"><table><thead><tr><th>Событие</th><th>Ген / локус</th><th>Аннотация</th><th>Экспрессия</th><th>Решение</th></tr></thead><tbody><tr><td class="placeholder">Идентификатор</td><td>—</td><td class="placeholder">Автоматическая аннотация</td><td>—</td><td>—</td></tr><tr><td class="placeholder">Идентификатор</td><td>—</td><td class="placeholder">Автоматическая аннотация</td><td>—</td><td>—</td></tr></tbody></table></div>
+        <div class="detail-grid">
+          <div class="panel"><h3 class="panel-title">Структура набора событий</h3><div class="score-list"><div class="score-row"><span>Категория A</span><span class="score-track"><span class="score-fill" style="width:78%"></span></span><strong>XX</strong></div><div class="score-row"><span>Категория B</span><span class="score-track"><span class="score-fill" style="width:58%"></span></span><strong>XX</strong></div><div class="score-row"><span>Категория C</span><span class="score-track"><span class="score-fill" style="width:36%"></span></span><strong>XX</strong></div><div class="score-row"><span>Категория D</span><span class="score-track"><span class="score-fill" style="width:20%"></span></span><strong>XX</strong></div></div></div>
+          <div class="panel"><h3 class="panel-title">Подтверждающие признаки</h3><ul class="check-list"><li><span class="check-mark">✓</span><span>Техническая надёжность события</span><strong class="check-value">—</strong></li><li><span class="check-mark">✓</span><span>Функциональная аннотация</span><strong class="check-value">—</strong></li><li><span class="check-mark">✓</span><span>Экспрессия в опухолевой RNA</span><strong class="check-value">—</strong></li><li><span class="check-mark">✓</span><span>Соответствие критериям отбора</span><strong class="check-value">—</strong></li></ul></div>
+        </div>
       </section>
 
       <section class="section">
@@ -255,6 +327,8 @@
           <div class="panel soft"><h3 class="panel-title">Воронка отбора</h3><div class="funnel"><div class="funnel-step">Обнаруженные события · XX</div><div class="funnel-step">Прошли технические фильтры · XX</div><div class="funnel-step">Прошли биологические критерии · XX</div><div class="funnel-step">Отобрано · XX</div></div></div>
           <div class="panel"><h3 class="panel-title">Критерии ранжирования</h3><ul class="legend-list"><li><span class="legend-dot"></span><span>Критерий 1</span><strong>вес —</strong></li><li><span class="legend-dot"></span><span>Критерий 2</span><strong>вес —</strong></li><li><span class="legend-dot"></span><span>Критерий 3</span><strong>вес —</strong></li><li><span class="legend-dot"></span><span>Критерий 4</span><strong>вес —</strong></li></ul></div>
         </div>
+        <h3 class="subsection-title">Итоговый рейтинг кандидатов</h3>
+        <div class="table-wrap"><table><thead><tr><th>Ранг</th><th>Кандидат</th><th>Источник</th><th>Экспрессия</th><th>Интегральная оценка</th><th>Статус</th></tr></thead><tbody><tr><td>01</td><td>CANDIDATE-01</td><td>—</td><td>—</td><td>—</td><td><span class="tag">—</span></td></tr><tr><td>02</td><td>CANDIDATE-02</td><td>—</td><td>—</td><td>—</td><td><span class="tag blue">—</span></td></tr><tr><td>03</td><td>CANDIDATE-03</td><td>—</td><td>—</td><td>—</td><td><span class="tag blue">—</span></td></tr></tbody></table></div>
       </section>
 
       <section class="section">
@@ -270,10 +344,14 @@
           <div class="construct-part poly"><strong>poly(A)</strong><small>длина —</small></div>
         </div>
         <div class="metric-grid" style="margin-top:20px;margin-bottom:0">
-          <div class="metric"><div class="metric-label">Общая длина</div><div class="metric-value">— нт</div><div class="metric-caption">рассчитывается программой</div></div>
+          <div class="metric"><div class="metric-label">Общая длина</div><div class="metric-value">— нт</div><div class="metric-caption">полная конструкция</div></div>
           <div class="metric"><div class="metric-label">GC-состав</div><div class="metric-value">— %</div><div class="metric-caption">для полной конструкции</div></div>
           <div class="metric"><div class="metric-label">Кандидатов включено</div><div class="metric-value">XX</div><div class="metric-caption">согласно итоговому рангу</div></div>
-          <div class="metric"><div class="metric-label">Статус проверок</div><div class="metric-value">—</div><div class="metric-caption">набор проверок уточняется</div></div>
+          <div class="metric"><div class="metric-label">Статус проверок</div><div class="metric-value">—</div><div class="metric-caption">контрольная матрица</div></div>
+        </div>
+        <div class="detail-grid">
+          <div class="panel"><h3 class="panel-title">Вычислительные проверки конструкции</h3><ul class="check-list"><li><span class="check-mark">✓</span><span>Целостность открытой рамки считывания</span><strong class="check-value">—</strong></li><li><span class="check-mark">✓</span><span>Границы структурных элементов</span><strong class="check-value">—</strong></li><li><span class="check-mark">✓</span><span>Нежелательные последовательностные мотивы</span><strong class="check-value">—</strong></li><li><span class="check-mark">✓</span><span>Контроль длины и состава</span><strong class="check-value">—</strong></li></ul></div>
+          <div class="panel soft"><h3 class="panel-title">Параметры последовательности</h3><dl class="key-values"><div><dt>Идентификатор конструкции</dt><dd>CONSTRUCT-XXXX</dd></div><div><dt>Число кодируемых элементов</dt><dd>XX</dd></div><div><dt>Длина poly(A)</dt><dd>—</dd></div><div><dt>Контрольная сумма</dt><dd class="hash">—</dd></div></dl></div>
         </div>
       </section>
 
@@ -283,8 +361,45 @@
           <div><h2 class="section-title">Итоговое заключение</h2><p class="section-lead">Консолидированный вывод программы, ограничения результата и поле профессионального подтверждения.</p></div>
         </div>
         <div class="conclusion">
-          <div class="conclusion-box"><h4>Заключение будет сформировано после выполнения анализа</h4><p>Здесь появится утверждённая формулировка: итоговый статус, состав выбранных кандидатов, характеристики конструкции и существенные ограничения интерпретации.</p></div>
+          <div class="conclusion-box"><h4>Итоговый статус: —</h4><p>Состав выбранных кандидатов · характеристики конструкции · существенные ограничения интерпретации · рекомендации по дальнейшим действиям.</p></div>
           <div class="approval"><strong>Ответственный специалист</strong><div class="approval-line">ФИО · подпись · дата</div></div>
+        </div>
+        <div class="detail-grid">
+          <div class="panel"><h3 class="panel-title">Ключевые результаты</h3><ul class="check-list"><li><span class="check-mark">1</span><span>Входные данные и комплектность случая</span><strong class="check-value">—</strong></li><li><span class="check-mark">2</span><span>Отобранные кандидаты</span><strong class="check-value">XX</strong></li><li><span class="check-mark">3</span><span>Итоговая мРНК-конструкция</span><strong class="check-value">—</strong></li></ul></div>
+          <div class="panel"><h3 class="panel-title">Ограничения интерпретации</h3><ul class="check-list"><li><span class="check-mark">•</span><span>Качество и полнота исходного материала</span><strong class="check-value">—</strong></li><li><span class="check-mark">•</span><span>Ограничения вычислительных методов</span><strong class="check-value">—</strong></li><li><span class="check-mark">•</span><span>Необходимость профессиональной верификации</span><strong class="check-value">—</strong></li></ul></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-heading">
+          <span class="section-number"><small>Раздел</small>07</span>
+          <div><h2 class="section-title">Методы и воспроизводимость</h2><p class="section-lead">Версии вычислительных этапов, референсных ресурсов и параметров, необходимых для воспроизведения результата.</p></div>
+        </div>
+        <div class="method-grid">
+          <div class="method-card"><span class="method-index">ЭТАП 01</span><h4>Подготовка данных</h4><p>Проверка структуры, качества и комплектности входных библиотек.</p><div class="method-meta">Версия модуля · —</div></div>
+          <div class="method-card"><span class="method-index">ЭТАП 02</span><h4>Молекулярный анализ</h4><p>Получение набора событий и вычислительных характеристик случая.</p><div class="method-meta">Версия модуля · —</div></div>
+          <div class="method-card"><span class="method-index">ЭТАП 03</span><h4>Аннотация</h4><p>Добавление функциональных признаков и связанных референсных данных.</p><div class="method-meta">Версия ресурсов · —</div></div>
+          <div class="method-card"><span class="method-index">ЭТАП 04</span><h4>Приоритизация</h4><p>Фильтрация и ранжирование кандидатов по утверждённым критериям.</p><div class="method-meta">Профиль параметров · —</div></div>
+          <div class="method-card"><span class="method-index">ЭТАП 05</span><h4>Проектирование</h4><p>Формирование последовательности и контроль характеристик конструкции.</p><div class="method-meta">Версия алгоритма · —</div></div>
+          <div class="method-card"><span class="method-index">ЭТАП 06</span><h4>Отчётность</h4><p>Консолидация результатов, проверка целостности и выпуск документов.</p><div class="method-meta">Схема отчёта · —</div></div>
+        </div>
+        <h3 class="subsection-title">Контекст выполнения</h3>
+        <div class="table-wrap"><table><thead><tr><th>Компонент</th><th>Версия</th><th>Референс / база</th><th>Параметры</th><th>Контрольная сумма</th></tr></thead><tbody><tr><td>neo-mRNA-vax</td><td>—</td><td>—</td><td>PROFILE-XXXX</td><td class="hash">—</td></tr><tr><td>Референсный геном</td><td>—</td><td>—</td><td>—</td><td class="hash">—</td></tr><tr><td>Аннотационные ресурсы</td><td>—</td><td>—</td><td>—</td><td class="hash">—</td></tr></tbody></table></div>
+      </section>
+
+      <section class="section">
+        <div class="section-heading">
+          <span class="section-number"><small>Раздел</small>08</span>
+          <div><h2 class="section-title">Приложения и цифровые результаты</h2><p class="section-lead">Реестр файлов, машиночитаемых таблиц, последовательностей и сведений о происхождении результата.</p></div>
+        </div>
+        <div class="artifact-grid">
+          <div class="artifact-list">
+            <div class="artifact"><span class="artifact-icon">HTML</span><div><strong>report.html</strong><small>Полный человекочитаемый отчёт</small></div><span class="tag">основной</span></div>
+            <div class="artifact"><span class="artifact-icon">TSV</span><div><strong>candidates.tsv</strong><small>Ранжированный набор кандидатов</small></div><span class="tag blue">таблица</span></div>
+            <div class="artifact"><span class="artifact-icon">FA</span><div><strong>construct.fasta</strong><small>Последовательность итоговой конструкции</small></div><span class="tag blue">sequence</span></div>
+            <div class="artifact"><span class="artifact-icon">JSON</span><div><strong>provenance.json</strong><small>Версии, параметры и происхождение данных</small></div><span class="tag blue">metadata</span></div>
+          </div>
+          <div class="panel soft"><h3 class="panel-title">Целостность комплекта</h3><dl class="key-values" style="grid-template-columns:1fr"><div><dt>Идентификатор комплекта</dt><dd>PACKAGE-XXXX</dd></div><div><dt>Дата формирования</dt><dd>ДД.ММ.ГГГГ</dd></div><div><dt>Алгоритм контрольной суммы</dt><dd>SHA-256</dd></div><div><dt>Контрольная сумма манифеста</dt><dd class="hash">—</dd></div></dl></div>
         </div>
       </section>
     </main>
