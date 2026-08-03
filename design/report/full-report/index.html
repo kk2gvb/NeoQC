@@ -48,10 +48,11 @@
     .report-main { padding: 0 48px 54px; }
     .section { padding: 42px 0; border-bottom: 1px solid var(--line); }
     .section:last-child { border-bottom: 0; }
-    .section-heading { display: grid; grid-template-columns: 88px minmax(0,1fr); align-items: start; gap: 22px; margin-bottom: 27px; }
-    .section-number { display: flex; min-height: 70px; flex-direction: column; justify-content: center; padding-right: 17px; border-right: 3px solid var(--priority-green); color: var(--priority-blue); font: 700 43px/.88 Georgia, "Times New Roman", serif; letter-spacing: -.03em; }
-    .section-number small { margin: 0 0 8px 2px; color: var(--muted); font: 700 8px/1 Arial,Helvetica,sans-serif; letter-spacing: .14em; text-transform: uppercase; }
-    .section-title { margin: 2px 0 7px; color: var(--navy); font: 700 25px/1.2 Georgia, "Times New Roman", serif; }
+    .section-heading { display: grid; grid-template-columns: 108px minmax(0,1fr); align-items: stretch; gap: 0; margin-bottom: 28px; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: #fff; box-shadow: 0 7px 20px rgba(3,30,79,.06); }
+    .section-number { display: flex; min-height: 98px; flex-direction: column; align-items: center; justify-content: center; padding: 15px 16px 14px; border-right: 4px solid var(--priority-green); background: #eef1f8; color: var(--priority-blue); font: 700 45px/.88 Georgia, "Times New Roman", serif; letter-spacing: -.03em; text-align: center; }
+    .section-number small { margin: 0 0 9px; color: var(--priority-blue-secondary); font: 700 8px/1 Arial,Helvetica,sans-serif; letter-spacing: .14em; text-transform: uppercase; }
+    .section-heading > div { display: flex; min-width: 0; flex-direction: column; justify-content: center; padding: 18px 24px 17px; }
+    .section-title { margin: 0 0 7px; color: var(--navy); font: 700 25px/1.2 Georgia, "Times New Roman", serif; }
     .section-lead { max-width: 760px; margin: 0; color: var(--muted); font-size: 13px; }
 
     .overview-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 22px; }
@@ -137,8 +138,9 @@
       .header-top, .back-top { min-height: 0; padding: 14px 14px 18px; }
       .sponsor { min-height: 90px; padding: 16px 12px 10px; border-top: 1px solid var(--line); border-left: 0; }
       .title-block, .back-center { margin-left: 0; }
-      .section-heading { grid-template-columns: 70px 1fr; gap: 16px; }
-      .section-number { min-height: 62px; padding-right: 12px; font-size: 36px; }
+      .section-heading { grid-template-columns: 82px 1fr; }
+      .section-number { min-height: 88px; padding: 13px 10px 12px; font-size: 37px; }
+      .section-heading > div { padding: 15px 16px 14px; }
       .metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
       .construct { overflow-x: auto; }
       .construct-part { min-width: 105px; }
