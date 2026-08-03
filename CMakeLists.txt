@@ -14,11 +14,6 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native")
 
 find_package(ZLIB REQUIRED)
 
-add_library(neoqc_html_report
-    src/html_report.cpp
-)
-target_include_directories(neoqc_html_report PUBLIC include)
-
 add_executable(neoqc
     src/main.cpp
     src/fastq_reader.cpp
@@ -33,13 +28,6 @@ target_link_libraries(neoqc PRIVATE ZLIB::ZLIB)
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 enable_testing()
-
-add_executable(html_report_test tests/html_report_test.cpp)
-target_link_libraries(html_report_test PRIVATE neoqc_html_report)
-add_test(NAME test_html_report COMMAND html_report_test)
-
-add_executable(html_report_example examples/html_report_example.cpp)
-target_link_libraries(html_report_example PRIVATE neoqc_html_report)
 
 # Папка с тестовыми данными (пути, как вы сказали, верные)
 set(TEST_DATA_DIR "${CMAKE_SOURCE_DIR}/tests/data")

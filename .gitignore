@@ -7,3 +7,5 @@ plots
 Testing
 ctest.log
 benchmarks
+__pycache__/
+*.py[cod]

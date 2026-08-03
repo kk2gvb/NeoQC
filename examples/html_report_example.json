@@ -1,0 +1,29 @@
+{
+  "title": "Отчёт по персонализированной мРНК-вакцине",
+  "report_version": "0.1",
+  "case_id": "DEMO-001",
+  "generated_at": "2026-08-03T12:00:00Z",
+  "organization": "Название клиники",
+  "metadata": [
+    {"label": "Референсный геном", "value": "GRCh38"},
+    {"label": "Версия пайплайна", "value": "NeoQC 0.1"}
+  ],
+  "sections": [
+    {
+      "id": "sequencing-qc",
+      "title": "Контроль качества секвенирования",
+      "summary": "Пример раздела. Значения передаются аналитическим кодом.",
+      "status": "passed",
+      "metrics": [
+        {"label": "Число прочтений", "value": 48210544, "status": "passed"},
+        {"label": "Доля Q30", "value": 94.8, "unit": "%", "reference_range": ">= 85", "status": "passed"},
+        {"label": "GC-состав", "value": 48.2, "unit": "%", "reference_range": "ожидаемый диапазон", "status": "passed"}
+      ],
+      "tables": []
+    }
+  ],
+  "conclusions": [
+    {"text": "Данные секвенирования пригодны для дальнейшего анализа.", "status": "passed"}
+  ],
+  "disclaimer": "Демонстрационный документ. Не предназначен для принятия клинических решений."
+}
