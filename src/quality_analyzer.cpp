@@ -28,6 +28,7 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
 
     // Подсчёт оснований и качества
     uint64_t readQualSum = 0;
+    uint64_t validQualityBases = 0;
     for (size_t i = 0; i < len; ++i) {
         char c = seq[i];
         // Подсчёт оснований
@@ -50,6 +51,7 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
                 qualitySum[i] += q;
                 qualityCount[i]++;
                 readQualSum += q;
+                validQualityBases++;
 
                 if (q < static_cast<int>(qualityDistribution.size())) {
                     qualityDistribution[q]++;
@@ -59,6 +61,15 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
                 if (q >= 30) q30Count++;
             }
         }
+    }
+
+    if (validQualityBases > 0) {
+        const auto meanQuality = static_cast<size_t>(std::lround(
+            static_cast<double>(readQualSum) / validQualityBases));
+        if (meanQuality >= perSequenceQualityDistribution.size()) {
+            perSequenceQualityDistribution.resize(meanQuality + 1, 0);
+        }
+        perSequenceQualityDistribution[meanQuality]++;
     }
 
 }
@@ -126,6 +137,7 @@ QualityStats QualityAnalyzer::getStats() const {
 
     // Распределение качества
     stats.qualityDistribution = qualityDistribution;
+    stats.perSequenceQualityDistribution = perSequenceQualityDistribution;
 
     return stats;
 }

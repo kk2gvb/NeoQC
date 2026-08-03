@@ -205,6 +205,8 @@ neoqc --r1 sample_R1.fastq.gz \
 - summary.txt
 - per_cycle_R1.tsv
 - per_cycle_R2.tsv
+- per_sequence_quality_R1.tsv
+- per_sequence_quality_R2.tsv
 - adapter_content_R1.tsv
 - adapter_content_R2.tsv
 - quality_distribution

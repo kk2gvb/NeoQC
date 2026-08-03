@@ -32,6 +32,10 @@ struct QualityStats {
 
     // Распределение среднего качества прочтений (гистограмма)
     std::vector<uint64_t> qualityDistribution; // индекс = Phred score
+
+    // Распределение среднего Phred-качества по прочтениям.
+    // Индекс = среднее качество прочтения, округлённое до ближайшего целого.
+    std::vector<uint64_t> perSequenceQualityDistribution;
 };
 
 // ---------------------------------------------------------------------------
@@ -95,4 +99,5 @@ private:
 
     // Распределение среднего качества прочтений
     std::vector<uint64_t> qualityDistribution;
+    std::vector<uint64_t> perSequenceQualityDistribution;
 };

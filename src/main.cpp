@@ -281,6 +281,21 @@ void writeQualityDistributionTsv(
     }
 }
 
+void writePerSequenceQualityTsv(
+    const std::vector<uint64_t>& distribution,
+    const std::string& outDir,
+    const std::string& readName)
+{
+    const std::string path = outDir + "/per_sequence_quality_" + readName + ".tsv";
+    std::ofstream out(path);
+    if (!out) throw std::runtime_error("Cannot write to " + path);
+
+    out << "mean_quality\tread_count\n";
+    for (size_t quality = 0; quality < distribution.size(); ++quality) {
+        out << quality << "\t" << distribution[quality] << "\n";
+    }
+}
+
 void writeAdapterTsv(const std::vector<QualityAnalyzer::Adapter>& adapters,
                      const std::vector<std::vector<uint64_t>>& adapterPosCounts,
                      size_t totalReads,
@@ -367,11 +382,15 @@ AnalysisResult processOneFile(const std::string& path,
         writePerCycleQualityTsv(
             stats.meanQualityPerPosition,
             outDir,
-            "R1");
+            readName);
         writeQualityDistributionTsv(
             stats.qualityDistribution,
             outDir,
-            "R1");
+            readName);
+        writePerSequenceQualityTsv(
+            stats.perSequenceQualityDistribution,
+            outDir,
+            readName);
         if (!skipAdapters) {
             writeAdapterTsv(analyzer.adapters,
                             analyzer.adapterPosCounts,
@@ -508,6 +527,8 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
         writePerCycleQualityTsv(statsR2.meanQualityPerPosition, outDir, "R2");
         writeQualityDistributionTsv(statsR1.qualityDistribution, outDir, "R1");
         writeQualityDistributionTsv(statsR2.qualityDistribution, outDir, "R2");
+        writePerSequenceQualityTsv(statsR1.perSequenceQualityDistribution, outDir, "R1");
+        writePerSequenceQualityTsv(statsR2.perSequenceQualityDistribution, outDir, "R2");
 
         if (!skipAdapters) {
             writeAdapterTsv(analyzerR1.adapters, analyzerR1.adapterPosCounts,
