@@ -118,6 +118,33 @@
     .tag { display: inline-block; padding: 3px 7px; border-radius: 999px; background: var(--priority-green-pale); color: var(--navy); font-size: 9px; font-weight: 700; white-space: nowrap; }
     .tag.blue { background: var(--priority-blue-pale); color: var(--priority-blue-secondary); }
 
+    .qc-intro { display: grid; grid-template-columns: 1.3fr .7fr; gap: 18px; margin-bottom: 20px; }
+    .qc-source { padding: 20px 22px; border-left: 5px solid var(--priority-green); border-radius: 7px; background: var(--panel); }
+    .qc-source span { color: var(--priority-blue); font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+    .qc-source strong { display: block; margin: 7px 0 5px; color: var(--navy); font-size: 14px; }
+    .qc-source p { margin: 0; color: var(--muted); font-size: 10px; }
+    .qc-decision { display: flex; flex-direction: column; justify-content: center; padding: 20px 22px; border-radius: 7px; background: var(--navy); color: #fff; }
+    .qc-decision span { color: var(--priority-green); font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+    .qc-decision strong { margin-top: 7px; font: 700 18px/1.2 Georgia,"Times New Roman",serif; }
+    .qc-decision small { margin-top: 8px; color: rgba(255,255,255,.7); font-size: 9px; }
+    .read-name { color: var(--navy); font-weight: 700; }
+    .read-name small { display: block; margin-top: 2px; color: var(--muted); font-weight: 400; }
+    .qc-summary { display: grid; grid-template-columns: 150px minmax(0,1fr); gap: 16px; align-items: center; }
+    .qc-summary strong { color: var(--navy); font-size: 11px; }
+    .module-bar { display: flex; height: 10px; overflow: hidden; border-radius: 999px; background: var(--line); }
+    .module-bar .pass { background: var(--priority-green); }
+    .module-bar .attention { background: var(--priority-blue); }
+    .module-bar .fail { background: var(--navy); }
+    .module-counts { display: flex; gap: 10px; margin-top: 5px; color: var(--muted); font-size: 8px; }
+    .module-counts b { color: var(--navy); }
+    .coverage-table td:first-child { width: 27%; color: var(--navy); font-weight: 700; }
+    .coverage-table td:nth-child(2) { width: 15%; }
+    .coverage-table td { font-size: 10px; }
+    .coverage-state { display: inline-block; min-width: 70px; padding: 4px 7px; border-radius: 999px; background: var(--priority-green-pale); color: var(--navy); font-size: 8px; font-weight: 700; text-align: center; }
+    .coverage-state.partial { background: var(--priority-blue-pale); color: var(--priority-blue-secondary); }
+    .coverage-state.planned { border: 1px solid var(--line); background: #fff; color: var(--muted); }
+    .qc-note { margin: 16px 0 0; padding: 12px 15px; border-left: 3px solid var(--priority-blue); background: var(--priority-blue-pale); color: var(--muted); font-size: 10px; }
+
     .funnel { display: grid; justify-items: center; gap: 7px; margin: 10px auto 20px; }
     .funnel-step { display: flex; align-items: center; justify-content: center; height: 38px; border-radius: 3px; background: var(--priority-blue); color: #fff; font-size: 11px; }
     .funnel-step:nth-child(2) { width: 78%; opacity: .88; }
@@ -186,7 +213,7 @@
       .metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
       .workflow-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
       .workflow-step::after { display: none; }
-      .detail-grid, .artifact-grid { grid-template-columns: 1fr; }
+      .detail-grid, .artifact-grid, .qc-intro { grid-template-columns: 1fr; }
       .method-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
       .construct { overflow-x: auto; }
       .construct-part { min-width: 105px; }
@@ -272,31 +299,52 @@
       <section class="section">
         <div class="section-heading">
           <span class="section-number"><small>Раздел</small>02</span>
-          <div><h2 class="section-title">Входные образцы и контроль качества</h2><p class="section-lead">Состав случая, происхождение материала и сводные показатели качества исходных данных.</p></div>
+          <div><h2 class="section-title">Входные образцы и контроль качества</h2><p class="section-lead">Приёмка парных библиотек, техническое качество чтений и обоснованное решение о пригодности данных для последующих этапов.</p></div>
+        </div>
+        <div class="qc-intro">
+          <div class="qc-source"><span>Контрольный пример · опухолевая RNA</span><strong>patient1_tumor_rna_L00 · paired-end</strong><p>Источники контроля: R1 и R2 FastQC · версия 0.11.9 · оценка каждой стороны пары отдельно.</p></div>
+          <div class="qc-decision"><span>Предварительный статус</span><strong>Требует интерпретации</strong><small>Предупреждения FastQC не являются автоматическим основанием для исключения библиотеки.</small></div>
         </div>
         <div class="metric-grid">
-          <div class="metric"><div class="metric-label">Образцов обработано</div><div class="metric-value">XX</div><div class="metric-caption">всего по случаю</div></div>
-          <div class="metric"><div class="metric-label">Прочтений после QC</div><div class="metric-value">—</div><div class="metric-caption">суммарно по библиотекам</div></div>
-          <div class="metric"><div class="metric-label">Средняя доля Q30</div><div class="metric-value">— %</div><div class="metric-caption">с указанием порога</div></div>
-          <div class="metric"><div class="metric-label">Статус комплекта</div><div class="metric-value">—</div><div class="metric-caption">прошёл / внимание / ошибка</div></div>
+          <div class="metric"><div class="metric-label">Пар чтений</div><div class="metric-value">66 188 141</div><div class="metric-caption">одинаково для R1 и R2</div></div>
+          <div class="metric"><div class="metric-label">Всего чтений</div><div class="metric-value">132,38 млн</div><div class="metric-caption">132 376 282 · R1 + R2</div></div>
+          <div class="metric"><div class="metric-label">Длина чтения</div><div class="metric-value">100 нт</div><div class="metric-caption">фиксированная длина</div></div>
+          <div class="metric"><div class="metric-label">GC-состав</div><div class="metric-value">50 %</div><div class="metric-caption">R1 и R2</div></div>
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Образец</th><th>Роль</th><th>Материал</th><th>Библиотека</th><th>QC</th></tr></thead>
+            <thead><tr><th>Файл</th><th>Чтений</th><th>Длина</th><th>GC</th><th>Низкое качество</th><th>Итог FastQC</th></tr></thead>
             <tbody>
-              <tr><td>SAMPLE-01</td><td>Опухоль</td><td>DNA</td><td>—</td><td><span class="tag">—</span></td></tr>
-              <tr><td>SAMPLE-02</td><td>Норма</td><td>DNA</td><td>—</td><td><span class="tag">—</span></td></tr>
-              <tr><td>SAMPLE-03</td><td>Опухоль</td><td>RNA</td><td>—</td><td><span class="tag">—</span></td></tr>
+              <tr><td class="read-name">R1<small>patient1_tumor_rna_L00_R1.fastq.gz</small></td><td>66 188 141</td><td>100 нт</td><td>50 %</td><td>0</td><td><span class="tag blue">2 warning · 1 fail</span></td></tr>
+              <tr><td class="read-name">R2<small>patient1_tumor_rna_L00_R2.fastq.gz</small></td><td>66 188 141</td><td>100 нт</td><td>50 %</td><td>0</td><td><span class="tag blue">3 warning · 1 fail</span></td></tr>
             </tbody>
           </table>
         </div>
         <div class="visual-grid">
-          <div class="chart"><h4>Сводная диаграмма качества</h4><div class="chart-placeholder"><span class="bar" style="height:58%"></span><span class="bar" style="height:82%"></span><span class="bar" style="height:68%"></span><span class="bar" style="height:90%"></span><span class="bar" style="height:74%"></span><span class="bar" style="height:86%"></span></div></div>
-          <div class="chart"><h4>Контролируемые показатели</h4><ul class="legend-list"><li><span class="legend-dot"></span><span>Качество оснований</span><strong>—</strong></li><li><span class="legend-dot"></span><span>GC-состав</span><strong>—</strong></li><li><span class="legend-dot"></span><span>Адаптеры</span><strong>—</strong></li><li><span class="legend-dot"></span><span>Комплектность</span><strong>—</strong></li></ul></div>
+          <div class="chart"><h4>Распределение статусов FastQC</h4><div class="score-list"><div class="qc-summary"><strong>R1</strong><div><div class="module-bar"><span class="pass" style="width:70%"></span><span class="attention" style="width:20%"></span><span class="fail" style="width:10%"></span></div><div class="module-counts"><span><b>7</b> пройдено</span><span><b>2</b> внимание</span><span><b>1</b> не пройдено</span></div></div></div><div class="qc-summary"><strong>R2</strong><div><div class="module-bar"><span class="pass" style="width:60%"></span><span class="attention" style="width:30%"></span><span class="fail" style="width:10%"></span></div><div class="module-counts"><span><b>6</b> пройдено</span><span><b>3</b> внимание</span><span><b>1</b> не пройдено</span></div></div></div></div><p class="qc-note">Сигнал «не пройдено» в обеих библиотеках относится к уровню дупликации. Для RNA-seq он должен оцениваться вместе с типом библиотеки и ожидаемой представленностью транскриптов.</p></div>
+          <div class="chart"><h4>Ключевые наблюдения</h4><ul class="legend-list"><li><span class="legend-dot"></span><span>Качество по позициям</span><strong>R1/R2 · PASS</strong></li><li><span class="legend-dot"></span><span>Состав оснований</span><strong>R1/R2 · warning</strong></li><li><span class="legend-dot"></span><span>GC по чтениям</span><strong>R1/R2 · warning</strong></li><li><span class="legend-dot"></span><span>Overrepresented sequences</span><strong>R2 · warning</strong></li><li><span class="legend-dot"></span><span>Адаптеры</span><strong>R1/R2 · PASS</strong></li></ul></div>
+        </div>
+        <h3 class="subsection-title">Покрытие метрик контроля качества в NeoQC</h3>
+        <div class="table-wrap coverage-table">
+          <table>
+            <thead><tr><th>Метрика FastQC</th><th>Покрытие NeoQC</th><th>Состав результата в отчёте</th></tr></thead>
+            <tbody>
+              <tr><td>Basic Statistics</td><td><span class="coverage-state">Есть</span></td><td>Число чтений, кодировка, диапазон длины и общий GC-состав.</td></tr>
+              <tr><td>Per base sequence quality</td><td><span class="coverage-state">Есть</span></td><td>Профиль Phred-score по каждой позиции отдельно для R1 и R2.</td></tr>
+              <tr><td>Per sequence quality scores</td><td><span class="coverage-state planned">Требуется</span></td><td>Средний Phred-score каждого рида и гистограмма распределения.</td></tr>
+              <tr><td>Per base sequence content</td><td><span class="coverage-state planned">Требуется</span></td><td>Доли A/C/G/T/N по каждой позиции в процентах.</td></tr>
+              <tr><td>Per sequence GC content</td><td><span class="coverage-state planned">Требуется</span></td><td>GC% каждого рида и гистограмма распределения.</td></tr>
+              <tr><td>Per base N content</td><td><span class="coverage-state planned">Требуется</span></td><td>Доля неопределённых оснований N по каждой позиции.</td></tr>
+              <tr><td>Sequence Length Distribution</td><td><span class="coverage-state partial">Частично</span></td><td>К min/max/avg необходимо добавить гистограмму длин чтений.</td></tr>
+              <tr><td>Sequence Duplication Levels</td><td><span class="coverage-state planned">Требуется</span></td><td>Частоты идентичных последовательностей и оценка доли дупликации.</td></tr>
+              <tr><td>Overrepresented sequences</td><td><span class="coverage-state planned">Требуется</span></td><td>Последовательности выше заданного порога частоты и их доля.</td></tr>
+              <tr><td>Adapter Content</td><td><span class="coverage-state partial">Частично</span></td><td>Раздельные наборы адаптеров R1/R2 и поддержка частичных совпадений.</td></tr>
+            </tbody>
+          </table>
         </div>
         <div class="detail-grid">
-          <div class="panel"><h3 class="panel-title">Комплектность входных данных</h3><ul class="check-list"><li><span class="check-mark">✓</span><span>Опухолевая DNA-библиотека</span><strong class="check-value">—</strong></li><li><span class="check-mark">✓</span><span>Контрольная DNA-библиотека</span><strong class="check-value">—</strong></li><li><span class="check-mark">✓</span><span>Опухолевая RNA-библиотека</span><strong class="check-value">—</strong></li><li><span class="check-mark">✓</span><span>Единый референсный геном</span><strong class="check-value">—</strong></li></ul></div>
-          <div class="panel soft"><h3 class="panel-title">Критерии допуска к анализу</h3><dl class="key-values"><div><dt>Минимальный объём данных</dt><dd>—</dd></div><div><dt>Порог Q30</dt><dd>—</dd></div><div><dt>Допустимый уровень адаптеров</dt><dd>—</dd></div><div><dt>Решение по данным</dt><dd>—</dd></div></dl></div>
+          <div class="panel"><h3 class="panel-title">Проверки парной библиотеки</h3><ul class="check-list"><li><span class="check-mark">✓</span><span>R1 и R2 присутствуют</span><strong class="check-value">да</strong></li><li><span class="check-mark">✓</span><span>Число чтений согласовано</span><strong class="check-value">да</strong></li><li><span class="check-mark">✓</span><span>Длина чтений согласована</span><strong class="check-value">100 нт</strong></li><li><span class="check-mark">✓</span><span>Чтения, помеченные как низкокачественные</span><strong class="check-value">0</strong></li></ul></div>
+          <div class="panel soft"><h3 class="panel-title">Правило итогового решения</h3><dl class="key-values"><div><dt>Техническая комплектность</dt><dd>пройдена</dd></div><div><dt>Качество по позициям</dt><dd>пройдено</dd></div><div><dt>Сигналы для интерпретации</dt><dd>GC · дупликация</dd></div><div><dt>Допуск к следующему этапу</dt><dd>—</dd></div></dl></div>
         </div>
       </section>
 
