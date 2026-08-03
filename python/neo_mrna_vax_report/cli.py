@@ -14,7 +14,7 @@ from .models import ReportData, ReportValidationError
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Generate a standalone NeoQC HTML report from JSON data."
+        description="Generate a complete neo-mRNA-vax HTML report from JSON data."
     )
     parser.add_argument("--input", required=True, type=Path, help="Input UTF-8 JSON file")
     parser.add_argument("--output", required=True, type=Path, help="Output HTML file")
@@ -36,7 +36,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             include_print_button=not args.no_print_button,
         )
     except (OSError, json.JSONDecodeError, ReportValidationError) as error:
-        print(f"HTML report error: {error}", file=sys.stderr)
+        print(f"neo-mRNA-vax report error: {error}", file=sys.stderr)
         return 1
     print(f"HTML report: {output}")
     return 0

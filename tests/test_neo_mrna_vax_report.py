@@ -8,13 +8,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 
-from neoqc_report import ReportData, ReportValidationError, render_html_report, write_html_report
-from neoqc_report.cli import main
+from neo_mrna_vax_report import (
+    ReportData,
+    ReportValidationError,
+    render_html_report,
+    write_html_report,
+)
+from neo_mrna_vax_report.cli import main
 
 
 def valid_data() -> dict:
     return {
-        "title": "Отчёт по персонализированной мРНК-вакцине",
+        "title": "Итоговый отчёт программы neo-mRNA-vax",
         "report_version": "0.1",
         "case_id": "CASE-001",
         "generated_at": "2026-08-03T12:00:00Z",
@@ -22,8 +27,8 @@ def valid_data() -> dict:
         "metadata": [{"label": "Референс", "value": "GRCh38"}],
         "sections": [
             {
-                "id": "sequencing-qc",
-                "title": "Контроль качества",
+                "id": "sequencing-quality-control",
+                "title": "Контроль качества исходных данных",
                 "status": "passed",
                 "metrics": [
                     {
