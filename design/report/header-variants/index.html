@@ -73,6 +73,10 @@
       object-fit: contain;
     }
 
+    .university-emblem-frame { display: flex; align-items: center; justify-content: center; background: #fff; }
+    .university-identity { display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+    .university-subtitle { margin: 7px 0 0; font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+
     .university-name {
       margin: 0;
       font-family: Georgia, "Times New Roman", serif;
@@ -132,8 +136,12 @@
       gap: 52px;
     }
 
-    .header-one .university-logo { width: 92px; height: 96px; margin-right: 23px; }
-    .header-one .university-name { max-width: 520px; font-size: 26px; }
+    .header-one .university-lockup { display: grid; grid-template-columns: 116px minmax(0,1fr); align-items: stretch; min-height: 116px; overflow: hidden; border: 1px solid rgba(255,255,255,.24); border-radius: 2px; background: rgba(3,30,79,.34); box-shadow: 0 6px 22px rgba(3,30,79,.16); }
+    .header-one .university-emblem-frame { min-height: 114px; padding: 9px; }
+    .header-one .university-logo { width: 96px; height: 96px; margin: 0; }
+    .header-one .university-identity { padding: 13px 22px 12px; }
+    .header-one .university-name { max-width: 520px; font-size: 25px; }
+    .header-one .university-subtitle { color: rgba(255,255,255,.62); }
     .header-one .sponsor { padding-left: 34px; border-left: 1px solid rgba(255,255,255,.3); }
     .header-one .sponsor-label { margin: 0 0 13px; color: rgba(255,255,255,.76); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
     .header-one .priority-logo { width: 270px; height: 54px; }
@@ -188,6 +196,11 @@
       .header-two .sponsor,
       .header-three .title-block { justify-self: stretch; padding-left: 0; border-left: 0; }
       .header-one .title-block { margin-left: 0; }
+      .header-one .university-lockup { grid-template-columns: 98px minmax(0,1fr); min-height: 100px; }
+      .header-one .university-emblem-frame { min-height: 98px; padding: 8px; }
+      .header-one .university-logo { width: 82px; height: 82px; }
+      .header-one .university-identity { padding: 11px 15px; }
+      .header-one .university-name { font-size: 20px; }
       .header-three .priority-logo { justify-self: start; width: min(100%, 360px); }
       .report-context { padding: 28px; }
     }
@@ -217,8 +230,8 @@
       <header class="header-one">
         <div class="topline">
           <div class="university-lockup">
-            <img class="university-logo" src="../../../assets/report/branding/bgmu-emblem.svg" alt="Герб БГМУ">
-            <p class="university-name">Башкирский государственный медицинский университет</p>
+            <div class="university-emblem-frame"><img class="university-logo" src="../../../assets/report/branding/bgmu-emblem.svg" alt="Герб БГМУ"></div>
+            <div class="university-identity"><p class="university-name">Башкирский государственный медицинский университет</p><p class="university-subtitle">ФГБОУ ВО БГМУ Минздрава России</p></div>
           </div>
           <div class="sponsor">
             <p class="sponsor-label">Проект реализуется при поддержке</p>

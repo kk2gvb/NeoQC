@@ -33,9 +33,12 @@
     .report-header { position: relative; min-height: 305px; padding: 31px 48px 36px; overflow: hidden; background: var(--bgmu-blue); color: #fff; }
     .report-header::after { position: absolute; inset: 0 0 0 auto; width: 64%; background: linear-gradient(90deg, transparent, rgba(16,74,118,.08)), url("../../../assets/report/branding/priority-pattern.svg") right center / auto 100% no-repeat; opacity: .28; content: ""; pointer-events: none; }
     .header-top { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0,1fr) 335px; align-items: center; gap: 50px; }
-    .university-lockup { display: flex; align-items: center; min-width: 0; }
-    .university-logo { width: 104px; height: 96px; margin-right: 24px; object-fit: contain; }
-    .university-name { max-width: 520px; margin: 0; font: 700 26px/1.12 Georgia, "Times New Roman", serif; }
+    .university-lockup { display: grid; grid-template-columns: 116px minmax(0,1fr); align-items: stretch; width: min(100%,690px); min-width: 0; min-height: 116px; overflow: hidden; border: 1px solid rgba(255,255,255,.24); border-radius: 2px; background: rgba(3,30,79,.34); box-shadow: 0 6px 22px rgba(3,30,79,.16); }
+    .university-emblem-frame { display: flex; align-items: center; justify-content: center; min-height: 114px; padding: 9px; background: #fff; }
+    .university-logo { width: 96px; height: 96px; object-fit: contain; }
+    .university-identity { display: flex; flex-direction: column; justify-content: center; min-width: 0; padding: 13px 22px 12px; }
+    .university-name { max-width: 520px; margin: 0; font: 700 25px/1.1 Georgia, "Times New Roman", serif; }
+    .university-subtitle { margin: 7px 0 0; color: rgba(255,255,255,.62); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
     .sponsor { padding: 5px 0 5px 34px; border-left: 1px solid rgba(255,255,255,.3); }
     .sponsor-label { margin: 0 0 13px; color: rgba(255,255,255,.74); font-size: 10px; letter-spacing: .09em; text-transform: uppercase; }
     .priority-logo { width: 275px; height: 55px; object-fit: contain; }
@@ -124,8 +127,7 @@
     .back-cover::before { position: absolute; inset: 0 0 0 auto; width: 72%; background: linear-gradient(90deg, transparent 0%, rgba(16,74,118,.12) 30%), url("../../../assets/report/branding/priority-pattern.svg") right center / auto 72% no-repeat; opacity: .26; content: ""; pointer-events: none; }
     .back-cover::after { position: absolute; left: 0; right: 0; bottom: 0; height: 10px; background: linear-gradient(90deg,#fff0 0 65%,var(--priority-green) 65% 100%); content: ""; }
     .back-top { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr 300px; align-items: start; gap: 55px; }
-    .back-cover .university-logo { width: 118px; height: 108px; margin: 0 0 23px; }
-    .back-university { max-width: 590px; margin: 0; font: 700 29px/1.18 Georgia, "Times New Roman", serif; }
+    .back-cover .university-lockup { width: min(100%,700px); }
     .back-sponsor { justify-self: end; padding-left: 34px; border-left: 1px solid rgba(255,255,255,.3); }
     .back-sponsor p { margin: 0 0 13px; color: rgba(255,255,255,.68); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
     .back-sponsor img { width: 265px; height: 55px; }
@@ -151,6 +153,11 @@
       .construct { overflow-x: auto; }
       .construct-part { min-width: 105px; }
       .back-sponsor { justify-self: start; }
+      .university-lockup { grid-template-columns: 98px minmax(0,1fr); min-height: 100px; }
+      .university-emblem-frame { min-height: 98px; padding: 8px; }
+      .university-logo { width: 82px; height: 82px; }
+      .university-identity { padding: 11px 15px; }
+      .university-name { font-size: 20px; }
       .back-bottom { grid-template-columns: 1fr; }
       .confidential { text-align: left; }
     }
@@ -172,8 +179,8 @@
     <header class="report-header">
       <div class="header-top">
         <div class="university-lockup">
-          <img class="university-logo" src="../../../assets/report/branding/bgmu-emblem.svg" alt="Герб БГМУ">
-          <p class="university-name">Башкирский государственный медицинский университет</p>
+          <div class="university-emblem-frame"><img class="university-logo" src="../../../assets/report/branding/bgmu-emblem.svg" alt="Герб БГМУ"></div>
+          <div class="university-identity"><p class="university-name">Башкирский государственный медицинский университет</p><p class="university-subtitle">ФГБОУ ВО БГМУ Минздрава России</p></div>
         </div>
         <div class="sponsor">
           <p class="sponsor-label">Проект реализуется при поддержке</p>
@@ -304,9 +311,9 @@
 
     <section class="back-cover" aria-label="Закрывающая страница отчёта">
       <div class="back-top">
-        <div>
-          <img class="university-logo" src="../../../assets/report/branding/bgmu-emblem.svg" alt="Герб БГМУ">
-          <p class="back-university">Башкирский государственный медицинский университет</p>
+        <div class="university-lockup">
+          <div class="university-emblem-frame"><img class="university-logo" src="../../../assets/report/branding/bgmu-emblem.svg" alt="Герб БГМУ"></div>
+          <div class="university-identity"><p class="university-name">Башкирский государственный медицинский университет</p><p class="university-subtitle">ФГБОУ ВО БГМУ Минздрава России</p></div>
         </div>
         <div class="back-sponsor"><p>Проект реализуется при поддержке</p><img src="../../../assets/report/branding/priority-2030-white.svg" alt="Приоритет 2030"></div>
       </div>
