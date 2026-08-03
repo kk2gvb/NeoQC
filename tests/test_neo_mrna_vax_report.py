@@ -69,6 +69,14 @@ class HtmlReportTest(unittest.TestCase):
         self.assertIn("&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt; &amp; test", html)
         self.assertNotIn('onclick="window.print()"', html)
 
+    def test_render_uses_approved_brand_palette(self) -> None:
+        html = render_html_report(ReportData.from_dict(valid_data())).lower()
+
+        for approved_color in ("#0a132d", "#2947a0", "#192f70", "#031e4f", "#539d96"):
+            self.assertIn(approved_color, html)
+        self.assertNotIn("#104a76", html)
+        self.assertNotIn("#155e75", html)
+
     def test_invalid_table_is_rejected_with_field_path(self) -> None:
         data = valid_data()
         data["sections"][0]["tables"][0]["rows"] = [["only one cell"]]

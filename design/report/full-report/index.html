@@ -8,7 +8,7 @@
     :root {
       --ink: #0a132d;
       --navy: #031e4f;
-      --bgmu-blue: #104a76;
+      --brand-navy: #031e4f;
       --priority-blue: #2947a0;
       --priority-green: #539d96;
       --priority-green-pale: #e8f3f1;
@@ -17,10 +17,10 @@
       --panel: #f4f7f9;
       --muted: #657285;
       --line: #dce3ea;
-      --ok: #256b58;
-      --ok-bg: #e6f3ee;
-      --warn: #8a6419;
-      --warn-bg: #f8f0dc;
+      --ok: #031e4f;
+      --ok-bg: #e8f3f1;
+      --warn: #192f70;
+      --warn-bg: #eef1f8;
     }
 
     * { box-sizing: border-box; }
@@ -30,8 +30,8 @@
     .document { width: min(1120px, calc(100% - 40px)); margin: 32px auto 80px; background: var(--paper); box-shadow: 0 16px 48px rgba(10,19,45,.14); }
 
     /* Утверждённое направление шапки. */
-    .report-header { position: relative; min-height: 305px; padding: 31px 48px 36px; overflow: hidden; background: var(--bgmu-blue); color: #fff; }
-    .report-header::after { position: absolute; inset: 0 0 0 auto; width: 64%; background: linear-gradient(90deg, transparent, rgba(16,74,118,.08)), url("../../../assets/report/branding/priority-pattern.svg") right center / auto 100% no-repeat; opacity: .28; content: ""; pointer-events: none; }
+    .report-header { position: relative; min-height: 305px; padding: 31px 48px 36px; overflow: hidden; background: var(--brand-navy); color: #fff; }
+    .report-header::after { position: absolute; inset: 0 0 0 auto; width: 64%; background: linear-gradient(90deg, transparent, rgba(3,30,79,.08)), url("../../../assets/report/branding/priority-pattern.svg") right center / auto 100% no-repeat; opacity: .28; content: ""; pointer-events: none; }
     .header-top { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0,1fr) 335px; align-items: center; gap: 50px; }
     .university-lockup { display: grid; grid-template-columns: 116px minmax(0,1fr); align-items: stretch; width: min(100%,690px); min-width: 0; min-height: 116px; overflow: hidden; border: 1px solid rgba(255,255,255,.24); border-radius: 2px; background: rgba(3,30,79,.34); box-shadow: 0 6px 22px rgba(3,30,79,.16); }
     .university-emblem-frame { display: flex; align-items: center; justify-content: center; min-height: 114px; padding: 9px; background: #fff; }
@@ -43,11 +43,11 @@
     .sponsor-label { margin: 0 0 13px; color: rgba(255,255,255,.74); font-size: 10px; letter-spacing: .09em; text-transform: uppercase; }
     .priority-logo { width: 275px; height: 55px; object-fit: contain; }
     .title-block { position: relative; z-index: 1; margin: 30px 0 0 128px; padding-top: 23px; border-top: 1px solid rgba(255,255,255,.24); }
-    .eyebrow { margin: 0 0 7px; color: #b9deda; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+    .eyebrow { margin: 0 0 7px; color: var(--priority-green); font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
     .report-title { max-width: 820px; margin: 0; font-size: 28px; font-weight: 600; line-height: 1.16; }
     .header-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 14px; color: rgba(255,255,255,.76); font-size: 12px; }
 
-    .prototype-note { display: flex; align-items: center; gap: 10px; padding: 11px 48px; border-bottom: 1px solid #d8e7e5; background: var(--priority-green-pale); color: #315e5a; font-size: 12px; }
+    .prototype-note { display: flex; align-items: center; gap: 10px; padding: 11px 48px; border-bottom: 1px solid #d8e7e5; background: var(--priority-green-pale); color: var(--ink); font-size: 12px; }
     .prototype-note strong { padding: 3px 8px; border-radius: 999px; background: var(--priority-green); color: #fff; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
 
     .report-main { padding: 0 48px 54px; }
@@ -70,7 +70,7 @@
     .key-values dt { margin: 0 0 3px; color: var(--muted); font-size: 11px; }
     .key-values dd { margin: 0; font-weight: 700; }
     .summary-callout { display: flex; flex-direction: column; justify-content: center; min-height: 100%; padding: 25px; border-radius: 8px; background: var(--navy); color: #fff; }
-    .summary-callout span { color: #91c9c3; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .summary-callout span { color: var(--priority-green); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
     .summary-callout strong { margin: 7px 0 9px; font: 700 23px/1.2 Georgia, "Times New Roman", serif; }
     .summary-callout p { margin: 0; color: rgba(255,255,255,.7); font-size: 12px; }
 
@@ -116,15 +116,15 @@
     .conclusion { display: grid; grid-template-columns: 1fr .36fr; gap: 20px; }
     .conclusion-box { padding: 25px; border-left: 6px solid var(--priority-green); background: var(--priority-green-pale); }
     .conclusion-box h4 { margin: 0 0 8px; color: var(--navy); font: 700 20px Georgia, "Times New Roman", serif; }
-    .conclusion-box p { margin: 0; color: #49645f; font-size: 13px; }
+    .conclusion-box p { margin: 0; color: var(--ink); font-size: 13px; }
     .approval { display: grid; align-content: end; min-height: 150px; padding: 18px; border: 1px solid var(--line); border-radius: 7px; }
     .approval-line { margin-top: 34px; padding-top: 8px; border-top: 1px solid #9faab5; color: var(--muted); font-size: 10px; }
 
     .document-footer { display: flex; justify-content: space-between; gap: 25px; padding: 18px 48px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
 
     /* Закрывающая страница. */
-    .back-cover { position: relative; display: flex; min-height: 720px; flex-direction: column; justify-content: space-between; overflow: hidden; padding: 54px; background: var(--bgmu-blue); color: #fff; break-before: page; }
-    .back-cover::before { position: absolute; inset: 0 0 0 auto; width: 72%; background: linear-gradient(90deg, transparent 0%, rgba(16,74,118,.12) 30%), url("../../../assets/report/branding/priority-pattern.svg") right center / auto 72% no-repeat; opacity: .26; content: ""; pointer-events: none; }
+    .back-cover { position: relative; display: flex; min-height: 720px; flex-direction: column; justify-content: space-between; overflow: hidden; padding: 54px; background: var(--brand-navy); color: #fff; break-before: page; }
+    .back-cover::before { position: absolute; inset: 0 0 0 auto; width: 72%; background: linear-gradient(90deg, transparent 0%, rgba(3,30,79,.12) 30%), url("../../../assets/report/branding/priority-pattern.svg") right center / auto 72% no-repeat; opacity: .26; content: ""; pointer-events: none; }
     .back-cover::after { position: absolute; left: 0; right: 0; bottom: 0; height: 10px; background: linear-gradient(90deg,#fff0 0 65%,var(--priority-green) 65% 100%); content: ""; }
     .back-top { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr 300px; align-items: start; gap: 55px; }
     .back-cover .university-lockup { width: min(100%,700px); }
@@ -132,7 +132,7 @@
     .back-sponsor p { margin: 0 0 13px; color: rgba(255,255,255,.68); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
     .back-sponsor img { width: 265px; height: 55px; }
     .back-center { position: relative; z-index: 1; max-width: 700px; margin-left: 142px; padding-left: 28px; border-left: 5px solid var(--priority-green); }
-    .back-center .program { margin: 0 0 7px; color: #b9deda; font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+    .back-center .program { margin: 0 0 7px; color: var(--priority-green); font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
     .back-center h2 { margin: 0; font: 700 34px/1.15 Georgia, "Times New Roman", serif; }
     .back-center p { margin: 13px 0 0; color: rgba(255,255,255,.67); }
     .back-bottom { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 40px; padding-top: 28px; border-top: 1px solid rgba(255,255,255,.22); }

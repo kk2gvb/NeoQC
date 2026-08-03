@@ -11,7 +11,7 @@
       --priority-blue-secondary: #192f70;
       --priority-navy: #031e4f;
       --priority-green: #539d96;
-      --bgmu-blue: #104a76;
+      --brand-navy: #031e4f;
       --paper: #ffffff;
       --canvas: #e9edf2;
       --muted: #657285;
@@ -113,7 +113,7 @@
       min-height: 292px;
       padding: 30px 46px 34px;
       overflow: hidden;
-      background: var(--bgmu-blue);
+      background: var(--brand-navy);
       color: #fff;
     }
 
@@ -121,7 +121,7 @@
       position: absolute;
       inset: 0 0 0 auto;
       width: 64%;
-      background: linear-gradient(90deg, transparent, rgba(16,74,118,.08)), url("../../../assets/report/branding/priority-pattern.svg") right center / auto 100% no-repeat;
+      background: linear-gradient(90deg, transparent, rgba(3,30,79,.08)), url("../../../assets/report/branding/priority-pattern.svg") right center / auto 100% no-repeat;
       opacity: .28;
       content: "";
       pointer-events: none;
@@ -146,7 +146,7 @@
     .header-one .sponsor-label { margin: 0 0 13px; color: rgba(255,255,255,.76); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
     .header-one .priority-logo { width: 270px; height: 54px; }
     .header-one .title-block { position: relative; z-index: 1; margin: 31px 0 0 115px; padding-top: 23px; border-top: 1px solid rgba(255,255,255,.24); }
-    .header-one .eyebrow { color: #b9deda; }
+    .header-one .eyebrow { color: var(--priority-green); }
     .header-one .report-title { max-width: 800px; font-size: 28px; font-weight: 600; }
     .header-one .report-meta { color: rgba(255,255,255,.78); }
 
@@ -154,7 +154,7 @@
     .header-two { padding: 34px 48px 0; background: #fff; }
     .header-two .identity-row { display: grid; grid-template-columns: minmax(0, 1fr) 285px; align-items: center; gap: 48px; }
     .header-two .university-logo { width: 84px; height: 88px; margin-right: 21px; }
-    .header-two .university-name { max-width: 500px; color: var(--bgmu-blue); font-size: 24px; }
+    .header-two .university-name { max-width: 500px; color: var(--brand-navy); font-size: 24px; }
     .header-two .sponsor { justify-self: end; padding: 12px 0 12px 32px; border-left: 1px solid var(--line); }
     .header-two .sponsor-label { margin: 0 0 10px; color: var(--muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
     .header-two .priority-logo { width: 250px; height: 46px; }
@@ -162,7 +162,7 @@
     .header-two .eyebrow { color: var(--priority-blue); }
     .header-two .report-title { max-width: 850px; font-size: 29px; }
     .header-two .report-meta { color: var(--muted); }
-    .header-two .rule { height: 8px; margin: 0 -48px; background: linear-gradient(90deg, var(--bgmu-blue) 0 67%, var(--priority-green) 67% 100%); }
+    .header-two .rule { height: 8px; margin: 0 -48px; background: linear-gradient(90deg, var(--brand-navy) 0 67%, var(--priority-green) 67% 100%); }
 
     /* Вариант 3: спонсорская полоса имеет отдельный верхний приоритет. */
     .header-three .sponsor-band {
@@ -175,14 +175,14 @@
       background: #eef6f5;
     }
 
-    .header-three .sponsor-copy { color: #315e5a; font-size: 13px; line-height: 1.45; }
+    .header-three .sponsor-copy { color: var(--priority-ink); font-size: 13px; line-height: 1.45; }
     .header-three .sponsor-copy strong { display: block; color: var(--priority-ink); font-size: 15px; }
     .header-three .priority-logo { justify-self: end; width: 360px; height: 55px; }
     .header-three .institution-band { display: grid; grid-template-columns: minmax(0, 1fr) 1.1fr; align-items: center; gap: 56px; min-height: 210px; padding: 30px 48px; background: var(--priority-navy); color: #fff; }
     .header-three .university-logo { width: 88px; height: 92px; margin-right: 22px; padding: 5px; border-radius: 50%; background: #fff; }
     .header-three .university-name { max-width: 455px; font-size: 23px; }
     .header-three .title-block { padding-left: 38px; border-left: 1px solid rgba(255,255,255,.28); }
-    .header-three .eyebrow { color: #8fd0c9; }
+    .header-three .eyebrow { color: var(--priority-green); }
     .header-three .report-title { font-size: 28px; font-weight: 600; }
     .header-three .report-meta { color: rgba(255,255,255,.72); }
 
