@@ -18,10 +18,6 @@
       --panel: #f4f7f9;
       --muted: #657285;
       --line: #dce3ea;
-      --ok: #031e4f;
-      --ok-bg: #e8f3f1;
-      --warn: #192f70;
-      --warn-bg: #eef1f8;
     }
 
     * { box-sizing: border-box; }
@@ -49,19 +45,14 @@
     .report-title { max-width: 820px; margin: 0; font-size: 28px; font-weight: 600; line-height: 1.16; }
     .header-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 14px; color: rgba(255,255,255,.76); font-size: 12px; }
 
-    .prototype-note { display: flex; align-items: center; gap: 10px; padding: 11px 48px; border-bottom: 1px solid #d8e7e5; background: var(--priority-green-pale); color: var(--ink); font-size: 12px; }
-    .prototype-note strong { padding: 3px 8px; border-radius: 999px; background: var(--priority-green); color: #fff; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
-
     .report-main { padding: 0 48px 54px; }
     .section { padding: 42px 0; border-bottom: 1px solid var(--line); }
     .section:last-child { border-bottom: 0; }
-    .section-heading { display: grid; grid-template-columns: 58px minmax(0,1fr) auto; align-items: start; gap: 18px; margin-bottom: 24px; }
-    .section-number { color: var(--priority-green); font-size: 13px; font-weight: 700; letter-spacing: .08em; }
-    .section-title { margin: -4px 0 5px; color: var(--navy); font: 700 25px/1.2 Georgia, "Times New Roman", serif; }
+    .section-heading { display: grid; grid-template-columns: 88px minmax(0,1fr); align-items: start; gap: 22px; margin-bottom: 27px; }
+    .section-number { display: flex; min-height: 70px; flex-direction: column; justify-content: center; padding-right: 17px; border-right: 3px solid var(--priority-green); color: var(--priority-blue); font: 700 43px/.88 Georgia, "Times New Roman", serif; letter-spacing: -.03em; }
+    .section-number small { margin: 0 0 8px 2px; color: var(--muted); font: 700 8px/1 Arial,Helvetica,sans-serif; letter-spacing: .14em; text-transform: uppercase; }
+    .section-title { margin: 2px 0 7px; color: var(--navy); font: 700 25px/1.2 Georgia, "Times New Roman", serif; }
     .section-lead { max-width: 760px; margin: 0; color: var(--muted); font-size: 13px; }
-    .state { padding: 5px 10px; border-radius: 999px; background: #edf1f5; color: #536173; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
-    .state.ok { background: var(--ok-bg); color: var(--ok); }
-    .state.warn { background: var(--warn-bg); color: var(--warn); }
 
     .overview-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 22px; }
     .panel { padding: 22px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
@@ -146,8 +137,8 @@
       .header-top, .back-top { min-height: 0; padding: 14px 14px 18px; }
       .sponsor { min-height: 90px; padding: 16px 12px 10px; border-top: 1px solid var(--line); border-left: 0; }
       .title-block, .back-center { margin-left: 0; }
-      .section-heading { grid-template-columns: 42px 1fr; }
-      .section-heading .state { grid-column: 2; justify-self: start; }
+      .section-heading { grid-template-columns: 70px 1fr; gap: 16px; }
+      .section-number { min-height: 62px; padding-right: 12px; font-size: 36px; }
       .metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
       .construct { overflow-x: auto; }
       .construct-part { min-width: 105px; }
@@ -165,7 +156,6 @@
       body { background: #fff; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
       .document { width: 100%; margin: 0; box-shadow: none; }
       .report-header { min-height: 72mm; }
-      .prototype-note { display: none; }
       .section { break-inside: avoid; }
       .report-main { padding-bottom: 12mm; }
       .back-cover { min-height: 297mm; }
@@ -192,14 +182,11 @@
       </div>
     </header>
 
-    <div class="prototype-note"><strong>Макет</strong> Структура и значения ниже приведены схематично и будут заполняться программой.</div>
-
     <main class="report-main">
       <section class="section">
         <div class="section-heading">
-          <span class="section-number">01</span>
+          <span class="section-number"><small>Раздел</small>01</span>
           <div><h2 class="section-title">Сведения о случае</h2><p class="section-lead">Идентификация анализа, комплектность материала и ключевой итог выполнения программы.</p></div>
-          <span class="state">Схема</span>
         </div>
         <div class="overview-grid">
           <div class="panel soft">
@@ -218,9 +205,8 @@
 
       <section class="section">
         <div class="section-heading">
-          <span class="section-number">02</span>
+          <span class="section-number"><small>Раздел</small>02</span>
           <div><h2 class="section-title">Входные образцы и контроль качества</h2><p class="section-lead">Состав случая, происхождение материала и сводные показатели качества исходных данных.</p></div>
-          <span class="state ok">Раздел QC</span>
         </div>
         <div class="metric-grid">
           <div class="metric"><div class="metric-label">Образцов обработано</div><div class="metric-value">XX</div><div class="metric-caption">значение из пайплайна</div></div>
@@ -246,9 +232,8 @@
 
       <section class="section">
         <div class="section-heading">
-          <span class="section-number">03</span>
-          <div><h2 class="section-title">Результаты молекулярного анализа</h2><p class="section-lead">Сводка обнаруженных событий, аннотаций и подтверждения экспрессии. Точный состав показателей согласуется отдельно.</p></div>
-          <span class="state">Схема</span>
+          <span class="section-number"><small>Раздел</small>03</span>
+          <div><h2 class="section-title">Результаты молекулярного анализа</h2><p class="section-lead">Сводка обнаруженных событий, аннотаций и подтверждения экспрессии.</p></div>
         </div>
         <div class="metric-grid">
           <div class="metric"><div class="metric-label">Событий обнаружено</div><div class="metric-value">XX</div><div class="metric-caption">после первичной фильтрации</div></div>
@@ -261,9 +246,8 @@
 
       <section class="section">
         <div class="section-heading">
-          <span class="section-number">04</span>
+          <span class="section-number"><small>Раздел</small>04</span>
           <div><h2 class="section-title">Отбор и ранжирование кандидатов</h2><p class="section-lead">Прозрачное представление этапов фильтрации, критериев ранжирования и оснований итогового выбора.</p></div>
-          <span class="state warn">Требует согласования</span>
         </div>
         <div class="overview-grid">
           <div class="panel soft"><h3 class="panel-title">Воронка отбора</h3><div class="funnel"><div class="funnel-step">Обнаруженные события · XX</div><div class="funnel-step">Прошли технические фильтры · XX</div><div class="funnel-step">Прошли биологические критерии · XX</div><div class="funnel-step">Отобрано · XX</div></div></div>
@@ -273,11 +257,10 @@
 
       <section class="section">
         <div class="section-heading">
-          <span class="section-number">05</span>
+          <span class="section-number"><small>Раздел</small>05</span>
           <div><h2 class="section-title">Проектирование мРНК-конструкции</h2><p class="section-lead">Состав итоговой конструкции, основные характеристики последовательности и результаты вычислительных проверок.</p></div>
-          <span class="state">Схема</span>
         </div>
-        <div class="construct" aria-label="Схематичное строение мРНК-конструкции">
+        <div class="construct" aria-label="Строение мРНК-конструкции">
           <div class="construct-part cap"><strong>5′ cap</strong><small>элемент</small></div>
           <div class="construct-part"><strong>5′ UTR</strong><small>последовательность</small></div>
           <div class="construct-part orf"><strong>Кодирующая область</strong><small>отобранные кандидаты / линкеры</small></div>
@@ -294,9 +277,8 @@
 
       <section class="section">
         <div class="section-heading">
-          <span class="section-number">06</span>
+          <span class="section-number"><small>Раздел</small>06</span>
           <div><h2 class="section-title">Итоговое заключение</h2><p class="section-lead">Консолидированный вывод программы, ограничения результата и поле профессионального подтверждения.</p></div>
-          <span class="state">Схема</span>
         </div>
         <div class="conclusion">
           <div class="conclusion-box"><h4>Заключение будет сформировано после выполнения анализа</h4><p>Здесь появится утверждённая формулировка: итоговый статус, состав выбранных кандидатов, характеристики конструкции и существенные ограничения интерпретации.</p></div>
