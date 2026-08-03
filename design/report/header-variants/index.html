@@ -115,13 +115,12 @@
 
     .header-one::after {
       position: absolute;
-      right: -115px;
-      bottom: -180px;
-      width: 420px;
-      height: 420px;
-      border: 42px solid rgba(255, 255, 255, 0.045);
-      border-radius: 50%;
+      inset: 0 0 0 auto;
+      width: 64%;
+      background: linear-gradient(90deg, transparent, rgba(16,74,118,.08)), url("../../../assets/report/branding/priority-pattern.svg") right center / auto 100% no-repeat;
+      opacity: .28;
       content: "";
+      pointer-events: none;
     }
 
     .header-one .topline {

@@ -31,7 +31,7 @@
 
     /* Утверждённое направление шапки. */
     .report-header { position: relative; min-height: 305px; padding: 31px 48px 36px; overflow: hidden; background: var(--bgmu-blue); color: #fff; }
-    .report-header::after { position: absolute; right: -110px; bottom: -200px; width: 450px; height: 450px; border: 44px solid rgba(255,255,255,.045); border-radius: 50%; content: ""; }
+    .report-header::after { position: absolute; inset: 0 0 0 auto; width: 64%; background: linear-gradient(90deg, transparent, rgba(16,74,118,.08)), url("../../../assets/report/branding/priority-pattern.svg") right center / auto 100% no-repeat; opacity: .28; content: ""; pointer-events: none; }
     .header-top { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0,1fr) 335px; align-items: center; gap: 50px; }
     .university-lockup { display: flex; align-items: center; min-width: 0; }
     .university-logo { width: 104px; height: 96px; margin-right: 24px; object-fit: contain; }
@@ -121,7 +121,7 @@
 
     /* Закрывающая страница. */
     .back-cover { position: relative; display: flex; min-height: 720px; flex-direction: column; justify-content: space-between; overflow: hidden; padding: 54px; background: var(--bgmu-blue); color: #fff; break-before: page; }
-    .back-cover::before { position: absolute; right: -170px; top: 85px; width: 570px; height: 570px; border: 60px solid rgba(255,255,255,.04); border-radius: 50%; content: ""; }
+    .back-cover::before { position: absolute; inset: 0 0 0 auto; width: 72%; background: linear-gradient(90deg, transparent 0%, rgba(16,74,118,.12) 30%), url("../../../assets/report/branding/priority-pattern.svg") right center / auto 72% no-repeat; opacity: .26; content: ""; pointer-events: none; }
     .back-cover::after { position: absolute; left: 0; right: 0; bottom: 0; height: 10px; background: linear-gradient(90deg,#fff0 0 65%,var(--priority-green) 65% 100%); content: ""; }
     .back-top { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr 300px; align-items: start; gap: 55px; }
     .back-cover .university-logo { width: 118px; height: 108px; margin: 0 0 23px; }
