@@ -137,12 +137,6 @@
     .module-bar .fail { background: var(--navy); }
     .module-counts { display: flex; gap: 10px; margin-top: 5px; color: var(--muted); font-size: 8px; }
     .module-counts b { color: var(--navy); }
-    .coverage-table td:first-child { width: 27%; color: var(--navy); font-weight: 700; }
-    .coverage-table td:nth-child(2) { width: 15%; }
-    .coverage-table td { font-size: 10px; }
-    .coverage-state { display: inline-block; min-width: 70px; padding: 4px 7px; border-radius: 999px; background: var(--priority-green-pale); color: var(--navy); font-size: 8px; font-weight: 700; text-align: center; }
-    .coverage-state.partial { background: var(--priority-blue-pale); color: var(--priority-blue-secondary); }
-    .coverage-state.planned { border: 1px solid var(--line); background: #fff; color: var(--muted); }
     .qc-note { margin: 16px 0 0; padding: 12px 15px; border-left: 3px solid var(--priority-blue); background: var(--priority-blue-pale); color: var(--muted); font-size: 10px; }
 
     .funnel { display: grid; justify-items: center; gap: 7px; margin: 10px auto 20px; }
@@ -302,8 +296,8 @@
           <div><h2 class="section-title">Входные образцы и контроль качества</h2><p class="section-lead">Приёмка парных библиотек, техническое качество чтений и обоснованное решение о пригодности данных для последующих этапов.</p></div>
         </div>
         <div class="qc-intro">
-          <div class="qc-source"><span>Контрольный пример · опухолевая RNA</span><strong>patient1_tumor_rna_L00 · paired-end</strong><p>Источники контроля: R1 и R2 FastQC · версия 0.11.9 · оценка каждой стороны пары отдельно.</p></div>
-          <div class="qc-decision"><span>Предварительный статус</span><strong>Требует интерпретации</strong><small>Предупреждения FastQC не являются автоматическим основанием для исключения библиотеки.</small></div>
+          <div class="qc-source"><span>Опухолевая RNA-библиотека</span><strong>patient1_tumor_rna_L00 · парные чтения</strong><p>Техническое качество R1 и R2 оценивается раздельно с последующим формированием общего решения по библиотеке.</p></div>
+          <div class="qc-decision"><span>Предварительный статус</span><strong>Требует интерпретации</strong><small>Обнаруженные сигналы рассматриваются с учётом типа материала и характеристик библиотеки.</small></div>
         </div>
         <div class="metric-grid">
           <div class="metric"><div class="metric-label">Пар чтений</div><div class="metric-value">66 188 141</div><div class="metric-caption">одинаково для R1 и R2</div></div>
@@ -313,34 +307,16 @@
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Файл</th><th>Чтений</th><th>Длина</th><th>GC</th><th>Низкое качество</th><th>Итог FastQC</th></tr></thead>
+            <thead><tr><th>Файл</th><th>Чтений</th><th>Длина</th><th>GC</th><th>Низкое качество</th><th>Статус контроля</th></tr></thead>
             <tbody>
-              <tr><td class="read-name">R1<small>patient1_tumor_rna_L00_R1.fastq.gz</small></td><td>66 188 141</td><td>100 нт</td><td>50 %</td><td>0</td><td><span class="tag blue">2 warning · 1 fail</span></td></tr>
-              <tr><td class="read-name">R2<small>patient1_tumor_rna_L00_R2.fastq.gz</small></td><td>66 188 141</td><td>100 нт</td><td>50 %</td><td>0</td><td><span class="tag blue">3 warning · 1 fail</span></td></tr>
+              <tr><td class="read-name">R1<small>patient1_tumor_rna_L00_R1.fastq.gz</small></td><td>66 188 141</td><td>100 нт</td><td>50 %</td><td>0</td><td><span class="tag blue">требует внимания</span></td></tr>
+              <tr><td class="read-name">R2<small>patient1_tumor_rna_L00_R2.fastq.gz</small></td><td>66 188 141</td><td>100 нт</td><td>50 %</td><td>0</td><td><span class="tag blue">требует внимания</span></td></tr>
             </tbody>
           </table>
         </div>
         <div class="visual-grid">
-          <div class="chart"><h4>Распределение статусов FastQC</h4><div class="score-list"><div class="qc-summary"><strong>R1</strong><div><div class="module-bar"><span class="pass" style="width:70%"></span><span class="attention" style="width:20%"></span><span class="fail" style="width:10%"></span></div><div class="module-counts"><span><b>7</b> пройдено</span><span><b>2</b> внимание</span><span><b>1</b> не пройдено</span></div></div></div><div class="qc-summary"><strong>R2</strong><div><div class="module-bar"><span class="pass" style="width:60%"></span><span class="attention" style="width:30%"></span><span class="fail" style="width:10%"></span></div><div class="module-counts"><span><b>6</b> пройдено</span><span><b>3</b> внимание</span><span><b>1</b> не пройдено</span></div></div></div></div><p class="qc-note">Сигнал «не пройдено» в обеих библиотеках относится к уровню дупликации. Для RNA-seq он должен оцениваться вместе с типом библиотеки и ожидаемой представленностью транскриптов.</p></div>
-          <div class="chart"><h4>Ключевые наблюдения</h4><ul class="legend-list"><li><span class="legend-dot"></span><span>Качество по позициям</span><strong>R1/R2 · PASS</strong></li><li><span class="legend-dot"></span><span>Состав оснований</span><strong>R1/R2 · warning</strong></li><li><span class="legend-dot"></span><span>GC по чтениям</span><strong>R1/R2 · warning</strong></li><li><span class="legend-dot"></span><span>Overrepresented sequences</span><strong>R2 · warning</strong></li><li><span class="legend-dot"></span><span>Адаптеры</span><strong>R1/R2 · PASS</strong></li></ul></div>
-        </div>
-        <h3 class="subsection-title">Покрытие метрик контроля качества в NeoQC</h3>
-        <div class="table-wrap coverage-table">
-          <table>
-            <thead><tr><th>Метрика FastQC</th><th>Покрытие NeoQC</th><th>Состав результата в отчёте</th></tr></thead>
-            <tbody>
-              <tr><td>Basic Statistics</td><td><span class="coverage-state">Есть</span></td><td>Число чтений, кодировка, диапазон длины и общий GC-состав.</td></tr>
-              <tr><td>Per base sequence quality</td><td><span class="coverage-state">Есть</span></td><td>Профиль Phred-score по каждой позиции отдельно для R1 и R2.</td></tr>
-              <tr><td>Per sequence quality scores</td><td><span class="coverage-state planned">Требуется</span></td><td>Средний Phred-score каждого рида и гистограмма распределения.</td></tr>
-              <tr><td>Per base sequence content</td><td><span class="coverage-state planned">Требуется</span></td><td>Доли A/C/G/T/N по каждой позиции в процентах.</td></tr>
-              <tr><td>Per sequence GC content</td><td><span class="coverage-state planned">Требуется</span></td><td>GC% каждого рида и гистограмма распределения.</td></tr>
-              <tr><td>Per base N content</td><td><span class="coverage-state planned">Требуется</span></td><td>Доля неопределённых оснований N по каждой позиции.</td></tr>
-              <tr><td>Sequence Length Distribution</td><td><span class="coverage-state partial">Частично</span></td><td>К min/max/avg необходимо добавить гистограмму длин чтений.</td></tr>
-              <tr><td>Sequence Duplication Levels</td><td><span class="coverage-state planned">Требуется</span></td><td>Частоты идентичных последовательностей и оценка доли дупликации.</td></tr>
-              <tr><td>Overrepresented sequences</td><td><span class="coverage-state planned">Требуется</span></td><td>Последовательности выше заданного порога частоты и их доля.</td></tr>
-              <tr><td>Adapter Content</td><td><span class="coverage-state partial">Частично</span></td><td>Раздельные наборы адаптеров R1/R2 и поддержка частичных совпадений.</td></tr>
-            </tbody>
-          </table>
+          <div class="chart"><h4>Сводка технических проверок</h4><div class="score-list"><div class="qc-summary"><strong>R1</strong><div><div class="module-bar"><span class="pass" style="width:70%"></span><span class="attention" style="width:20%"></span><span class="fail" style="width:10%"></span></div><div class="module-counts"><span><b>7</b> пройдено</span><span><b>2</b> внимание</span><span><b>1</b> отклонение</span></div></div></div><div class="qc-summary"><strong>R2</strong><div><div class="module-bar"><span class="pass" style="width:60%"></span><span class="attention" style="width:30%"></span><span class="fail" style="width:10%"></span></div><div class="module-counts"><span><b>6</b> пройдено</span><span><b>3</b> внимание</span><span><b>1</b> отклонение</span></div></div></div></div><p class="qc-note">Отклонение в обеих библиотеках связано с уровнем дупликации. Для RNA-seq показатель интерпретируется с учётом типа библиотеки и ожидаемой представленности транскриптов.</p></div>
+          <div class="chart"><h4>Ключевые наблюдения</h4><ul class="legend-list"><li><span class="legend-dot"></span><span>Качество по позициям</span><strong>R1/R2 · пройдено</strong></li><li><span class="legend-dot"></span><span>Состав оснований</span><strong>R1/R2 · внимание</strong></li><li><span class="legend-dot"></span><span>GC по чтениям</span><strong>R1/R2 · внимание</strong></li><li><span class="legend-dot"></span><span>Частые последовательности</span><strong>R2 · внимание</strong></li><li><span class="legend-dot"></span><span>Адаптеры</span><strong>R1/R2 · пройдено</strong></li></ul></div>
         </div>
         <div class="detail-grid">
           <div class="panel"><h3 class="panel-title">Проверки парной библиотеки</h3><ul class="check-list"><li><span class="check-mark">✓</span><span>R1 и R2 присутствуют</span><strong class="check-value">да</strong></li><li><span class="check-mark">✓</span><span>Число чтений согласовано</span><strong class="check-value">да</strong></li><li><span class="check-mark">✓</span><span>Длина чтений согласована</span><strong class="check-value">100 нт</strong></li><li><span class="check-mark">✓</span><span>Чтения, помеченные как низкокачественные</span><strong class="check-value">0</strong></li></ul></div>
