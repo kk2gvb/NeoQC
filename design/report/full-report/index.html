@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Полный макет отчёта neo-mRNA-vax</title>
+  <style>
+    :root {
+      --ink: #0a132d;
+      --navy: #031e4f;
+      --bgmu-blue: #104a76;
+      --priority-blue: #2947a0;
+      --priority-green: #539d96;
+      --priority-green-pale: #e8f3f1;
+      --paper: #fff;
+      --canvas: #e9edf2;
+      --panel: #f4f7f9;
+      --muted: #657285;
+      --line: #dce3ea;
+      --ok: #256b58;
+      --ok-bg: #e6f3ee;
+      --warn: #8a6419;
+      --warn-bg: #f8f0dc;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; background: var(--canvas); color: var(--ink); font: 15px/1.55 Arial, Helvetica, sans-serif; }
+    img { display: block; }
+    .document { width: min(1120px, calc(100% - 40px)); margin: 32px auto 80px; background: var(--paper); box-shadow: 0 16px 48px rgba(10,19,45,.14); }
+
+    /* Утверждённое направление шапки. */
+    .report-header { position: relative; min-height: 305px; padding: 31px 48px 36px; overflow: hidden; background: var(--bgmu-blue); color: #fff; }
+    .report-header::after { position: absolute; right: -110px; bottom: -200px; width: 450px; height: 450px; border: 44px solid rgba(255,255,255,.045); border-radius: 50%; content: ""; }
+    .header-top { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0,1fr) 335px; align-items: center; gap: 50px; }
+    .university-lockup { display: flex; align-items: center; min-width: 0; }
+    .university-logo { width: 104px; height: 96px; margin-right: 24px; object-fit: contain; }
+    .university-name { max-width: 520px; margin: 0; font: 700 26px/1.12 Georgia, "Times New Roman", serif; }
+    .sponsor { padding: 5px 0 5px 34px; border-left: 1px solid rgba(255,255,255,.3); }
+    .sponsor-label { margin: 0 0 13px; color: rgba(255,255,255,.74); font-size: 10px; letter-spacing: .09em; text-transform: uppercase; }
+    .priority-logo { width: 275px; height: 55px; object-fit: contain; }
+    .title-block { position: relative; z-index: 1; margin: 30px 0 0 128px; padding-top: 23px; border-top: 1px solid rgba(255,255,255,.24); }
+    .eyebrow { margin: 0 0 7px; color: #b9deda; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+    .report-title { max-width: 820px; margin: 0; font-size: 28px; font-weight: 600; line-height: 1.16; }
+    .header-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 14px; color: rgba(255,255,255,.76); font-size: 12px; }
+
+    .prototype-note { display: flex; align-items: center; gap: 10px; padding: 11px 48px; border-bottom: 1px solid #d8e7e5; background: var(--priority-green-pale); color: #315e5a; font-size: 12px; }
+    .prototype-note strong { padding: 3px 8px; border-radius: 999px; background: var(--priority-green); color: #fff; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+
+    .report-main { padding: 0 48px 54px; }
+    .section { padding: 42px 0; border-bottom: 1px solid var(--line); }
+    .section:last-child { border-bottom: 0; }
+    .section-heading { display: grid; grid-template-columns: 58px minmax(0,1fr) auto; align-items: start; gap: 18px; margin-bottom: 24px; }
+    .section-number { color: var(--priority-green); font-size: 13px; font-weight: 700; letter-spacing: .08em; }
+    .section-title { margin: -4px 0 5px; color: var(--navy); font: 700 25px/1.2 Georgia, "Times New Roman", serif; }
+    .section-lead { max-width: 760px; margin: 0; color: var(--muted); font-size: 13px; }
+    .state { padding: 5px 10px; border-radius: 999px; background: #edf1f5; color: #536173; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+    .state.ok { background: var(--ok-bg); color: var(--ok); }
+    .state.warn { background: var(--warn-bg); color: var(--warn); }
+
+    .overview-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 22px; }
+    .panel { padding: 22px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+    .panel.soft { background: var(--panel); }
+    .panel-title { margin: 0 0 16px; color: var(--navy); font-size: 14px; }
+    .key-values { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 28px; margin: 0; }
+    .key-values div { padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .key-values dt { margin: 0 0 3px; color: var(--muted); font-size: 11px; }
+    .key-values dd { margin: 0; font-weight: 700; }
+    .summary-callout { display: flex; flex-direction: column; justify-content: center; min-height: 100%; padding: 25px; border-radius: 8px; background: var(--navy); color: #fff; }
+    .summary-callout span { color: #91c9c3; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .summary-callout strong { margin: 7px 0 9px; font: 700 23px/1.2 Georgia, "Times New Roman", serif; }
+    .summary-callout p { margin: 0; color: rgba(255,255,255,.7); font-size: 12px; }
+
+    .metric-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin-bottom: 20px; }
+    .metric { min-height: 122px; padding: 18px; border: 1px solid var(--line); border-top: 4px solid var(--priority-green); border-radius: 7px; background: #fff; }
+    .metric-label { color: var(--muted); font-size: 11px; }
+    .metric-value { margin: 10px 0 5px; color: var(--navy); font-size: 25px; font-weight: 700; }
+    .metric-caption { color: #8290a0; font-size: 10px; }
+
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 7px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { padding: 11px 13px; background: var(--panel); color: #536173; font-size: 10px; letter-spacing: .04em; text-align: left; text-transform: uppercase; }
+    td { padding: 12px 13px; border-top: 1px solid var(--line); vertical-align: top; }
+    .placeholder { color: #9aa5b2; font-style: italic; }
+
+    .visual-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 18px; margin-top: 20px; }
+    .chart { min-height: 245px; padding: 18px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
+    .chart h4 { margin: 0 0 15px; font-size: 13px; }
+    .chart-placeholder { position: relative; display: flex; align-items: end; justify-content: space-around; height: 160px; padding: 20px 18px 0; border-left: 1px solid #bcc7d2; border-bottom: 1px solid #bcc7d2; background: repeating-linear-gradient(to top, transparent 0 39px, #edf1f4 40px); }
+    .bar { width: 10%; border-radius: 3px 3px 0 0; background: var(--priority-blue); opacity: .78; }
+    .bar:nth-child(2n) { background: var(--priority-green); }
+    .legend-list { display: grid; gap: 11px; margin: 0; padding: 0; list-style: none; }
+    .legend-list li { display: grid; grid-template-columns: 10px 1fr auto; gap: 10px; align-items: center; padding-bottom: 9px; border-bottom: 1px solid var(--line); }
+    .legend-dot { width: 9px; height: 9px; border-radius: 2px; background: var(--priority-blue); }
+    .legend-list li:nth-child(2n) .legend-dot { background: var(--priority-green); }
+
+    .funnel { display: grid; justify-items: center; gap: 7px; margin: 10px auto 20px; }
+    .funnel-step { display: flex; align-items: center; justify-content: center; height: 38px; border-radius: 3px; background: var(--priority-blue); color: #fff; font-size: 11px; }
+    .funnel-step:nth-child(2) { width: 78%; opacity: .88; }
+    .funnel-step:nth-child(3) { width: 60%; opacity: .76; }
+    .funnel-step:nth-child(4) { width: 42%; background: var(--priority-green); }
+    .funnel-step:first-child { width: 96%; }
+
+    .construct { display: flex; align-items: stretch; min-height: 92px; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; }
+    .construct-part { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; padding: 12px 8px; border-right: 2px solid #fff; background: #eaf0f8; color: var(--navy); text-align: center; }
+    .construct-part:last-child { border-right: 0; }
+    .construct-part.cap { flex: .55; background: var(--priority-green); color: #fff; }
+    .construct-part.orf { flex: 2.2; background: var(--priority-blue); color: #fff; }
+    .construct-part.poly { flex: .75; background: #d9e7e5; }
+    .construct-part strong { font-size: 12px; }
+    .construct-part small { margin-top: 4px; opacity: .72; font-size: 9px; }
+
+    .conclusion { display: grid; grid-template-columns: 1fr .36fr; gap: 20px; }
+    .conclusion-box { padding: 25px; border-left: 6px solid var(--priority-green); background: var(--priority-green-pale); }
+    .conclusion-box h4 { margin: 0 0 8px; color: var(--navy); font: 700 20px Georgia, "Times New Roman", serif; }
+    .conclusion-box p { margin: 0; color: #49645f; font-size: 13px; }
+    .approval { display: grid; align-content: end; min-height: 150px; padding: 18px; border: 1px solid var(--line); border-radius: 7px; }
+    .approval-line { margin-top: 34px; padding-top: 8px; border-top: 1px solid #9faab5; color: var(--muted); font-size: 10px; }
+
+    .document-footer { display: flex; justify-content: space-between; gap: 25px; padding: 18px 48px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
+
+    /* Закрывающая страница. */
+    .back-cover { position: relative; display: flex; min-height: 720px; flex-direction: column; justify-content: space-between; overflow: hidden; padding: 54px; background: var(--bgmu-blue); color: #fff; break-before: page; }
+    .back-cover::before { position: absolute; right: -170px; top: 85px; width: 570px; height: 570px; border: 60px solid rgba(255,255,255,.04); border-radius: 50%; content: ""; }
+    .back-cover::after { position: absolute; left: 0; right: 0; bottom: 0; height: 10px; background: linear-gradient(90deg,#fff0 0 65%,var(--priority-green) 65% 100%); content: ""; }
+    .back-top { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr 300px; align-items: start; gap: 55px; }
+    .back-cover .university-logo { width: 118px; height: 108px; margin: 0 0 23px; }
+    .back-university { max-width: 590px; margin: 0; font: 700 29px/1.18 Georgia, "Times New Roman", serif; }
+    .back-sponsor { justify-self: end; padding-left: 34px; border-left: 1px solid rgba(255,255,255,.3); }
+    .back-sponsor p { margin: 0 0 13px; color: rgba(255,255,255,.68); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+    .back-sponsor img { width: 265px; height: 55px; }
+    .back-center { position: relative; z-index: 1; max-width: 700px; margin-left: 142px; padding-left: 28px; border-left: 5px solid var(--priority-green); }
+    .back-center .program { margin: 0 0 7px; color: #b9deda; font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+    .back-center h2 { margin: 0; font: 700 34px/1.15 Georgia, "Times New Roman", serif; }
+    .back-center p { margin: 13px 0 0; color: rgba(255,255,255,.67); }
+    .back-bottom { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 40px; padding-top: 28px; border-top: 1px solid rgba(255,255,255,.22); }
+    .back-details { display: grid; grid-template-columns: repeat(2,minmax(0,220px)); gap: 12px 35px; font-size: 11px; }
+    .back-details span { display: block; color: rgba(255,255,255,.58); }
+    .back-details strong { display: block; margin-top: 2px; color: #fff; }
+    .confidential { max-width: 260px; color: rgba(255,255,255,.56); font-size: 9px; line-height: 1.5; text-align: right; text-transform: uppercase; }
+
+    @media (max-width: 820px) {
+      .document { width: 100%; margin: 0; }
+      .report-header, .report-main, .back-cover { padding-left: 24px; padding-right: 24px; }
+      .header-top, .overview-grid, .visual-grid, .conclusion, .back-top { grid-template-columns: 1fr; }
+      .sponsor, .back-sponsor { justify-self: stretch; padding: 20px 0 0; border-top: 1px solid rgba(255,255,255,.25); border-left: 0; }
+      .title-block, .back-center { margin-left: 0; }
+      .section-heading { grid-template-columns: 42px 1fr; }
+      .section-heading .state { grid-column: 2; justify-self: start; }
+      .metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .construct { overflow-x: auto; }
+      .construct-part { min-width: 105px; }
+      .back-sponsor { justify-self: start; }
+      .back-bottom { grid-template-columns: 1fr; }
+      .confidential { text-align: left; }
+    }
+
+    @media print {
+      @page { size: A4; margin: 0; }
+      body { background: #fff; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+      .document { width: 100%; margin: 0; box-shadow: none; }
+      .report-header { min-height: 72mm; }
+      .prototype-note { display: none; }
+      .section { break-inside: avoid; }
+      .report-main { padding-bottom: 12mm; }
+      .back-cover { min-height: 297mm; }
+    }
+  </style>
+</head>
+<body>
+  <article class="document">
+    <header class="report-header">
+      <div class="header-top">
+        <div class="university-lockup">
+          <img class="university-logo" src="../../../assets/report/branding/bgmu-emblem.svg" alt="Герб БГМУ">
+          <p class="university-name">Башкирский государственный медицинский университет</p>
+        </div>
+        <div class="sponsor">
+          <p class="sponsor-label">Проект реализуется при поддержке</p>
+          <img class="priority-logo" src="../../../assets/report/branding/priority-2030-white.svg" alt="Приоритет 2030">
+        </div>
+      </div>
+      <div class="title-block">
+        <p class="eyebrow">neo-mRNA-vax · итоговый документ</p>
+        <h1 class="report-title">Отчёт по результатам проектирования персонализированной мРНК-вакцины</h1>
+        <div class="header-meta"><span>Идентификатор случая: CASE-XXXX</span><span>Версия отчёта: 0.1</span><span>Дата: ДД.ММ.ГГГГ</span></div>
+      </div>
+    </header>
+
+    <div class="prototype-note"><strong>Макет</strong> Структура и значения ниже приведены схематично и будут заполняться программой.</div>
+
+    <main class="report-main">
+      <section class="section">
+        <div class="section-heading">
+          <span class="section-number">01</span>
+          <div><h2 class="section-title">Сведения о случае</h2><p class="section-lead">Идентификация анализа, комплектность материала и ключевой итог выполнения программы.</p></div>
+          <span class="state">Схема</span>
+        </div>
+        <div class="overview-grid">
+          <div class="panel soft">
+            <dl class="key-values">
+              <div><dt>Идентификатор случая</dt><dd>CASE-XXXX</dd></div>
+              <div><dt>Версия программы</dt><dd>neo-mRNA-vax X.X</dd></div>
+              <div><dt>Референсный геном</dt><dd>GRChXX</dd></div>
+              <div><dt>Дата формирования</dt><dd>ДД.ММ.ГГГГ</dd></div>
+              <div><dt>Тип исследования</dt><dd class="placeholder">Будет заполнено</dd></div>
+              <div><dt>Ответственный специалист</dt><dd class="placeholder">Будет заполнено</dd></div>
+            </dl>
+          </div>
+          <div class="summary-callout"><span>Общий статус</span><strong>Будет определён программой</strong><p>Краткий итог и ограничения анализа появятся после завершения всех обязательных этапов.</p></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-heading">
+          <span class="section-number">02</span>
+          <div><h2 class="section-title">Входные образцы и контроль качества</h2><p class="section-lead">Состав случая, происхождение материала и сводные показатели качества исходных данных.</p></div>
+          <span class="state ok">Раздел QC</span>
+        </div>
+        <div class="metric-grid">
+          <div class="metric"><div class="metric-label">Образцов обработано</div><div class="metric-value">XX</div><div class="metric-caption">значение из пайплайна</div></div>
+          <div class="metric"><div class="metric-label">Прочтений после QC</div><div class="metric-value">—</div><div class="metric-caption">суммарно по библиотекам</div></div>
+          <div class="metric"><div class="metric-label">Средняя доля Q30</div><div class="metric-value">— %</div><div class="metric-caption">с указанием порога</div></div>
+          <div class="metric"><div class="metric-label">Статус комплекта</div><div class="metric-value">—</div><div class="metric-caption">прошёл / внимание / ошибка</div></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Образец</th><th>Роль</th><th>Материал</th><th>Библиотека</th><th>QC</th></tr></thead>
+            <tbody>
+              <tr><td>SAMPLE-01</td><td>Опухоль</td><td>DNA</td><td class="placeholder">Будет заполнено</td><td>—</td></tr>
+              <tr><td>SAMPLE-02</td><td>Норма</td><td>DNA</td><td class="placeholder">Будет заполнено</td><td>—</td></tr>
+              <tr><td>SAMPLE-03</td><td>Опухоль</td><td>RNA</td><td class="placeholder">Будет заполнено</td><td>—</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="visual-grid">
+          <div class="chart"><h4>Сводная диаграмма качества</h4><div class="chart-placeholder"><span class="bar" style="height:58%"></span><span class="bar" style="height:82%"></span><span class="bar" style="height:68%"></span><span class="bar" style="height:90%"></span><span class="bar" style="height:74%"></span><span class="bar" style="height:86%"></span></div></div>
+          <div class="chart"><h4>Контролируемые показатели</h4><ul class="legend-list"><li><span class="legend-dot"></span><span>Качество оснований</span><strong>—</strong></li><li><span class="legend-dot"></span><span>GC-состав</span><strong>—</strong></li><li><span class="legend-dot"></span><span>Адаптеры</span><strong>—</strong></li><li><span class="legend-dot"></span><span>Комплектность</span><strong>—</strong></li></ul></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-heading">
+          <span class="section-number">03</span>
+          <div><h2 class="section-title">Результаты молекулярного анализа</h2><p class="section-lead">Сводка обнаруженных событий, аннотаций и подтверждения экспрессии. Точный состав показателей согласуется отдельно.</p></div>
+          <span class="state">Схема</span>
+        </div>
+        <div class="metric-grid">
+          <div class="metric"><div class="metric-label">Событий обнаружено</div><div class="metric-value">XX</div><div class="metric-caption">после первичной фильтрации</div></div>
+          <div class="metric"><div class="metric-label">Прошли фильтры</div><div class="metric-value">XX</div><div class="metric-caption">кандидаты для оценки</div></div>
+          <div class="metric"><div class="metric-label">Подтверждена экспрессия</div><div class="metric-value">XX</div><div class="metric-caption">по данным RNA</div></div>
+          <div class="metric"><div class="metric-label">Требуют проверки</div><div class="metric-value">XX</div><div class="metric-caption">ограничения анализа</div></div>
+        </div>
+        <div class="table-wrap"><table><thead><tr><th>Событие</th><th>Ген / локус</th><th>Аннотация</th><th>Экспрессия</th><th>Решение</th></tr></thead><tbody><tr><td class="placeholder">Идентификатор</td><td>—</td><td class="placeholder">Автоматическая аннотация</td><td>—</td><td>—</td></tr><tr><td class="placeholder">Идентификатор</td><td>—</td><td class="placeholder">Автоматическая аннотация</td><td>—</td><td>—</td></tr></tbody></table></div>
+      </section>
+
+      <section class="section">
+        <div class="section-heading">
+          <span class="section-number">04</span>
+          <div><h2 class="section-title">Отбор и ранжирование кандидатов</h2><p class="section-lead">Прозрачное представление этапов фильтрации, критериев ранжирования и оснований итогового выбора.</p></div>
+          <span class="state warn">Требует согласования</span>
+        </div>
+        <div class="overview-grid">
+          <div class="panel soft"><h3 class="panel-title">Воронка отбора</h3><div class="funnel"><div class="funnel-step">Обнаруженные события · XX</div><div class="funnel-step">Прошли технические фильтры · XX</div><div class="funnel-step">Прошли биологические критерии · XX</div><div class="funnel-step">Отобрано · XX</div></div></div>
+          <div class="panel"><h3 class="panel-title">Критерии ранжирования</h3><ul class="legend-list"><li><span class="legend-dot"></span><span>Критерий 1</span><strong>вес —</strong></li><li><span class="legend-dot"></span><span>Критерий 2</span><strong>вес —</strong></li><li><span class="legend-dot"></span><span>Критерий 3</span><strong>вес —</strong></li><li><span class="legend-dot"></span><span>Критерий 4</span><strong>вес —</strong></li></ul></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-heading">
+          <span class="section-number">05</span>
+          <div><h2 class="section-title">Проектирование мРНК-конструкции</h2><p class="section-lead">Состав итоговой конструкции, основные характеристики последовательности и результаты вычислительных проверок.</p></div>
+          <span class="state">Схема</span>
+        </div>
+        <div class="construct" aria-label="Схематичное строение мРНК-конструкции">
+          <div class="construct-part cap"><strong>5′ cap</strong><small>элемент</small></div>
+          <div class="construct-part"><strong>5′ UTR</strong><small>последовательность</small></div>
+          <div class="construct-part orf"><strong>Кодирующая область</strong><small>отобранные кандидаты / линкеры</small></div>
+          <div class="construct-part"><strong>3′ UTR</strong><small>последовательность</small></div>
+          <div class="construct-part poly"><strong>poly(A)</strong><small>длина —</small></div>
+        </div>
+        <div class="metric-grid" style="margin-top:20px;margin-bottom:0">
+          <div class="metric"><div class="metric-label">Общая длина</div><div class="metric-value">— нт</div><div class="metric-caption">рассчитывается программой</div></div>
+          <div class="metric"><div class="metric-label">GC-состав</div><div class="metric-value">— %</div><div class="metric-caption">для полной конструкции</div></div>
+          <div class="metric"><div class="metric-label">Кандидатов включено</div><div class="metric-value">XX</div><div class="metric-caption">согласно итоговому рангу</div></div>
+          <div class="metric"><div class="metric-label">Статус проверок</div><div class="metric-value">—</div><div class="metric-caption">набор проверок уточняется</div></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-heading">
+          <span class="section-number">06</span>
+          <div><h2 class="section-title">Итоговое заключение</h2><p class="section-lead">Консолидированный вывод программы, ограничения результата и поле профессионального подтверждения.</p></div>
+          <span class="state">Схема</span>
+        </div>
+        <div class="conclusion">
+          <div class="conclusion-box"><h4>Заключение будет сформировано после выполнения анализа</h4><p>Здесь появится утверждённая формулировка: итоговый статус, состав выбранных кандидатов, характеристики конструкции и существенные ограничения интерпретации.</p></div>
+          <div class="approval"><strong>Ответственный специалист</strong><div class="approval-line">ФИО · подпись · дата</div></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="document-footer"><span>neo-mRNA-vax · полный отчёт</span><span>CASE-XXXX · версия 0.1</span><span>Страница формируется автоматически</span></footer>
+
+    <section class="back-cover" aria-label="Закрывающая страница отчёта">
+      <div class="back-top">
+        <div>
+          <img class="university-logo" src="../../../assets/report/branding/bgmu-emblem.svg" alt="Герб БГМУ">
+          <p class="back-university">Башкирский государственный медицинский университет</p>
+        </div>
+        <div class="back-sponsor"><p>Проект реализуется при поддержке</p><img src="../../../assets/report/branding/priority-2030-white.svg" alt="Приоритет 2030"></div>
+      </div>
+      <div class="back-center"><p class="program">neo-mRNA-vax</p><h2>Персонализированная мРНК-вакцина</h2><p>Итоговый отчёт по результатам вычислительного проектирования</p></div>
+      <div class="back-bottom">
+        <div class="back-details">
+          <div><span>Идентификатор случая</span><strong>CASE-XXXX</strong></div>
+          <div><span>Версия документа</span><strong>0.1</strong></div>
+          <div><span>Дата формирования</span><strong>ДД.ММ.ГГГГ</strong></div>
+          <div><span>Место формирования</span><strong>Уфа</strong></div>
+        </div>
+        <div class="confidential">Конфиденциальный документ. Предназначен для использования уполномоченными специалистами в пределах утверждённого назначения.</div>
+      </div>
+    </section>
+  </article>
+</body>
+</html>
