@@ -1,0 +1,16 @@
+function(check_adapter_report PATH ADAPTER_NAME)
+    if(NOT EXISTS "${PATH}")
+        message(FATAL_ERROR "Adapter report was not created: ${PATH}")
+    endif()
+
+    file(READ "${PATH}" CONTENT)
+    if(NOT CONTENT MATCHES "${ADAPTER_NAME}")
+        message(FATAL_ERROR "Missing ${ADAPTER_NAME} column in ${PATH}")
+    endif()
+    if(NOT CONTENT MATCHES "100\\.0000")
+        message(FATAL_ERROR "Expected adapter detection in ${PATH}")
+    endif()
+endfunction()
+
+check_adapter_report("${R1_REPORT}" "TruSeq_R1")
+check_adapter_report("${R2_REPORT}" "TruSeq_R2")

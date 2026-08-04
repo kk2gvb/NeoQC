@@ -111,7 +111,7 @@ def main():
     )
 
     plt.xlim(1, max(x))
-    plt.ylim(0, 120)
+    plt.ylim(1, 100)
 
     plt.xticks(fontsize=11)
     plt.yticks(fontsize=11)

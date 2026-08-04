@@ -38,12 +38,17 @@ struct QualityStats {
     std::vector<uint64_t> perSequenceQualityDistribution;
 };
 
+enum class ReadDirection {
+    R1,
+    R2
+};
+
 // ---------------------------------------------------------------------------
 // Анализатор качества
 // ---------------------------------------------------------------------------
 class QualityAnalyzer {
 public:
-    QualityAnalyzer();
+    explicit QualityAnalyzer(ReadDirection direction = ReadDirection::R1);
 
     // Обработка одной FASTQ-записи
     void processRecord(const FastqRecord& record);
@@ -61,16 +66,14 @@ public:
     struct Adapter {
         std::string name;
         std::string sequence;
+        // Начальный k-mer, используемый для обнаружения adapter в риде.
+        std::string detectionSequence;
     };
 
-    std::vector<Adapter> adapters = {
-        {"Universal",    "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA"},
-        {"SmallRNA3'",   "TGGAATTCTCGGGTGCCAAGG"},
-        {"SmallRNA5'",   "GTTCAGAGTTCTACAGTCCGACGATC"},
-        {"Nextera",      "CTGTCTCTTATACACATCT"}
-    };
+    std::vector<Adapter> adapters;
 
-    // Счётчики позиций адаптеров: adapterPosCounts[aid][position]
+    // Кумулятивные счётчики: после обнаружения adapter на позиции значение
+    // увеличивается до конца рида, как в FastQC Adapter Content.
     std::vector<std::vector<uint64_t>> adapterPosCounts;
 
 private:

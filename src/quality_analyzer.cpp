@@ -2,7 +2,32 @@
 #include <algorithm>
 #include <cmath>
 
-QualityAnalyzer::QualityAnalyzer() {
+namespace {
+constexpr size_t kAdapterDetectionKmerLength = 12;
+}
+
+QualityAnalyzer::QualityAnalyzer(ReadDirection direction) {
+    if (direction == ReadDirection::R1) {
+        adapters = {
+            {"TruSeq_R1", "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA"},
+            {"SmallRNA3'", "TGGAATTCTCGGGTGCCAAGG"},
+            {"SmallRNA5'", "GTTCAGAGTTCTACAGTCCGACGATC"},
+            {"Nextera", "CTGTCTCTTATACACATCT"}
+        };
+    } else {
+        adapters = {
+            {"TruSeq_R2", "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT"},
+            {"SmallRNA3'", "TGGAATTCTCGGGTGCCAAGG"},
+            {"SmallRNA5'", "GTTCAGAGTTCTACAGTCCGACGATC"},
+            {"Nextera", "CTGTCTCTTATACACATCT"}
+        };
+    }
+
+    for (auto& adapter : adapters) {
+        adapter.detectionSequence = adapter.sequence.substr(
+            0, std::min(kAdapterDetectionKmerLength, adapter.sequence.size()));
+    }
+
     adapterPosCounts.resize(adapters.size());
     qualityDistribution.assign(50, 0); // Phred scores 0..49
 }
@@ -79,21 +104,21 @@ void QualityAnalyzer::analyzeAdapters(const FastqRecord& record) {
     bool foundInRead = false;
 
     for (size_t aid = 0; aid < adapters.size(); ++aid) {
-        const std::string& adapter = adapters[aid].sequence;
-        const size_t position = seq.find(adapter);
+        const std::string& detectionSequence = adapters[aid].detectionSequence;
+        const size_t position = seq.find(detectionSequence);
 
         if (position == std::string::npos) {
             continue;
         }
 
-        const size_t adapterLength = adapter.length();
-
-        if (adapterPosCounts[aid].size() < position + adapterLength) {
-            adapterPosCounts[aid].resize(position + adapterLength, 0);
+        if (adapterPosCounts[aid].size() < seq.size()) {
+            adapterPosCounts[aid].resize(seq.size(), 0);
         }
 
-        for (size_t j = 0; j < adapterLength; ++j) {
-            adapterPosCounts[aid][position + j]++;
+        // FastQC reports a cumulative trace: once an adapter k-mer is found,
+        // the read is counted from that position through its end.
+        for (size_t j = position; j < seq.size(); ++j) {
+            adapterPosCounts[aid][j]++;
         }
 
         foundInRead = true;

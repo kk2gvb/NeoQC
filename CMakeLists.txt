@@ -87,6 +87,30 @@ set_tests_properties(test_case_summary PROPERTIES DEPENDS test_sample_sheet_batc
 add_test(NAME test_correct_paired
          COMMAND neoqc --r1 ${TEST_DATA_DIR}/correct_pair_R1.fq.gz --r2 ${TEST_DATA_DIR}/correct_pair_R2.fq.gz --sample-id test_pair --out ${TEST_OUT_DIR})
 
+add_test(NAME test_adapter_profiles
+         COMMAND neoqc --r1 ${TEST_DATA_DIR}/adapter_profile_R1.fq
+                       --r2 ${TEST_DATA_DIR}/adapter_profile_R2.fq
+                       --sample-id adapter_profile
+                       --out ${TEST_OUT_DIR}/adapter_profile)
+add_test(NAME test_adapter_profiles_report
+         COMMAND ${CMAKE_COMMAND}
+                 -DR1_REPORT=${TEST_OUT_DIR}/adapter_profile/adapter_content_R1.tsv
+                 -DR2_REPORT=${TEST_OUT_DIR}/adapter_profile/adapter_content_R2.tsv
+                 -P ${CMAKE_SOURCE_DIR}/tests/check_adapter_profiles.cmake)
+set_tests_properties(test_adapter_profiles_report PROPERTIES DEPENDS test_adapter_profiles)
+
+add_test(NAME test_partial_adapter_profiles
+         COMMAND neoqc --r1 ${TEST_DATA_DIR}/partial_adapter_R1.fq
+                       --r2 ${TEST_DATA_DIR}/partial_adapter_R2.fq
+                       --sample-id partial_adapter
+                       --out ${TEST_OUT_DIR}/partial_adapter)
+add_test(NAME test_partial_adapter_profiles_report
+         COMMAND ${CMAKE_COMMAND}
+                 -DR1_REPORT=${TEST_OUT_DIR}/partial_adapter/adapter_content_R1.tsv
+                 -DR2_REPORT=${TEST_OUT_DIR}/partial_adapter/adapter_content_R2.tsv
+                 -P ${CMAKE_SOURCE_DIR}/tests/check_adapter_profiles.cmake)
+set_tests_properties(test_partial_adapter_profiles_report PROPERTIES DEPENDS test_partial_adapter_profiles)
+
 # 4. Строка длиннее 4096 символов (Тут решение за вами: упадет или обработает. По умолчанию ставим WILL_FAIL)
 add_test(NAME test_long_line_4096
          COMMAND neoqc --r1 ${TEST_DATA_DIR}/long_line_4096.fq.gz --sample-id test_long_line --out ${TEST_OUT_DIR})

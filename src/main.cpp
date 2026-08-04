@@ -423,8 +423,8 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
     FastqReader readerR2(r2Path, collectTimings);
     if (collectTimings) timers.fileOpen += Clock::now() - openStart;
 
-    QualityAnalyzer analyzerR1;
-    QualityAnalyzer analyzerR2;
+    QualityAnalyzer analyzerR1(ReadDirection::R1);
+    QualityAnalyzer analyzerR2(ReadDirection::R2);
 
     FastqRecord rec1;
     FastqRecord rec2;
