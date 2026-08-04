@@ -42,6 +42,14 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
     // Длина
     totalReads++;
     totalLength += len;
+
+    if (len >= lengthDistribution.size())
+    {
+        lengthDistribution.resize(len + 1, 0);
+    }
+
+    lengthDistribution[len]++;
+
     if (len < minLength) minLength = len;
     if (len > maxLength) maxLength = len;
 
@@ -168,6 +176,8 @@ QualityStats QualityAnalyzer::getStats() const {
     stats.readsPerPosition = readsPerPosition;
 
     stats.gcDistribution = gcDistribution;
+
+    stats.lengthDistribution = lengthDistribution;
 
     stats.avgGC      = (totalBases > 0) ? static_cast<double>(totalGC) / totalBases * 100.0 : 0.0;
     stats.percentN   = (totalBases > 0) ? static_cast<double>(countN) / totalBases * 100.0 : 0.0;

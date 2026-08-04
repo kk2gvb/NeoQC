@@ -447,6 +447,33 @@ void writeAdapterTsv(const std::vector<QualityAnalyzer::Adapter>& adapters,
     }
 }
 
+void writeSequenceLengthDistributionTsv(
+    const std::vector<uint64_t>& lengthDistribution,
+    const std::string& outDir,
+    const std::string& readName)
+{
+    std::string path =
+        outDir + "/sequence_length_distribution_" + readName + ".tsv";
+
+    std::ofstream out(path);
+
+    if (!out)
+        throw std::runtime_error("Cannot write to " + path);
+
+    out << "length\treads\n";
+
+    for (size_t i = 0; i < lengthDistribution.size(); ++i)
+    {
+        if (lengthDistribution[i] == 0)
+            continue;
+
+        out << i
+            << "\t"
+            << lengthDistribution[i]
+            << "\n";
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Обработка одного файла (R1 или R2)
 // ---------------------------------------------------------------------------
@@ -530,6 +557,11 @@ AnalysisResult processOneFile(const std::string& path,
         writePerBaseNContentTsv(
             stats.baseCountN,
             stats.readsPerPosition,
+            outDir,
+            readName);
+
+        writeSequenceLengthDistributionTsv(
+            stats.lengthDistribution,
             outDir,
             readName);
 
@@ -734,6 +766,16 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
             "R1");
         writePerSequenceQualityTsv(statsR2.perSequenceQualityDistribution, 
             outDir, 
+            "R2");
+
+        writeSequenceLengthDistributionTsv(
+            statsR1.lengthDistribution,
+            outDir,
+            "R1");
+
+        writeSequenceLengthDistributionTsv(
+            statsR2.lengthDistribution,
+            outDir,
             "R2");
 
         if (!skipAdapters) {

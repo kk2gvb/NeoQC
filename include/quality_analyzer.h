@@ -25,6 +25,8 @@ struct QualityStats {
 
     std::vector<uint64_t> gcDistribution;
 
+    std::vector<uint64_t> lengthDistribution;
+
     double avgGC      = 0.0;
     double percentN   = 0.0;
     double percentQ20 = 0.0;
@@ -109,6 +111,7 @@ private:
     std::vector<uint64_t> readsPerPosition;
 
     std::vector<uint64_t> gcDistribution = std::vector<uint64_t>(101, 0);
+    std::vector<uint64_t> lengthDistribution;
 
     uint64_t minLength = UINT64_MAX;
     uint64_t maxLength = 0;
