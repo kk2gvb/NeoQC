@@ -55,18 +55,22 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
         baseCountG.resize(len, 0);
         baseCountT.resize(len, 0);
         baseCountN.resize(len, 0);
+
+        readsPerPosition.resize(len, 0);
     }
 
     // Подсчёт оснований и качества
     uint64_t readQualSum = 0;
     uint64_t validQualityBases = 0;
+    size_t gc = 0;
     for (size_t i = 0; i < len; ++i) {
+        readsPerPosition[i]++;
         char c = seq[i];
         // Подсчёт оснований
         switch (c) {
             case 'A': case 'a': countA++; totalBases++; baseCountA[i]++; break;
-            case 'C': case 'c': countC++; totalBases++; totalGC++; baseCountC[i]++; break;
-            case 'G': case 'g': countG++; totalBases++; totalGC++; baseCountG[i]++; break;
+            case 'C': case 'c': countC++; totalBases++; totalGC++; baseCountC[i]++; gc++; break;
+            case 'G': case 'g': countG++; totalBases++; totalGC++; baseCountG[i]++; gc++; break;
             case 'T': case 't': countT++; totalBases++; baseCountT[i]++; break;
             case 'N': case 'n': countN++; totalBases++; baseCountN[i]++; break;
             default:
@@ -93,6 +97,11 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
             }
         }
     }
+
+    int gcPercent = static_cast<int>(
+        std::lround(static_cast<double>(gc) * 100.0 / len));
+
+    gcDistribution[gcPercent]++;
 
     if (validQualityBases > 0) {
         const auto meanQuality = static_cast<size_t>(std::lround(
@@ -155,6 +164,10 @@ QualityStats QualityAnalyzer::getStats() const {
     stats.baseCountG = baseCountG;
     stats.baseCountT = baseCountT;
     stats.baseCountN = baseCountN;
+
+    stats.readsPerPosition = readsPerPosition;
+
+    stats.gcDistribution = gcDistribution;
 
     stats.avgGC      = (totalBases > 0) ? static_cast<double>(totalGC) / totalBases * 100.0 : 0.0;
     stats.percentN   = (totalBases > 0) ? static_cast<double>(countN) / totalBases * 100.0 : 0.0;

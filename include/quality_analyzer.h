@@ -5,6 +5,8 @@
 #include <cstdint>
 #include "fastq_reader.h"
 
+
+
 // ---------------------------------------------------------------------------
 // Структура результатов анализа
 // ---------------------------------------------------------------------------
@@ -20,6 +22,8 @@ struct QualityStats {
     uint64_t countG = 0;
     uint64_t countT = 0;
     uint64_t countN = 0;
+
+    std::vector<uint64_t> gcDistribution;
 
     double avgGC      = 0.0;
     double percentN   = 0.0;
@@ -42,6 +46,8 @@ struct QualityStats {
     std::vector<uint64_t> baseCountG;
     std::vector<uint64_t> baseCountT;
     std::vector<uint64_t> baseCountN;
+
+    std::vector<uint64_t> readsPerPosition;
 };
 
 enum class ReadDirection {
@@ -99,6 +105,10 @@ private:
     std::vector<uint64_t> baseCountG;
     std::vector<uint64_t> baseCountT;
     std::vector<uint64_t> baseCountN;
+
+    std::vector<uint64_t> readsPerPosition;
+
+    std::vector<uint64_t> gcDistribution = std::vector<uint64_t>(101, 0);
 
     uint64_t minLength = UINT64_MAX;
     uint64_t maxLength = 0;

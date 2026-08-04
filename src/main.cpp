@@ -315,6 +315,67 @@ void writePerBaseSequenceContentTsv(const std::vector<uint64_t>& baseCountA,
             }
 }
 
+void writePerSequenceGCContentTsv(
+    const std::vector<uint64_t>& gcDistribution,
+    const std::string& outDir,
+    const std::string& readName)
+{
+    std::string path =
+        outDir + "/per_sequence_gc_content_" + readName + ".tsv";
+
+    std::ofstream out(path);
+
+    if (!out)
+        throw std::runtime_error("Cannot write to " + path);
+
+    out << "gc_percent\treads\n";
+
+    for (size_t i = 0; i < gcDistribution.size(); ++i)
+    {
+        out << i
+            << "\t"
+            << gcDistribution[i]
+            << "\n";
+    }
+}
+
+void writePerBaseNContentTsv(
+    const std::vector<uint64_t>& baseCountN,
+    const std::vector<uint64_t>& readsPerPosition,
+    const std::string& outDir,
+    const std::string& readName)
+{
+    std::string path =
+        outDir + "/per_base_n_content_" + readName + ".tsv";
+
+    std::ofstream out(path);
+
+    if (!out)
+        throw std::runtime_error("Cannot write to " + path);
+
+    out << "position\tN_percent\n";
+
+    for (size_t i = 0; i < baseCountN.size(); ++i)
+    {
+        double percent = 0.0;
+
+        if (readsPerPosition[i] > 0)
+        {
+            percent =
+                static_cast<double>(baseCountN[i]) * 100.0 /
+                readsPerPosition[i];
+        }
+
+        out
+            << (i + 1)
+            << "\t"
+            << std::fixed
+            << std::setprecision(4)
+            << percent
+            << "\n";
+    }
+}
+
 void writeQualityDistributionTsv(
     const std::vector<uint64_t>& distribution,
     const std::string& outDir,
@@ -441,10 +502,12 @@ AnalysisResult processOneFile(const std::string& path,
             stats.meanQualityPerPosition,
             outDir,
             readName);
+
         writeQualityDistributionTsv(
             stats.qualityDistribution,
             outDir,
             readName);
+
         writePerSequenceQualityTsv(
             stats.perSequenceQualityDistribution,
             outDir,
@@ -458,6 +521,18 @@ AnalysisResult processOneFile(const std::string& path,
             stats.baseCountN,
             outDir,
             readName);
+        
+        writePerSequenceGCContentTsv(
+            stats.gcDistribution,
+            outDir,
+            readName);
+
+        writePerBaseNContentTsv(
+            stats.baseCountN,
+            stats.readsPerPosition,
+            outDir,
+            readName);
+
         if (!skipAdapters) {
             writeAdapterTsv(analyzer.adapters,
                             analyzer.adapterPosCounts,
@@ -471,6 +546,7 @@ AnalysisResult processOneFile(const std::string& path,
     result.r1Stats = stats;
     return result;
 }
+
 
 // ---------------------------------------------------------------------------
 // Обработка парных файлов (R1 и R2)
@@ -587,20 +663,78 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
 
     {
         ScopedTimer timer(timers.reportWriting, collectTimings);
-        writeSummaryTxt(statsR1, outDir, sampleId + "_R1", skipAdapters);
-        writeSummaryTxt(statsR2, outDir, sampleId + "_R2", skipAdapters);
 
-        writePerCycleQualityTsv(statsR1.meanQualityPerPosition, outDir, "R1");
-        writePerCycleQualityTsv(statsR2.meanQualityPerPosition, outDir, "R2");
+        writeSummaryTxt(
+            statsR1,
+            outDir, 
+            sampleId + "_R1", 
+            skipAdapters);
+        writeSummaryTxt(
+            statsR2, 
+            outDir, 
+            sampleId + "_R2", 
+            skipAdapters);
 
-        writeQualityDistributionTsv(statsR1.qualityDistribution, outDir, "R1");
-        writeQualityDistributionTsv(statsR2.qualityDistribution, outDir, "R2");
+        writePerCycleQualityTsv(
+            statsR1.meanQualityPerPosition, 
+            outDir, 
+            "R1");
+        writePerCycleQualityTsv(
+            statsR2.meanQualityPerPosition, 
+            outDir, 
+            "R2");
 
-        writePerBaseSequenceContentTsv(statsR1.baseCountA, statsR1.baseCountC, statsR1.baseCountG, statsR1.baseCountT, statsR1.baseCountN, outDir, "R1");
-        writePerBaseSequenceContentTsv(statsR2.baseCountA, statsR2.baseCountC, statsR2.baseCountG, statsR2.baseCountT, statsR2.baseCountN, outDir, "R2");
+        writeQualityDistributionTsv(
+            statsR1.qualityDistribution, 
+            outDir, 
+            "R1");
+        writeQualityDistributionTsv(
+            statsR2.qualityDistribution, 
+            outDir, 
+            "R2");
 
-        writePerSequenceQualityTsv(statsR1.perSequenceQualityDistribution, outDir, "R1");
-        writePerSequenceQualityTsv(statsR2.perSequenceQualityDistribution, outDir, "R2");
+        writePerBaseSequenceContentTsv(
+            statsR1.baseCountA, 
+            statsR1.baseCountC, 
+            statsR1.baseCountG, 
+            statsR1.baseCountT, 
+            statsR1.baseCountN, 
+            outDir, 
+            "R1");
+        writePerBaseSequenceContentTsv(
+            statsR2.baseCountA, 
+            statsR2.baseCountC, 
+            statsR2.baseCountG, 
+            statsR2.baseCountT, 
+            statsR2.baseCountN, 
+            outDir, 
+            "R2");
+
+        writePerSequenceGCContentTsv(statsR1.gcDistribution, 
+            outDir, 
+            "R1");
+        writePerSequenceGCContentTsv(statsR2.gcDistribution, 
+            outDir, 
+            "R2");
+
+        writePerBaseNContentTsv(
+            statsR1.baseCountN,
+            statsR1.readsPerPosition,
+            outDir,
+            "R1");
+
+        writePerBaseNContentTsv(
+            statsR2.baseCountN,
+            statsR2.readsPerPosition,
+            outDir,
+            "R2");
+
+        writePerSequenceQualityTsv(statsR1.perSequenceQualityDistribution, 
+            outDir, 
+            "R1");
+        writePerSequenceQualityTsv(statsR2.perSequenceQualityDistribution, 
+            outDir, 
+            "R2");
 
         if (!skipAdapters) {
             writeAdapterTsv(analyzerR1.adapters, analyzerR1.adapterPosCounts,
