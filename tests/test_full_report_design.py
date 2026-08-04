@@ -27,6 +27,17 @@ class FullReportDesignTest(unittest.TestCase):
             svg = base64.b64decode(encoded_svg, validate=True)
             self.assertIn(b"<svg", svg[:1000])
 
+        embedded_fonts = re.findall(
+            r"data:font/woff2;base64,([A-Za-z0-9+/=]+)", html
+        )
+        self.assertEqual(len(embedded_fonts), 4)
+        for encoded_font in embedded_fonts:
+            font = base64.b64decode(encoded_font, validate=True)
+            self.assertEqual(font[:4], b"wOF2")
+
+        for system_font in ("Arial", "Helvetica", "Georgia", "Times New Roman"):
+            self.assertNotIn(system_font, html)
+
 
 if __name__ == "__main__":
     unittest.main()
