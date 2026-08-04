@@ -49,6 +49,12 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
     if (len > qualitySum.size()) {
         qualitySum.resize(len, 0);
         qualityCount.resize(len, 0);
+
+        baseCountA.resize(len, 0);
+        baseCountC.resize(len, 0);
+        baseCountG.resize(len, 0);
+        baseCountT.resize(len, 0);
+        baseCountN.resize(len, 0);
     }
 
     // Подсчёт оснований и качества
@@ -58,11 +64,11 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
         char c = seq[i];
         // Подсчёт оснований
         switch (c) {
-            case 'A': case 'a': countA++; totalBases++; break;
-            case 'C': case 'c': countC++; totalBases++; totalGC++; break;
-            case 'G': case 'g': countG++; totalBases++; totalGC++; break;
-            case 'T': case 't': countT++; totalBases++; break;
-            case 'N': case 'n': countN++; totalBases++; break;
+            case 'A': case 'a': countA++; totalBases++; baseCountA[i]++; break;
+            case 'C': case 'c': countC++; totalBases++; totalGC++; baseCountC[i]++; break;
+            case 'G': case 'g': countG++; totalBases++; totalGC++; baseCountG[i]++; break;
+            case 'T': case 't': countT++; totalBases++; baseCountT[i]++; break;
+            case 'N': case 'n': countN++; totalBases++; baseCountN[i]++; break;
             default:
                 // Неизвестный символ — считаем как N
                 countN++; totalBases++;
@@ -143,6 +149,12 @@ QualityStats QualityAnalyzer::getStats() const {
     stats.countG = countG;
     stats.countT = countT;
     stats.countN = countN;
+
+    stats.baseCountA = baseCountA;
+    stats.baseCountC = baseCountC;
+    stats.baseCountG = baseCountG;
+    stats.baseCountT = baseCountT;
+    stats.baseCountN = baseCountN;
 
     stats.avgGC      = (totalBases > 0) ? static_cast<double>(totalGC) / totalBases * 100.0 : 0.0;
     stats.percentN   = (totalBases > 0) ? static_cast<double>(countN) / totalBases * 100.0 : 0.0;

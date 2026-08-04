@@ -36,6 +36,12 @@ struct QualityStats {
     // Распределение среднего Phred-качества по прочтениям.
     // Индекс = среднее качество прочтения, округлённое до ближайшего целого.
     std::vector<uint64_t> perSequenceQualityDistribution;
+
+    std::vector<uint64_t> baseCountA;
+    std::vector<uint64_t> baseCountC;
+    std::vector<uint64_t> baseCountG;
+    std::vector<uint64_t> baseCountT;
+    std::vector<uint64_t> baseCountN;
 };
 
 enum class ReadDirection {
@@ -87,6 +93,12 @@ private:
     uint64_t countG = 0;
     uint64_t countT = 0;
     uint64_t countN = 0;
+
+    std::vector<uint64_t> baseCountA;
+    std::vector<uint64_t> baseCountC;
+    std::vector<uint64_t> baseCountG;
+    std::vector<uint64_t> baseCountT;
+    std::vector<uint64_t> baseCountN;
 
     uint64_t minLength = UINT64_MAX;
     uint64_t maxLength = 0;

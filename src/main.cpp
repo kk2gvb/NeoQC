@@ -68,7 +68,8 @@ void printPerformanceTimers(const PerformanceTimers& timers) {
               << "Metrics calculation          : " << milliseconds(timers.metrics) << " ms\n"
               << "Adapter search               : " << milliseconds(timers.adapterSearch) << " ms\n"
               << "Report writing               : " << milliseconds(timers.reportWriting) << " ms\n"
-              << "Plot generation              : " << milliseconds(timers.plotting) << " ms\n";
+              << "Plot generation              : " << milliseconds(timers.plotting) << " ms\n"
+              << "Total                        : " << milliseconds(timers.fileOpen + timers.readAndDecompress + timers.validation + timers.pairValidation + timers.metrics + timers.adapterSearch + timers.reportWriting + timers.plotting) << " ms\n";
 }
 
 // ---------------------------------------------------------------------------
@@ -257,6 +258,63 @@ void writePerCycleQualityTsv(const std::vector<double>& meanQuality,
     }
 }
 
+void writePerBaseSequenceContentTsv(const std::vector<uint64_t>& baseCountA,
+                                    const std::vector<uint64_t>& baseCountC,
+                                    const std::vector<uint64_t>& baseCountG,
+                                    const std::vector<uint64_t>& baseCountT,
+                                    const std::vector<uint64_t>& baseCountN,
+                                    const std::string& outDir,
+                                    const std::string& readName)
+{
+    std::string path = outDir + "/per_base_sequence_content_" + readName + ".tsv";
+
+    std::ofstream out(path);
+
+    if (!out)
+        throw std::runtime_error("Cannot write to " + path);
+
+    out << "position\tA\tC\tG\tT\tN\n";
+
+    for (size_t i = 0; i < baseCountA.size(); ++i)
+    {
+        const double total =
+            baseCountA[i] +
+            baseCountC[i] +
+            baseCountG[i] +
+            baseCountT[i] +
+            baseCountN[i];
+
+        double a = 0;
+        double c = 0;
+        double g = 0;
+        double t = 0;
+        double n = 0;
+
+        if (total > 0)
+        {
+            a = baseCountA[i] * 100.0 / total;
+            c = baseCountC[i] * 100.0 / total;
+            g = baseCountG[i] * 100.0 / total;
+            t = baseCountT[i] * 100.0 / total;
+            n = baseCountN[i] * 100.0 / total;
+        }
+
+        out
+            << (i + 1)
+            << "\t"
+            << a
+            << "\t"
+            << c
+            << "\t"
+            << g
+            << "\t"
+            << t
+            << "\t"
+            << n
+            << "\n";
+            }
+}
+
 void writeQualityDistributionTsv(
     const std::vector<uint64_t>& distribution,
     const std::string& outDir,
@@ -389,6 +447,15 @@ AnalysisResult processOneFile(const std::string& path,
             readName);
         writePerSequenceQualityTsv(
             stats.perSequenceQualityDistribution,
+            outDir,
+            readName);
+
+        writePerBaseSequenceContentTsv(
+            stats.baseCountA,
+            stats.baseCountC,
+            stats.baseCountG,
+            stats.baseCountT,
+            stats.baseCountN,
             outDir,
             readName);
         if (!skipAdapters) {
@@ -525,8 +592,13 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
 
         writePerCycleQualityTsv(statsR1.meanQualityPerPosition, outDir, "R1");
         writePerCycleQualityTsv(statsR2.meanQualityPerPosition, outDir, "R2");
+
         writeQualityDistributionTsv(statsR1.qualityDistribution, outDir, "R1");
         writeQualityDistributionTsv(statsR2.qualityDistribution, outDir, "R2");
+
+        writePerBaseSequenceContentTsv(statsR1.baseCountA, statsR1.baseCountC, statsR1.baseCountG, statsR1.baseCountT, statsR1.baseCountN, outDir, "R1");
+        writePerBaseSequenceContentTsv(statsR2.baseCountA, statsR2.baseCountC, statsR2.baseCountG, statsR2.baseCountT, statsR2.baseCountN, outDir, "R2");
+
         writePerSequenceQualityTsv(statsR1.perSequenceQualityDistribution, outDir, "R1");
         writePerSequenceQualityTsv(statsR2.perSequenceQualityDistribution, outDir, "R2");
 
