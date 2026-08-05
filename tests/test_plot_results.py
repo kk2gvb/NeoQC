@@ -18,7 +18,6 @@ SCRIPT = ROOT / "scripts" / "plot_results.py"
 
 FIXTURES = {
     "per_cycle": "cycle\tmean_quality\n1\t35.2\n2\t34.8\n3\t31.4\n4\t28.6\n",
-    "quality_distribution": "quality\tcount\n10\t2\n20\t20\n30\t80\n40\t30\n",
     "adapter_content": "pos\tTruSeq\tNextera\n1\t0\t0\n2\t0.5\t0\n3\t2.5\t0.25\n4\t7.0\t1.5\n",
     "per_base_sequence_content": (
         "position\tA\tC\tG\tT\tN\n"
@@ -77,6 +76,9 @@ class PlotResultsTest(unittest.TestCase):
             input_dir = root / "input data"
             output_dir = root / "report plots"
             write_fixture_set(input_dir)
+            output_dir.mkdir(parents=True)
+            (output_dir / "quality_distribution_R1.svg").write_text("stale", encoding="utf-8")
+            (output_dir / "quality_distribution_R1.png").write_text("stale", encoding="utf-8")
 
             result = run_plotter(input_dir, output_dir, "--formats", "svg", "--strict")
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -88,8 +90,8 @@ class PlotResultsTest(unittest.TestCase):
             self.assertEqual(manifest["figure"]["png_width_px"], 2400)
             self.assertEqual(manifest["figure"]["png_height_px"], 1350)
             self.assertEqual(manifest["figure"]["png_dpi"], 300)
-            self.assertEqual(manifest["summary"], {"generated": 16, "errors": 0, "skipped": 0})
-            self.assertEqual(len(manifest["plots"]), 16)
+            self.assertEqual(manifest["summary"], {"generated": 14, "errors": 0, "skipped": 0})
+            self.assertEqual(len(manifest["plots"]), 14)
             for entry in manifest["plots"]:
                 self.assertEqual(entry["status"], "generated")
                 self.assertFalse(Path(entry["svg"]).is_absolute())
@@ -104,6 +106,9 @@ class PlotResultsTest(unittest.TestCase):
             self.assertIn("Per base sequence quality", report_text)
             self.assertIn("R1", report_text)
             self.assertIn("R2", report_text)
+            self.assertNotIn("Base quality distribution", report_text)
+            self.assertFalse((output_dir / "quality_distribution_R1.svg").exists())
+            self.assertFalse((output_dir / "quality_distribution_R1.png").exists())
             gc_svg = (output_dir / "per_sequence_gc_content_R1.svg").read_text(encoding="utf-8")
             self.assertIn("Observed", gc_svg)
             self.assertIn("Theoretical distribution", gc_svg)
@@ -128,6 +133,7 @@ class PlotResultsTest(unittest.TestCase):
 
             manifest = json.loads((output_dir / "plots_manifest.json").read_text(encoding="utf-8"))
             entry = next(item for item in manifest["plots"] if item["status"] == "generated")
+            self.assertIn("FastQC-style sequence length line", entry["alt_text"])
             self.assertIn("fixed length of 100 bp", entry["alt_text"])
 
     def test_png_is_2400_by_1350_at_300_dpi(self) -> None:

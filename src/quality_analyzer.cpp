@@ -29,7 +29,6 @@ QualityAnalyzer::QualityAnalyzer(ReadDirection direction) {
     }
 
     adapterPosCounts.resize(adapters.size());
-    qualityDistribution.assign(50, 0); // Phred scores 0..49
 }
 
 void QualityAnalyzer::processRecord(const FastqRecord& record) {
@@ -95,10 +94,6 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
                 qualityCount[i]++;
                 readQualSum += q;
                 validQualityBases++;
-
-                if (q < static_cast<int>(qualityDistribution.size())) {
-                    qualityDistribution[q]++;
-                }
 
                 if (q >= 20) q20Count++;
                 if (q >= 30) q30Count++;
@@ -195,8 +190,6 @@ QualityStats QualityAnalyzer::getStats() const {
         }
     }
 
-    // Распределение качества
-    stats.qualityDistribution = qualityDistribution;
     stats.perSequenceQualityDistribution = perSequenceQualityDistribution;
 
     return stats;

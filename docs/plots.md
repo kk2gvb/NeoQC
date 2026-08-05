@@ -24,7 +24,6 @@ basic statistics, provides print/PDF styling and can open charts at full size.
 Supported plot identifiers are:
 
 - `per_base_quality`;
-- `quality_distribution`;
 - `adapter_content`;
 - `per_base_sequence_content`;
 - `per_sequence_gc_content`;

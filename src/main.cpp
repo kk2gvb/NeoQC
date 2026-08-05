@@ -376,30 +376,6 @@ void writePerBaseNContentTsv(
     }
 }
 
-void writeQualityDistributionTsv(
-    const std::vector<uint64_t>& distribution,
-    const std::string& outDir,
-    const std::string& readName)
-{
-    std::string path =
-        outDir + "/quality_distribution_" + readName + ".tsv";
-
-    std::ofstream out(path);
-
-    if (!out)
-        throw std::runtime_error("Cannot write to " + path);
-
-    out << "quality\tcount\n";
-
-    for (size_t q = 0; q < distribution.size(); ++q)
-    {
-        out << q
-            << "\t"
-            << distribution[q]
-            << "\n";
-    }
-}
-
 void writePerSequenceQualityTsv(
     const std::vector<uint64_t>& distribution,
     const std::string& outDir,
@@ -412,6 +388,20 @@ void writePerSequenceQualityTsv(
     out << "mean_quality\tread_count\n";
     for (size_t quality = 0; quality < distribution.size(); ++quality) {
         out << quality << "\t" << distribution[quality] << "\n";
+    }
+}
+
+void removeRetiredQualityDistributionArtifacts(
+    const std::string& outDir,
+    const std::string& readName)
+{
+    const fs::path retiredPath =
+        fs::path(outDir) / ("quality_distribution_" + readName + ".tsv");
+    std::error_code ec;
+    fs::remove(retiredPath, ec);
+    if (ec) {
+        throw std::runtime_error(
+            "Cannot remove retired artifact '" + retiredPath.string() + "': " + ec.message());
     }
 }
 
@@ -485,6 +475,7 @@ AnalysisResult processOneFile(const std::string& path,
                               bool collectTimings) {
     AnalysisResult result;
     PerformanceTimers& timers = result.timers;
+    removeRetiredQualityDistributionArtifacts(outDir, readName);
     QualityAnalyzer analyzer;
 
     {
@@ -527,11 +518,6 @@ AnalysisResult processOneFile(const std::string& path,
         writeSummaryTxt(stats, outDir, sampleId + "_" + readName, skipAdapters);
         writePerCycleQualityTsv(
             stats.meanQualityPerPosition,
-            outDir,
-            readName);
-
-        writeQualityDistributionTsv(
-            stats.qualityDistribution,
             outDir,
             readName);
 
@@ -593,6 +579,8 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
 {
     AnalysisResult result;
     PerformanceTimers& timers = result.timers;
+    removeRetiredQualityDistributionArtifacts(outDir, "R1");
+    removeRetiredQualityDistributionArtifacts(outDir, "R2");
     const auto openStart = collectTimings ? Clock::now() : Clock::time_point{};
     FastqReader readerR1(r1Path, collectTimings);
     FastqReader readerR2(r2Path, collectTimings);
@@ -713,15 +701,6 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
             "R1");
         writePerCycleQualityTsv(
             statsR2.meanQualityPerPosition,
-            outDir,
-            "R2");
-
-        writeQualityDistributionTsv(
-            statsR1.qualityDistribution,
-            outDir,
-            "R1");
-        writeQualityDistributionTsv(
-            statsR2.qualityDistribution,
             outDir,
             "R2");
 
