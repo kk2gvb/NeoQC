@@ -13,6 +13,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 
 from plot_style import (
     ACCENT,
@@ -30,6 +31,7 @@ from plot_style import (
     PNG_DPI,
     SERIES_COLORS,
     WARNING,
+    WHITE,
     apply_theme,
     compact_number,
     finish_figure,
@@ -221,35 +223,48 @@ def plot_per_base_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
     return fig, f"Mean Phred quality across {len(x)} {read} read positions."
 
 
-def _plot_quality_distribution(
-    rows: Rows, read: str, x_column: str, count_column: str, title: str, unit: str
-) -> tuple[plt.Figure, str]:
-    x = _values(rows, x_column)
-    counts = _values(rows, count_column)
-    mean, median, mode = _weighted_summary(x, counts)
-    fig, ax = plt.subplots(figsize=FIGURE_SIZE)
-    setup_axes(ax, title, unit, "Count", read)
-    ax.bar(x, counts, width=0.82, color=BRAND, alpha=0.88, edgecolor=BRAND_DARK, linewidth=0.35, zorder=2)
-    _mark_statistic(ax, mean, "Mean", ACCENT, "-")
-    _mark_statistic(ax, median, "Median", WARNING, "--")
-    ax.legend(loc="upper left", ncols=2)
-    use_compact_y_axis(ax)
-    finish_figure(fig)
-    return fig, f"{title} for {read}; mean {mean:.1f}, median {median:.1f}, mode {mode:.0f}."
-
-
-def plot_quality_distribution(rows: Rows, read: str) -> tuple[plt.Figure, str]:
-    return _plot_quality_distribution(rows, read, "quality", "count", "Base quality distribution", "Phred quality")
-
-
 def plot_per_sequence_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
-    return _plot_quality_distribution(
-        rows,
-        read,
-        "mean_quality",
-        "read_count",
+    x = _values(rows, "mean_quality")
+    counts = _values(rows, "read_count")
+    mean, median, mode = _weighted_summary(x, counts)
+    total = sum(counts)
+    if total <= 0:
+        raise PlotDataError("Per sequence quality scores contains no observations")
+    shares = [count / total * 100.0 for count in counts]
+    fig, ax = plt.subplots(figsize=FIGURE_SIZE)
+    setup_axes(
+        ax,
         "Per sequence quality scores",
         "Mean Phred quality per read",
+        "Reads (%)",
+        read,
+    )
+    ax.axvspan(min(x), 20, color=DANGER, alpha=0.055, linewidth=0)
+    ax.axvspan(20, 30, color=WARNING, alpha=0.065, linewidth=0)
+    ax.axvspan(30, max(x), color=ACCENT, alpha=0.055, linewidth=0)
+    ax.fill_between(x, shares, color=ACCENT, alpha=0.18, linewidth=0)
+    ax.plot(x, shares, color=BRAND_DARK, linewidth=2.2, marker="o", markersize=3.2, zorder=3)
+    ax.set_ylim(0, min(100.0, max(shares) * 1.18 + 1.0))
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}%"))
+
+    x_padding = max(0.8, (max(x) - min(x)) * 0.018)
+    ax.set_xlim(min(x) - x_padding, max(x) + x_padding)
+    ax.text(
+        0.02,
+        0.96,
+        f"Mean Q{mean:.1f}  •  Median Q{median:.0f}  •  Mode Q{mode:.0f}",
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        color=INK,
+        fontsize=8,
+        fontweight=600,
+        bbox={"boxstyle": "round,pad=0.45", "facecolor": WHITE, "edgecolor": GRID, "alpha": 0.94},
+    )
+    finish_figure(fig)
+    return fig, (
+        f"Per sequence quality scores for {read}, shown as normalized percentages; "
+        f"mean Q{mean:.1f}, median Q{median:.1f}, mode Q{mode:.0f}."
     )
 
 
@@ -392,22 +407,21 @@ def plot_length_distribution(rows: Rows, read: str) -> tuple[plt.Figure, str]:
     mean, median, mode = _weighted_summary(x, counts)
     fig, ax = plt.subplots(figsize=FIGURE_SIZE)
     setup_axes(ax, "Sequence length distribution", "Read length (bp)", "Reads", read)
-    unique_sorted = sorted(set(x))
-    if len(unique_sorted) == 1:
-        length = unique_sorted[0]
-        total = sum(counts)
-        padding = max(1.0, length * 0.01)
-        ax.bar(
-            [length],
-            [total],
-            width=padding * 0.34,
-            color=BRAND,
-            alpha=0.88,
-            edgecolor=BRAND_DARK,
-            linewidth=0.6,
-            zorder=2,
-        )
-        ax.set_xlim(length - padding, length + padding)
+    by_length: dict[float, float] = {}
+    for length, count in zip(x, counts):
+        by_length[length] = by_length.get(length, 0.0) + count
+    lengths = sorted(by_length)
+    values = [by_length[length] for length in lengths]
+
+    if len(lengths) == 1:
+        length = lengths[0]
+        total = values[0]
+        plot_x = [length - 1.0, length, length + 1.0]
+        plot_y = [0.0, total, 0.0]
+        ax.axvspan(length - 0.5, length + 0.5, color=GRID, alpha=0.52, linewidth=0, zorder=0)
+        ax.fill_between(plot_x, plot_y, color=ACCENT, alpha=0.10, linewidth=0, zorder=1)
+        ax.plot(plot_x, plot_y, color=BRAND_DARK, linewidth=2.2, marker="o", markersize=4, zorder=3)
+        ax.set_xlim(length - 1.5, length + 1.5)
         ax.set_ylim(0, total * 1.18 if total > 0 else 1)
         ax.text(
             0.02,
@@ -434,22 +448,46 @@ def plot_length_distribution(rows: Rows, read: str) -> tuple[plt.Figure, str]:
         )
         use_compact_y_axis(ax)
         finish_figure(fig)
-        return fig, f"All {total:g} {read} reads have a fixed length of {length:g} bp."
+        return fig, (
+            f"FastQC-style sequence length line for {read}; all {total:g} reads "
+            f"have a fixed length of {length:g} bp."
+        )
 
-    gaps = [right - left for left, right in zip(unique_sorted, unique_sorted[1:]) if right > left]
-    width = max(0.8, min(gaps) * 0.82) if gaps else 0.8
-    ax.bar(x, counts, width=width, color=BRAND, alpha=0.88, edgecolor=BRAND_DARK, linewidth=0.4, zorder=2)
-    _mark_statistic(ax, mean, "Mean", ACCENT, "-")
-    _mark_statistic(ax, mode, "Mode", WARNING, "--")
-    ax.legend(loc="upper left", ncols=2)
+    gaps = [right - left for left, right in zip(lengths, lengths[1:]) if right > left]
+    endpoint_gap = min(gaps) if gaps else 1.0
+    plot_x = [lengths[0] - endpoint_gap, *lengths, lengths[-1] + endpoint_gap]
+    plot_y = [0.0, *values, 0.0]
+    if len(lengths) <= 50:
+        band_width = endpoint_gap / 2.0
+        for index, length in enumerate(lengths):
+            if index % 2 == 0:
+                ax.axvspan(length - band_width, length + band_width, color=GRID, alpha=0.34, linewidth=0)
+    ax.fill_between(plot_x, plot_y, color=ACCENT, alpha=0.10, linewidth=0, zorder=1)
+    ax.plot(plot_x, plot_y, color=BRAND_DARK, linewidth=2.1, marker="o", markersize=3.5, zorder=3)
+    ax.set_xlim(plot_x[0], plot_x[-1])
+    ax.set_ylim(0, max(values) * 1.18 if max(values) > 0 else 1)
+    ax.text(
+        0.02,
+        0.96,
+        f"Mean {mean:.1f} bp  •  Median {median:.0f} bp  •  Mode {mode:.0f} bp",
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        color=INK,
+        fontsize=8,
+        fontweight=600,
+        bbox={"boxstyle": "round,pad=0.45", "facecolor": WHITE, "edgecolor": GRID, "alpha": 0.94},
+    )
     use_compact_y_axis(ax)
     finish_figure(fig)
-    return fig, f"{read} length distribution from {min(x):.0f} to {max(x):.0f} bp; mode {mode:.0f} bp."
+    return fig, (
+        f"FastQC-style sequence length line for {read}, from {lengths[0]:.0f} to "
+        f"{lengths[-1]:.0f} bp; mode {mode:.0f} bp."
+    )
 
 
 METRICS: tuple[MetricSpec, ...] = (
     MetricSpec("per_base_quality", "per_cycle", "per_base_quality", "Per base sequence quality", ("cycle", "mean_quality"), plot_per_base_quality),
-    MetricSpec("quality_distribution", "quality_distribution", "quality_distribution", "Base quality distribution", ("quality", "count"), plot_quality_distribution),
     MetricSpec("adapter_content", "adapter_content", "adapter_content", "Adapter content", ("pos",), plot_adapter_content, adapters_only=True, variable_series=True),
     MetricSpec("per_base_sequence_content", "per_base_sequence_content", "per_base_sequence_content", "Per base sequence content", ("position", "A", "C", "G", "T", "N"), plot_base_content),
     MetricSpec("per_sequence_gc_content", "per_sequence_gc_content", "per_sequence_gc_content", "Per sequence GC content", ("gc_percent", "reads"), plot_gc_content),
@@ -457,6 +495,8 @@ METRICS: tuple[MetricSpec, ...] = (
     MetricSpec("sequence_length_distribution", "sequence_length_distribution", "sequence_length_distribution", "Sequence length distribution", ("length", "reads"), plot_length_distribution),
     MetricSpec("per_sequence_quality", "per_sequence_quality", "per_sequence_quality", "Per sequence quality scores", ("mean_quality", "read_count"), plot_per_sequence_quality),
 )
+
+RETIRED_PLOT_PREFIXES = ("quality_distribution",)
 
 
 def _save_figure(fig: plt.Figure, output_dir: Path, spec: MetricSpec, read: str, formats: Sequence[str]) -> Mapping[str, str]:
@@ -485,6 +525,12 @@ def generate_plots(
     apply_theme()
     input_dir = input_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    for prefix in RETIRED_PLOT_PREFIXES:
+        for read in ("R1", "R2"):
+            for suffix in ("svg", "png"):
+                retired_output = output_dir / f"{prefix}_{read}.{suffix}"
+                if retired_output.is_file():
+                    retired_output.unlink()
     formats = tuple(dict.fromkeys(formats))
     invalid_formats = sorted(set(formats) - {"svg", "png"})
     if invalid_formats:
