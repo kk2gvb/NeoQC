@@ -68,7 +68,8 @@ void printPerformanceTimers(const PerformanceTimers& timers) {
               << "Metrics calculation          : " << milliseconds(timers.metrics) << " ms\n"
               << "Adapter search               : " << milliseconds(timers.adapterSearch) << " ms\n"
               << "Report writing               : " << milliseconds(timers.reportWriting) << " ms\n"
-              << "Plot generation              : " << milliseconds(timers.plotting) << " ms\n";
+              << "Plot generation              : " << milliseconds(timers.plotting) << " ms\n"
+              << "Total                        : " << milliseconds(timers.fileOpen + timers.readAndDecompress + timers.validation + timers.pairValidation + timers.metrics + timers.adapterSearch + timers.reportWriting + timers.plotting) << " ms\n";
 }
 
 // ---------------------------------------------------------------------------
@@ -257,6 +258,124 @@ void writePerCycleQualityTsv(const std::vector<double>& meanQuality,
     }
 }
 
+void writePerBaseSequenceContentTsv(const std::vector<uint64_t>& baseCountA,
+                                    const std::vector<uint64_t>& baseCountC,
+                                    const std::vector<uint64_t>& baseCountG,
+                                    const std::vector<uint64_t>& baseCountT,
+                                    const std::vector<uint64_t>& baseCountN,
+                                    const std::string& outDir,
+                                    const std::string& readName)
+{
+    std::string path = outDir + "/per_base_sequence_content_" + readName + ".tsv";
+
+    std::ofstream out(path);
+
+    if (!out)
+        throw std::runtime_error("Cannot write to " + path);
+
+    out << "position\tA\tC\tG\tT\tN\n";
+
+    for (size_t i = 0; i < baseCountA.size(); ++i)
+    {
+        const double total =
+            baseCountA[i] +
+            baseCountC[i] +
+            baseCountG[i] +
+            baseCountT[i] +
+            baseCountN[i];
+
+        double a = 0;
+        double c = 0;
+        double g = 0;
+        double t = 0;
+        double n = 0;
+
+        if (total > 0)
+        {
+            a = baseCountA[i] * 100.0 / total;
+            c = baseCountC[i] * 100.0 / total;
+            g = baseCountG[i] * 100.0 / total;
+            t = baseCountT[i] * 100.0 / total;
+            n = baseCountN[i] * 100.0 / total;
+        }
+
+        out
+            << (i + 1)
+            << "\t"
+            << a
+            << "\t"
+            << c
+            << "\t"
+            << g
+            << "\t"
+            << t
+            << "\t"
+            << n
+            << "\n";
+            }
+}
+
+void writePerSequenceGCContentTsv(
+    const std::vector<uint64_t>& gcDistribution,
+    const std::string& outDir,
+    const std::string& readName)
+{
+    std::string path =
+        outDir + "/per_sequence_gc_content_" + readName + ".tsv";
+
+    std::ofstream out(path);
+
+    if (!out)
+        throw std::runtime_error("Cannot write to " + path);
+
+    out << "gc_percent\treads\n";
+
+    for (size_t i = 0; i < gcDistribution.size(); ++i)
+    {
+        out << i
+            << "\t"
+            << gcDistribution[i]
+            << "\n";
+    }
+}
+
+void writePerBaseNContentTsv(
+    const std::vector<uint64_t>& baseCountN,
+    const std::vector<uint64_t>& readsPerPosition,
+    const std::string& outDir,
+    const std::string& readName)
+{
+    std::string path =
+        outDir + "/per_base_n_content_" + readName + ".tsv";
+
+    std::ofstream out(path);
+
+    if (!out)
+        throw std::runtime_error("Cannot write to " + path);
+
+    out << "position\tN_percent\n";
+
+    for (size_t i = 0; i < baseCountN.size(); ++i)
+    {
+        double percent = 0.0;
+
+        if (readsPerPosition[i] > 0)
+        {
+            percent =
+                static_cast<double>(baseCountN[i]) * 100.0 /
+                readsPerPosition[i];
+        }
+
+        out
+            << (i + 1)
+            << "\t"
+            << std::fixed
+            << std::setprecision(4)
+            << percent
+            << "\n";
+    }
+}
+
 void writeQualityDistributionTsv(
     const std::vector<uint64_t>& distribution,
     const std::string& outDir,
@@ -278,6 +397,21 @@ void writeQualityDistributionTsv(
             << "\t"
             << distribution[q]
             << "\n";
+    }
+}
+
+void writePerSequenceQualityTsv(
+    const std::vector<uint64_t>& distribution,
+    const std::string& outDir,
+    const std::string& readName)
+{
+    const std::string path = outDir + "/per_sequence_quality_" + readName + ".tsv";
+    std::ofstream out(path);
+    if (!out) throw std::runtime_error("Cannot write to " + path);
+
+    out << "mean_quality\tread_count\n";
+    for (size_t quality = 0; quality < distribution.size(); ++quality) {
+        out << quality << "\t" << distribution[quality] << "\n";
     }
 }
 
@@ -310,6 +444,33 @@ void writeAdapterTsv(const std::vector<QualityAnalyzer::Adapter>& adapters,
             out << "\t" << std::fixed << std::setprecision(4) << percent;
         }
         out << "\n";
+    }
+}
+
+void writeSequenceLengthDistributionTsv(
+    const std::vector<uint64_t>& lengthDistribution,
+    const std::string& outDir,
+    const std::string& readName)
+{
+    std::string path =
+        outDir + "/sequence_length_distribution_" + readName + ".tsv";
+
+    std::ofstream out(path);
+
+    if (!out)
+        throw std::runtime_error("Cannot write to " + path);
+
+    out << "length\treads\n";
+
+    for (size_t i = 0; i < lengthDistribution.size(); ++i)
+    {
+        if (lengthDistribution[i] == 0)
+            continue;
+
+        out << i
+            << "\t"
+            << lengthDistribution[i]
+            << "\n";
     }
 }
 
@@ -367,11 +528,43 @@ AnalysisResult processOneFile(const std::string& path,
         writePerCycleQualityTsv(
             stats.meanQualityPerPosition,
             outDir,
-            "R1");
+            readName);
+
         writeQualityDistributionTsv(
             stats.qualityDistribution,
             outDir,
-            "R1");
+            readName);
+
+        writePerSequenceQualityTsv(
+            stats.perSequenceQualityDistribution,
+            outDir,
+            readName);
+
+        writePerBaseSequenceContentTsv(
+            stats.baseCountA,
+            stats.baseCountC,
+            stats.baseCountG,
+            stats.baseCountT,
+            stats.baseCountN,
+            outDir,
+            readName);
+
+        writePerSequenceGCContentTsv(
+            stats.gcDistribution,
+            outDir,
+            readName);
+
+        writePerBaseNContentTsv(
+            stats.baseCountN,
+            stats.readsPerPosition,
+            outDir,
+            readName);
+
+        writeSequenceLengthDistributionTsv(
+            stats.lengthDistribution,
+            outDir,
+            readName);
+
         if (!skipAdapters) {
             writeAdapterTsv(analyzer.adapters,
                             analyzer.adapterPosCounts,
@@ -385,6 +578,7 @@ AnalysisResult processOneFile(const std::string& path,
     result.r1Stats = stats;
     return result;
 }
+
 
 // ---------------------------------------------------------------------------
 // Обработка парных файлов (R1 и R2)
@@ -404,8 +598,8 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
     FastqReader readerR2(r2Path, collectTimings);
     if (collectTimings) timers.fileOpen += Clock::now() - openStart;
 
-    QualityAnalyzer analyzerR1;
-    QualityAnalyzer analyzerR2;
+    QualityAnalyzer analyzerR1(ReadDirection::R1);
+    QualityAnalyzer analyzerR2(ReadDirection::R2);
 
     FastqRecord rec1;
     FastqRecord rec2;
@@ -436,7 +630,7 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
                 "FASTQ validation error:\n"
                 "reason: R2 contains fewer reads than R1");
         }
-        
+
         // Проверка идентификаторов считываний
         bool matchingReadIds;
         {
@@ -501,13 +695,88 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
 
     {
         ScopedTimer timer(timers.reportWriting, collectTimings);
-        writeSummaryTxt(statsR1, outDir, sampleId + "_R1", skipAdapters);
-        writeSummaryTxt(statsR2, outDir, sampleId + "_R2", skipAdapters);
 
-        writePerCycleQualityTsv(statsR1.meanQualityPerPosition, outDir, "R1");
-        writePerCycleQualityTsv(statsR2.meanQualityPerPosition, outDir, "R2");
-        writeQualityDistributionTsv(statsR1.qualityDistribution, outDir, "R1");
-        writeQualityDistributionTsv(statsR2.qualityDistribution, outDir, "R2");
+        writeSummaryTxt(
+            statsR1,
+            outDir,
+            sampleId + "_R1",
+            skipAdapters);
+        writeSummaryTxt(
+            statsR2,
+            outDir,
+            sampleId + "_R2",
+            skipAdapters);
+
+        writePerCycleQualityTsv(
+            statsR1.meanQualityPerPosition,
+            outDir,
+            "R1");
+        writePerCycleQualityTsv(
+            statsR2.meanQualityPerPosition,
+            outDir,
+            "R2");
+
+        writeQualityDistributionTsv(
+            statsR1.qualityDistribution,
+            outDir,
+            "R1");
+        writeQualityDistributionTsv(
+            statsR2.qualityDistribution,
+            outDir,
+            "R2");
+
+        writePerBaseSequenceContentTsv(
+            statsR1.baseCountA,
+            statsR1.baseCountC,
+            statsR1.baseCountG,
+            statsR1.baseCountT,
+            statsR1.baseCountN,
+            outDir,
+            "R1");
+        writePerBaseSequenceContentTsv(
+            statsR2.baseCountA,
+            statsR2.baseCountC,
+            statsR2.baseCountG,
+            statsR2.baseCountT,
+            statsR2.baseCountN,
+            outDir,
+            "R2");
+
+        writePerSequenceGCContentTsv(statsR1.gcDistribution,
+            outDir,
+            "R1");
+        writePerSequenceGCContentTsv(statsR2.gcDistribution,
+            outDir,
+            "R2");
+
+        writePerBaseNContentTsv(
+            statsR1.baseCountN,
+            statsR1.readsPerPosition,
+            outDir,
+            "R1");
+
+        writePerBaseNContentTsv(
+            statsR2.baseCountN,
+            statsR2.readsPerPosition,
+            outDir,
+            "R2");
+
+        writePerSequenceQualityTsv(statsR1.perSequenceQualityDistribution,
+            outDir,
+            "R1");
+        writePerSequenceQualityTsv(statsR2.perSequenceQualityDistribution,
+            outDir,
+            "R2");
+
+        writeSequenceLengthDistributionTsv(
+            statsR1.lengthDistribution,
+            outDir,
+            "R1");
+
+        writeSequenceLengthDistributionTsv(
+            statsR2.lengthDistribution,
+            outDir,
+            "R2");
 
         if (!skipAdapters) {
             writeAdapterTsv(analyzerR1.adapters, analyzerR1.adapterPosCounts,
@@ -676,13 +945,12 @@ int main(int argc, char* argv[]) {
                                                       entry.sampleId, args.skipAdapters, args.timings);
                     }
 
-                    if (args.plot && !args.skipAdapters) {
+                    if (args.plot) {
                         ScopedTimer timer(analysis.timers.plotting, args.timings);
                         const std::string plotDir = (sampleOutDir / "plots").string();
-                        PlotRunner::run((sampleOutDir / "adapter_content_R1.tsv").string(), plotDir);
-                        if (!entry.r2.empty()) {
-                            PlotRunner::run((sampleOutDir / "adapter_content_R2.tsv").string(), plotDir);
-                        }
+                        PlotOptions plotOptions;
+                        plotOptions.includeAdapters = !args.skipAdapters;
+                        PlotRunner::runAll(sampleOutDir.string(), plotDir, plotOptions);
                     }
                     if (args.timings) printPerformanceTimers(analysis.timers);
                     std::cout << "Result: passed\n";
@@ -775,15 +1043,12 @@ int main(int argc, char* argv[]) {
     }
 
     // Построение графиков (опционально, через PlotRunner)
-    if (args.plot && !args.skipAdapters) {
+    if (args.plot) {
         ScopedTimer timer(timers.plotting, args.timings);
         std::string plotDir = args.outDir + "/plots";
-        PlotRunner::run(args.outDir + "/adapter_content_R1.tsv", plotDir);
-        if (isPaired) {
-            PlotRunner::run(args.outDir + "/adapter_content_R2.tsv", plotDir);
-        }
-    } else if (args.plot) {
-        std::cout << "Skipping adapter plots because adapter search was disabled.\n";
+        PlotOptions plotOptions;
+        plotOptions.includeAdapters = !args.skipAdapters;
+        PlotRunner::runAll(args.outDir, plotDir, plotOptions);
     }
 
     if (args.timings) printPerformanceTimers(timers);

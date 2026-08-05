@@ -1,0 +1,21 @@
+if(NOT EXISTS "${REPORT}")
+    message(FATAL_ERROR "Per-sequence quality report was not created: ${REPORT}")
+endif()
+
+file(STRINGS "${REPORT}" ROWS)
+list(GET ROWS 0 HEADER)
+if(NOT HEADER STREQUAL "mean_quality\tread_count")
+    message(FATAL_ERROR "Unexpected per-sequence quality TSV header")
+endif()
+
+set(TOTAL_READS 0)
+foreach(ROW IN LISTS ROWS)
+    if(ROW MATCHES "^[0-9]+\t[0-9]+$")
+        string(REGEX REPLACE ".*\t" "" COUNT "${ROW}")
+        math(EXPR TOTAL_READS "${TOTAL_READS} + ${COUNT}")
+    endif()
+endforeach()
+
+if(NOT TOTAL_READS EQUAL 1)
+    message(FATAL_ERROR "Expected one read in per-sequence quality report, got ${TOTAL_READS}")
+endif()

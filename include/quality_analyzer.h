@@ -5,6 +5,8 @@
 #include <cstdint>
 #include "fastq_reader.h"
 
+
+
 // ---------------------------------------------------------------------------
 // Структура результатов анализа
 // ---------------------------------------------------------------------------
@@ -21,6 +23,10 @@ struct QualityStats {
     uint64_t countT = 0;
     uint64_t countN = 0;
 
+    std::vector<uint64_t> gcDistribution;
+
+    std::vector<uint64_t> lengthDistribution;
+
     double avgGC      = 0.0;
     double percentN   = 0.0;
     double percentQ20 = 0.0;
@@ -32,6 +38,23 @@ struct QualityStats {
 
     // Распределение среднего качества прочтений (гистограмма)
     std::vector<uint64_t> qualityDistribution; // индекс = Phred score
+
+    // Распределение среднего Phred-качества по прочтениям.
+    // Индекс = среднее качество прочтения, округлённое до ближайшего целого.
+    std::vector<uint64_t> perSequenceQualityDistribution;
+
+    std::vector<uint64_t> baseCountA;
+    std::vector<uint64_t> baseCountC;
+    std::vector<uint64_t> baseCountG;
+    std::vector<uint64_t> baseCountT;
+    std::vector<uint64_t> baseCountN;
+
+    std::vector<uint64_t> readsPerPosition;
+};
+
+enum class ReadDirection {
+    R1,
+    R2
 };
 
 // ---------------------------------------------------------------------------
@@ -39,7 +62,7 @@ struct QualityStats {
 // ---------------------------------------------------------------------------
 class QualityAnalyzer {
 public:
-    QualityAnalyzer();
+    explicit QualityAnalyzer(ReadDirection direction = ReadDirection::R1);
 
     // Обработка одной FASTQ-записи
     void processRecord(const FastqRecord& record);
@@ -57,16 +80,14 @@ public:
     struct Adapter {
         std::string name;
         std::string sequence;
+        // Начальный k-mer, используемый для обнаружения adapter в риде.
+        std::string detectionSequence;
     };
 
-    std::vector<Adapter> adapters = {
-        {"Universal",    "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA"},
-        {"SmallRNA3'",   "TGGAATTCTCGGGTGCCAAGG"},
-        {"SmallRNA5'",   "GTTCAGAGTTCTACAGTCCGACGATC"},
-        {"Nextera",      "CTGTCTCTTATACACATCT"}
-    };
+    std::vector<Adapter> adapters;
 
-    // Счётчики позиций адаптеров: adapterPosCounts[aid][position]
+    // Кумулятивные счётчики: после обнаружения adapter на позиции значение
+    // увеличивается до конца рида, как в FastQC Adapter Content.
     std::vector<std::vector<uint64_t>> adapterPosCounts;
 
 private:
@@ -80,6 +101,17 @@ private:
     uint64_t countG = 0;
     uint64_t countT = 0;
     uint64_t countN = 0;
+
+    std::vector<uint64_t> baseCountA;
+    std::vector<uint64_t> baseCountC;
+    std::vector<uint64_t> baseCountG;
+    std::vector<uint64_t> baseCountT;
+    std::vector<uint64_t> baseCountN;
+
+    std::vector<uint64_t> readsPerPosition;
+
+    std::vector<uint64_t> gcDistribution = std::vector<uint64_t>(101, 0);
+    std::vector<uint64_t> lengthDistribution;
 
     uint64_t minLength = UINT64_MAX;
     uint64_t maxLength = 0;
@@ -95,4 +127,5 @@ private:
 
     // Распределение среднего качества прочтений
     std::vector<uint64_t> qualityDistribution;
+    std::vector<uint64_t> perSequenceQualityDistribution;
 };

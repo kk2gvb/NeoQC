@@ -7,5 +7,7 @@ plots
 Testing
 ctest.log
 benchmarks
+TODO.md
 __pycache__/
 *.py[cod]
+.venv*/

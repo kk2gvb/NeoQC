@@ -1,10 +1,24 @@
 #pragma once
 #include <string>
 
+struct PlotOptions {
+    bool includeAdapters = true;
+    bool generateSvg = true;
+    bool generatePng = true;
+    bool strict = true;
+};
+
+struct PlotRunResult {
+    bool success = false;
+    std::string manifestPath;
+    std::string reportPath;
+};
+
 class PlotRunner {
 public:
-    // Запускает Python-скрипт для построения графиков из TSV.
-    // Возвращает true, если графики успешно построены.
-    // При ошибке выводит предупреждение, но не прерывает работу программы.
-    static bool run(const std::string& tsvPath, const std::string& outDir);
+    // Generates every available chart in one Python process. Plot failures are
+    // reported but never invalidate the underlying NeoQC analysis results.
+    static PlotRunResult runAll(const std::string& resultDir,
+                                const std::string& plotDir,
+                                const PlotOptions& options = {});
 };

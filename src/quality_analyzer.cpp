@@ -2,7 +2,32 @@
 #include <algorithm>
 #include <cmath>
 
-QualityAnalyzer::QualityAnalyzer() {
+namespace {
+constexpr size_t kAdapterDetectionKmerLength = 12;
+}
+
+QualityAnalyzer::QualityAnalyzer(ReadDirection direction) {
+    if (direction == ReadDirection::R1) {
+        adapters = {
+            {"TruSeq_R1", "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA"},
+            {"SmallRNA3'", "TGGAATTCTCGGGTGCCAAGG"},
+            {"SmallRNA5'", "GTTCAGAGTTCTACAGTCCGACGATC"},
+            {"Nextera", "CTGTCTCTTATACACATCT"}
+        };
+    } else {
+        adapters = {
+            {"TruSeq_R2", "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT"},
+            {"SmallRNA3'", "TGGAATTCTCGGGTGCCAAGG"},
+            {"SmallRNA5'", "GTTCAGAGTTCTACAGTCCGACGATC"},
+            {"Nextera", "CTGTCTCTTATACACATCT"}
+        };
+    }
+
+    for (auto& adapter : adapters) {
+        adapter.detectionSequence = adapter.sequence.substr(
+            0, std::min(kAdapterDetectionKmerLength, adapter.sequence.size()));
+    }
+
     adapterPosCounts.resize(adapters.size());
     qualityDistribution.assign(50, 0); // Phred scores 0..49
 }
@@ -17,6 +42,14 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
     // Длина
     totalReads++;
     totalLength += len;
+
+    if (len >= lengthDistribution.size())
+    {
+        lengthDistribution.resize(len + 1, 0);
+    }
+
+    lengthDistribution[len]++;
+
     if (len < minLength) minLength = len;
     if (len > maxLength) maxLength = len;
 
@@ -24,19 +57,30 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
     if (len > qualitySum.size()) {
         qualitySum.resize(len, 0);
         qualityCount.resize(len, 0);
+
+        baseCountA.resize(len, 0);
+        baseCountC.resize(len, 0);
+        baseCountG.resize(len, 0);
+        baseCountT.resize(len, 0);
+        baseCountN.resize(len, 0);
+
+        readsPerPosition.resize(len, 0);
     }
 
     // Подсчёт оснований и качества
     uint64_t readQualSum = 0;
+    uint64_t validQualityBases = 0;
+    size_t gc = 0;
     for (size_t i = 0; i < len; ++i) {
+        readsPerPosition[i]++;
         char c = seq[i];
         // Подсчёт оснований
         switch (c) {
-            case 'A': case 'a': countA++; totalBases++; break;
-            case 'C': case 'c': countC++; totalBases++; totalGC++; break;
-            case 'G': case 'g': countG++; totalBases++; totalGC++; break;
-            case 'T': case 't': countT++; totalBases++; break;
-            case 'N': case 'n': countN++; totalBases++; break;
+            case 'A': case 'a': countA++; totalBases++; baseCountA[i]++; break;
+            case 'C': case 'c': countC++; totalBases++; totalGC++; baseCountC[i]++; gc++; break;
+            case 'G': case 'g': countG++; totalBases++; totalGC++; baseCountG[i]++; gc++; break;
+            case 'T': case 't': countT++; totalBases++; baseCountT[i]++; break;
+            case 'N': case 'n': countN++; totalBases++; baseCountN[i]++; break;
             default:
                 // Неизвестный символ — считаем как N
                 countN++; totalBases++;
@@ -50,6 +94,7 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
                 qualitySum[i] += q;
                 qualityCount[i]++;
                 readQualSum += q;
+                validQualityBases++;
 
                 if (q < static_cast<int>(qualityDistribution.size())) {
                     qualityDistribution[q]++;
@@ -61,6 +106,20 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
         }
     }
 
+    int gcPercent = static_cast<int>(
+        std::lround(static_cast<double>(gc) * 100.0 / len));
+
+    gcDistribution[gcPercent]++;
+
+    if (validQualityBases > 0) {
+        const auto meanQuality = static_cast<size_t>(std::lround(
+            static_cast<double>(readQualSum) / validQualityBases));
+        if (meanQuality >= perSequenceQualityDistribution.size()) {
+            perSequenceQualityDistribution.resize(meanQuality + 1, 0);
+        }
+        perSequenceQualityDistribution[meanQuality]++;
+    }
+
 }
 
 void QualityAnalyzer::analyzeAdapters(const FastqRecord& record) {
@@ -68,21 +127,21 @@ void QualityAnalyzer::analyzeAdapters(const FastqRecord& record) {
     bool foundInRead = false;
 
     for (size_t aid = 0; aid < adapters.size(); ++aid) {
-        const std::string& adapter = adapters[aid].sequence;
-        const size_t position = seq.find(adapter);
+        const std::string& detectionSequence = adapters[aid].detectionSequence;
+        const size_t position = seq.find(detectionSequence);
 
         if (position == std::string::npos) {
             continue;
         }
 
-        const size_t adapterLength = adapter.length();
-
-        if (adapterPosCounts[aid].size() < position + adapterLength) {
-            adapterPosCounts[aid].resize(position + adapterLength, 0);
+        if (adapterPosCounts[aid].size() < seq.size()) {
+            adapterPosCounts[aid].resize(seq.size(), 0);
         }
 
-        for (size_t j = 0; j < adapterLength; ++j) {
-            adapterPosCounts[aid][position + j]++;
+        // FastQC reports a cumulative trace: once an adapter k-mer is found,
+        // the read is counted from that position through its end.
+        for (size_t j = position; j < seq.size(); ++j) {
+            adapterPosCounts[aid][j]++;
         }
 
         foundInRead = true;
@@ -108,6 +167,18 @@ QualityStats QualityAnalyzer::getStats() const {
     stats.countT = countT;
     stats.countN = countN;
 
+    stats.baseCountA = baseCountA;
+    stats.baseCountC = baseCountC;
+    stats.baseCountG = baseCountG;
+    stats.baseCountT = baseCountT;
+    stats.baseCountN = baseCountN;
+
+    stats.readsPerPosition = readsPerPosition;
+
+    stats.gcDistribution = gcDistribution;
+
+    stats.lengthDistribution = lengthDistribution;
+
     stats.avgGC      = (totalBases > 0) ? static_cast<double>(totalGC) / totalBases * 100.0 : 0.0;
     stats.percentN   = (totalBases > 0) ? static_cast<double>(countN) / totalBases * 100.0 : 0.0;
     stats.percentQ20 = (totalBases > 0) ? static_cast<double>(q20Count) / totalBases * 100.0 : 0.0;
@@ -126,6 +197,7 @@ QualityStats QualityAnalyzer::getStats() const {
 
     // Распределение качества
     stats.qualityDistribution = qualityDistribution;
+    stats.perSequenceQualityDistribution = perSequenceQualityDistribution;
 
     return stats;
 }

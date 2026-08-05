@@ -24,10 +24,36 @@ add_executable(neoqc
 
 target_include_directories(neoqc PRIVATE include)
 target_link_libraries(neoqc PRIVATE ZLIB::ZLIB)
+target_compile_definitions(neoqc PRIVATE
+    NEOQC_PLOT_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/scripts/plot_results.py"
+)
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 enable_testing()
+
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME test_qc_report
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_qc_report.py)
+    set_tests_properties(test_qc_report PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} -c "import matplotlib"
+        RESULT_VARIABLE MATPLOTLIB_IMPORT_STATUS
+        OUTPUT_QUIET
+        ERROR_QUIET
+    )
+    if(MATPLOTLIB_IMPORT_STATUS EQUAL 0)
+        add_test(NAME test_plot_results
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_plot_results.py)
+        set_tests_properties(test_plot_results PROPERTIES
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    else()
+        message(STATUS "Matplotlib not found: plot rendering test is disabled")
+    endif()
+endif()
 
 # Папка с тестовыми данными (пути, как вы сказали, верные)
 set(TEST_DATA_DIR "${CMAKE_SOURCE_DIR}/tests/data")
@@ -40,6 +66,12 @@ set(TEST_OUT_DIR "${CMAKE_BINARY_DIR}/test_output")
 # 1. Корректный одиночный FASTQ
 add_test(NAME test_correct_single
          COMMAND neoqc --r1 ${TEST_DATA_DIR}/correct_single.fq.gz --sample-id test_single --out ${TEST_OUT_DIR})
+
+add_test(NAME test_per_sequence_quality
+         COMMAND ${CMAKE_COMMAND}
+                 -DREPORT=${TEST_OUT_DIR}/per_sequence_quality_R1.tsv
+                 -P ${CMAKE_SOURCE_DIR}/tests/check_per_sequence_quality.cmake)
+set_tests_properties(test_per_sequence_quality PROPERTIES DEPENDS test_correct_single)
 
 # 2. Поиск адаптеров можно отключить для измерения его влияния на скорость.
 add_test(NAME test_skip_adapters
@@ -80,6 +112,30 @@ set_tests_properties(test_case_summary PROPERTIES DEPENDS test_sample_sheet_batc
 # 3. Корректная пара R1/R2
 add_test(NAME test_correct_paired
          COMMAND neoqc --r1 ${TEST_DATA_DIR}/correct_pair_R1.fq.gz --r2 ${TEST_DATA_DIR}/correct_pair_R2.fq.gz --sample-id test_pair --out ${TEST_OUT_DIR})
+
+add_test(NAME test_adapter_profiles
+         COMMAND neoqc --r1 ${TEST_DATA_DIR}/adapter_profile_R1.fq
+                       --r2 ${TEST_DATA_DIR}/adapter_profile_R2.fq
+                       --sample-id adapter_profile
+                       --out ${TEST_OUT_DIR}/adapter_profile)
+add_test(NAME test_adapter_profiles_report
+         COMMAND ${CMAKE_COMMAND}
+                 -DR1_REPORT=${TEST_OUT_DIR}/adapter_profile/adapter_content_R1.tsv
+                 -DR2_REPORT=${TEST_OUT_DIR}/adapter_profile/adapter_content_R2.tsv
+                 -P ${CMAKE_SOURCE_DIR}/tests/check_adapter_profiles.cmake)
+set_tests_properties(test_adapter_profiles_report PROPERTIES DEPENDS test_adapter_profiles)
+
+add_test(NAME test_partial_adapter_profiles
+         COMMAND neoqc --r1 ${TEST_DATA_DIR}/partial_adapter_R1.fq
+                       --r2 ${TEST_DATA_DIR}/partial_adapter_R2.fq
+                       --sample-id partial_adapter
+                       --out ${TEST_OUT_DIR}/partial_adapter)
+add_test(NAME test_partial_adapter_profiles_report
+         COMMAND ${CMAKE_COMMAND}
+                 -DR1_REPORT=${TEST_OUT_DIR}/partial_adapter/adapter_content_R1.tsv
+                 -DR2_REPORT=${TEST_OUT_DIR}/partial_adapter/adapter_content_R2.tsv
+                 -P ${CMAKE_SOURCE_DIR}/tests/check_adapter_profiles.cmake)
+set_tests_properties(test_partial_adapter_profiles_report PROPERTIES DEPENDS test_partial_adapter_profiles)
 
 # 4. Строка длиннее 4096 символов (Тут решение за вами: упадет или обработает. По умолчанию ставим WILL_FAIL)
 add_test(NAME test_long_line_4096
