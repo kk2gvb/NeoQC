@@ -945,13 +945,12 @@ int main(int argc, char* argv[]) {
                                                       entry.sampleId, args.skipAdapters, args.timings);
                     }
 
-                    if (args.plot && !args.skipAdapters) {
+                    if (args.plot) {
                         ScopedTimer timer(analysis.timers.plotting, args.timings);
                         const std::string plotDir = (sampleOutDir / "plots").string();
-                        PlotRunner::run((sampleOutDir / "adapter_content_R1.tsv").string(), plotDir);
-                        if (!entry.r2.empty()) {
-                            PlotRunner::run((sampleOutDir / "adapter_content_R2.tsv").string(), plotDir);
-                        }
+                        PlotOptions plotOptions;
+                        plotOptions.includeAdapters = !args.skipAdapters;
+                        PlotRunner::runAll(sampleOutDir.string(), plotDir, plotOptions);
                     }
                     if (args.timings) printPerformanceTimers(analysis.timers);
                     std::cout << "Result: passed\n";
@@ -1044,15 +1043,12 @@ int main(int argc, char* argv[]) {
     }
 
     // Построение графиков (опционально, через PlotRunner)
-    if (args.plot && !args.skipAdapters) {
+    if (args.plot) {
         ScopedTimer timer(timers.plotting, args.timings);
         std::string plotDir = args.outDir + "/plots";
-        PlotRunner::run(args.outDir + "/adapter_content_R1.tsv", plotDir);
-        if (isPaired) {
-            PlotRunner::run(args.outDir + "/adapter_content_R2.tsv", plotDir);
-        }
-    } else if (args.plot) {
-        std::cout << "Skipping adapter plots because adapter search was disabled.\n";
+        PlotOptions plotOptions;
+        plotOptions.includeAdapters = !args.skipAdapters;
+        PlotRunner::runAll(args.outDir, plotDir, plotOptions);
     }
 
     if (args.timings) printPerformanceTimers(timers);

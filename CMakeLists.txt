@@ -24,10 +24,36 @@ add_executable(neoqc
 
 target_include_directories(neoqc PRIVATE include)
 target_link_libraries(neoqc PRIVATE ZLIB::ZLIB)
+target_compile_definitions(neoqc PRIVATE
+    NEOQC_PLOT_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/scripts/plot_results.py"
+)
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 enable_testing()
+
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME test_qc_report
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_qc_report.py)
+    set_tests_properties(test_qc_report PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} -c "import matplotlib"
+        RESULT_VARIABLE MATPLOTLIB_IMPORT_STATUS
+        OUTPUT_QUIET
+        ERROR_QUIET
+    )
+    if(MATPLOTLIB_IMPORT_STATUS EQUAL 0)
+        add_test(NAME test_plot_results
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_plot_results.py)
+        set_tests_properties(test_plot_results PROPERTIES
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    else()
+        message(STATUS "Matplotlib not found: plot rendering test is disabled")
+    endif()
+endif()
 
 # Папка с тестовыми данными (пути, как вы сказали, верные)
 set(TEST_DATA_DIR "${CMAKE_SOURCE_DIR}/tests/data")
