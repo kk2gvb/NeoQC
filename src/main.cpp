@@ -548,7 +548,7 @@ AnalysisResult processOneFile(const std::string& path,
             stats.baseCountN,
             outDir,
             readName);
-        
+
         writePerSequenceGCContentTsv(
             stats.gcDistribution,
             outDir,
@@ -630,7 +630,7 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
                 "FASTQ validation error:\n"
                 "reason: R2 contains fewer reads than R1");
         }
-        
+
         // Проверка идентификаторов считываний
         bool matchingReadIds;
         {
@@ -698,55 +698,55 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
 
         writeSummaryTxt(
             statsR1,
-            outDir, 
-            sampleId + "_R1", 
+            outDir,
+            sampleId + "_R1",
             skipAdapters);
         writeSummaryTxt(
-            statsR2, 
-            outDir, 
-            sampleId + "_R2", 
+            statsR2,
+            outDir,
+            sampleId + "_R2",
             skipAdapters);
 
         writePerCycleQualityTsv(
-            statsR1.meanQualityPerPosition, 
-            outDir, 
+            statsR1.meanQualityPerPosition,
+            outDir,
             "R1");
         writePerCycleQualityTsv(
-            statsR2.meanQualityPerPosition, 
-            outDir, 
+            statsR2.meanQualityPerPosition,
+            outDir,
             "R2");
 
         writeQualityDistributionTsv(
-            statsR1.qualityDistribution, 
-            outDir, 
+            statsR1.qualityDistribution,
+            outDir,
             "R1");
         writeQualityDistributionTsv(
-            statsR2.qualityDistribution, 
-            outDir, 
+            statsR2.qualityDistribution,
+            outDir,
             "R2");
 
         writePerBaseSequenceContentTsv(
-            statsR1.baseCountA, 
-            statsR1.baseCountC, 
-            statsR1.baseCountG, 
-            statsR1.baseCountT, 
-            statsR1.baseCountN, 
-            outDir, 
+            statsR1.baseCountA,
+            statsR1.baseCountC,
+            statsR1.baseCountG,
+            statsR1.baseCountT,
+            statsR1.baseCountN,
+            outDir,
             "R1");
         writePerBaseSequenceContentTsv(
-            statsR2.baseCountA, 
-            statsR2.baseCountC, 
-            statsR2.baseCountG, 
-            statsR2.baseCountT, 
-            statsR2.baseCountN, 
-            outDir, 
+            statsR2.baseCountA,
+            statsR2.baseCountC,
+            statsR2.baseCountG,
+            statsR2.baseCountT,
+            statsR2.baseCountN,
+            outDir,
             "R2");
 
-        writePerSequenceGCContentTsv(statsR1.gcDistribution, 
-            outDir, 
+        writePerSequenceGCContentTsv(statsR1.gcDistribution,
+            outDir,
             "R1");
-        writePerSequenceGCContentTsv(statsR2.gcDistribution, 
-            outDir, 
+        writePerSequenceGCContentTsv(statsR2.gcDistribution,
+            outDir,
             "R2");
 
         writePerBaseNContentTsv(
@@ -761,11 +761,11 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
             outDir,
             "R2");
 
-        writePerSequenceQualityTsv(statsR1.perSequenceQualityDistribution, 
-            outDir, 
+        writePerSequenceQualityTsv(statsR1.perSequenceQualityDistribution,
+            outDir,
             "R1");
-        writePerSequenceQualityTsv(statsR2.perSequenceQualityDistribution, 
-            outDir, 
+        writePerSequenceQualityTsv(statsR2.perSequenceQualityDistribution,
+            outDir,
             "R2");
 
         writeSequenceLengthDistributionTsv(
