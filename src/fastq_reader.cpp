@@ -56,6 +56,15 @@ bool FastqReader::readLine(std::string& line) {
 
         line += buffer;
 
+        int errnum = 0;
+        const char* errmsg = gzerror(fileHandle, &errnum);
+
+        if (errnum != Z_OK && errnum != Z_STREAM_END)
+        {
+            throw std::runtime_error(
+                "Gzip read error in " + filename + ": " + errmsg);
+        }
+
         // Проверяем, есть ли в строке перевод строки
         if (line.find('\n') != std::string::npos) {
             trimNewlines(line);
@@ -76,13 +85,33 @@ bool FastqReader::readNext(FastqRecord& record) {
 
     // Читаем заголовок
     if (!readLine(record.header)) {
-        if (collectTiming) timing.readAndDecompress += std::chrono::steady_clock::now() - readStart;
-        return false; // конец файла
+        if (collectTiming)
+            timing.readAndDecompress += std::chrono::steady_clock::now() - readStart;
+
+        // Если это самое начало файла — FASTQ пустой
+        if (readCount == 0) {
+            std::ostringstream oss;
+            oss << "FASTQ validation error:\n"
+                << "file: " << filename << "\n"
+                << "reason: FASTQ file is empty";
+
+            throw std::runtime_error(oss.str());
+        }
+
+        return false;
     }
 
     if (record.header.empty()) {
-        if (collectTiming) timing.readAndDecompress += std::chrono::steady_clock::now() - readStart;
-        return false; // пустая строка = конец файла
+        if (collectTiming)
+            timing.readAndDecompress += std::chrono::steady_clock::now() - readStart;
+
+        std::ostringstream oss;
+        oss << "FASTQ validation error:\n"
+            << "file: " << filename << "\n"
+            << "record: " << (readCount + 1) << "\n"
+            << "reason: blank line found between FASTQ records";
+
+        throw std::runtime_error(oss.str());
     }
 
     if (collectTiming) timing.readAndDecompress += std::chrono::steady_clock::now() - readStart;
@@ -107,6 +136,16 @@ bool FastqReader::readNext(FastqRecord& record) {
             << "file: " << filename << "\n"
             << "record: " << (readCount + 1) << "\n"
             << "reason: truncated record (missing sequence)";
+        throw std::runtime_error(oss.str());
+    }
+
+    if (record.sequence.empty()) {
+        std::ostringstream oss;
+        oss << "FASTQ validation error:\n"
+            << "file: " << filename << "\n"
+            << "record: " << (readCount + 1) << "\n"
+            << "reason: empty sequence";
+
         throw std::runtime_error(oss.str());
     }
 
@@ -136,6 +175,16 @@ bool FastqReader::readNext(FastqRecord& record) {
             << "file: " << filename << "\n"
             << "record: " << (readCount + 1) << "\n"
             << "reason: truncated record (missing quality)";
+        throw std::runtime_error(oss.str());
+    }
+
+    if (record.quality.empty()) {
+        std::ostringstream oss;
+        oss << "FASTQ validation error:\n"
+            << "file: " << filename << "\n"
+            << "record: " << (readCount + 1) << "\n"
+            << "reason: empty quality string";
+
         throw std::runtime_error(oss.str());
     }
 

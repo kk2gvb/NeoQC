@@ -181,11 +181,114 @@ printf '@READ_001\r\nAGCTTAGC\r\n+\r\nAAAAFFFF\r\n' > tests/data/windows_clrf.fq
 gzip -f tests/data/windows_clrf.fq
 echo "11. Windows CRLF file generated: tests/data/windows_clrf.fq.gz"
 
-# 12. Повреждённый gzip
-echo "not a gzip file" > tests/data/corrupted_gzip.fq.gz
-echo "12. Corrupted gzip file generated: tests/data/corrupted_gzip.fq.gz"
+# 12. Corrupted gzip (truncated)
+cp tests/data/correct_single.fq.gz tests/data/corrupted_crc.fq.gz
+truncate -s -8 tests/data/corrupted_crc.fq.gz
+
+echo "12. Corrupted gzip (CRC) generated."
+
+# 13. Пустой FASTQ
+touch tests/data/empty.fq
+gzip -f tests/data/empty.fq
+echo "13. Empty FASTQ generated: tests/data/empty.fq.gz"
+
+# 14. Пустая последовательность
+cat > tests/data/empty_sequence.fq << 'EOF'
+@READ_001
+
++
+IIII
+EOF
+gzip -f tests/data/empty_sequence.fq
+echo "14. Empty sequence generated: tests/data/empty_sequence.fq.gz"
+
+# 15. Пустая качество
+cat > tests/data/empty_quality.fq << 'EOF'
+@READ_001
+AGCT
++
+
+EOF
+gzip -f tests/data/empty_quality.fq
+echo "15. Empty quality generated: tests/data/empty_quality.fq.gz"
+
+# 16. Пустая строка между записями 
+cat > tests/data/blank_line_between_records.fq << 'EOF'
+@READ_001
+AGCT
++
+IIII
+
+@READ_002
+TGCA
++
+IIII
+EOF
+gzip -f tests/data/blank_line_between_records.fq
+echo "16. Blank line between records generated."
+
+# 17. Несовпадающие пары
+cat > tests/data/pair_mismatch_R1.fq << 'EOF'
+@READ1/1
+ACGT
++
+IIII
+@READ2/1
+ACGT
++
+IIII
+EOF
+gzip -f tests/data/pair_mismatch_R1.fq
+
+cat > tests/data/pair_mismatch_R2.fq << 'EOF'
+@READ1/2
+ACGT
++
+IIII
+@READ3/2
+ACGT
++
+IIII
+EOF
+gzip -f tests/data/pair_mismatch_R2.fq
+echo "17. Mismatching pairs generated."
+
+########################################
+# 18. Medium dataset
+########################################
+echo "18. Generating medium paired-end dataset..."
+
+python3 scripts/generate_fastq.py \
+    --paired \
+    --gzip \
+    --reads 100000 \
+    --length 150 \
+    --name medium \
+    --dir tests/data
+
+########################################
+# 19. Large dataset
+########################################
+echo "19. Generating large paired-end dataset..."
+
+python3 scripts/generate_fastq.py \
+    --paired \
+    --gzip \
+    --reads 1000000 \
+    --length 150 \
+    --name large \
+    --dir tests/data
+
+########################################
+# 20. Adapter test datasets
+########################################
+
+echo
+echo "Generating adapter test datasets..."
+
+bash scripts/generate_adapter_tests.sh
 
 echo
 echo "====================================="
-echo "Generated 12 FASTQ test datasets."
+echo "All test datasets generated successfully."
 echo "====================================="
