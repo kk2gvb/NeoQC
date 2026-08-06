@@ -526,6 +526,36 @@ void writeSequenceDuplicationLevelsTsv(
             << '\n';
     }
 }
+
+void writeOverrepresentedSequencesTsv(
+    const std::vector<QualityStats::OverrepresentedSequence>& sequences,
+    const std::string& outDir,
+    const std::string& readName)
+{
+    const std::string path =
+        outDir + "/overrepresented_sequences_" + readName + ".tsv";
+
+    std::ofstream out(path);
+
+    if (!out)
+    {
+        throw std::runtime_error("Cannot write to " + path);
+    }
+
+    out << "sequence\tcount\tpercent\n";
+
+    for (const auto& seq : sequences)
+    {
+        out << seq.sequence
+            << '\t'
+            << seq.count
+            << '\t'
+            << std::fixed
+            << std::setprecision(4)
+            << seq.percent
+            << '\n';
+    }
+}
 // ---------------------------------------------------------------------------
 // Обработка одного файла (R1 или R2)
 // ---------------------------------------------------------------------------
@@ -615,6 +645,11 @@ AnalysisResult processOneFile(const std::string& path,
 
         writeSequenceDuplicationLevelsTsv(
             stats.sequenceCounts,
+            outDir,
+            "R1");
+
+        writeOverrepresentedSequencesTsv(
+            stats.overrepresentedSequences,
             outDir,
             "R1");
 
@@ -833,6 +868,16 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
             statsR2.sequenceCounts,
             outDir,
             "R2");    
+
+        writeOverrepresentedSequencesTsv(
+            statsR1.overrepresentedSequences,
+            outDir,
+            "R1");
+
+        writeOverrepresentedSequencesTsv(
+            statsR2.overrepresentedSequences,
+            outDir,
+            "R2");
 
         if (!skipAdapters) {
             writeAdapterTsv(analyzerR1.adapters, analyzerR1.adapterPosCounts,
