@@ -19,6 +19,19 @@ python3 scripts/generate_html_report.py \
   --output results/report.html
 ```
 
+Подключить готовую техническую оценку NeoQC в раздел контроля качества:
+
+```bash
+python3 scripts/generate_html_report.py \
+  --input examples/html_report_example.json \
+  --qc-evaluation results/sample01/qc_evaluation.json \
+  --output results/report.html
+```
+
+В этом режиме раздел `sequencing-quality-control` заменяется данными из того же
+`qc_evaluation.json`, который использует компактный NeoQC-отчёт. Поэтому статусы,
+счётчики и причины не пересчитываются и не расходятся между двумя документами.
+
 Скрипт проверяет обязательные поля, статусы и размеры таблиц. При ошибке он ничего не
 публикует по целевому пути и завершается с ненулевым кодом.
 
@@ -28,9 +41,10 @@ python3 scripts/generate_html_report.py \
 файла:
 
 ```python
-from neo_mrna_vax_report import ReportData, write_html_report
+from neo_mrna_vax_report import ReportData, attach_qc_evaluation, write_html_report
 
 report = ReportData.from_dict(calculated_report_data)
+report = attach_qc_evaluation(report, "results/sample01/qc_evaluation.json")
 write_html_report(report, "results/report.html")
 ```
 
@@ -55,7 +69,8 @@ PYTHONPATH=python python3 -m neo_mrna_vax_report \
 Файл записывается через временный файл и атомарную замену, чтобы клиника не получила
 частично сформированный документ.
 
-Автоматическое создание полного отчёта пока намеренно не включено: сначала следует
-согласовать клинические разделы, пороги, формулировки и обязательные поля. Отдельные
-результаты, включая `case_summary.json`, затем будут преобразовываться в соответствующие
-разделы общего `ReportData`.
+Автоматическая сборка всех остальных разделов полного отчёта пока намеренно не
+включена: сначала следует согласовать клинические формулировки и обязательные поля.
+Интеграция раздела NeoQC уже реализована через версионированный
+`qc_evaluation.json`; остальные результаты, включая `case_summary.json`, затем будут
+преобразовываться в соответствующие разделы общего `ReportData`.

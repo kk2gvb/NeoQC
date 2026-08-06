@@ -38,13 +38,15 @@ from plot_style import (
     setup_axes,
     use_compact_y_axis,
 )
+from qc_observations import fastqc_theoretical_gc
 
 
 class PlotDataError(ValueError):
     """Raised when a NeoQC TSV cannot be rendered safely."""
 
 
-Rows = list[dict[str, float]]
+Cell = float | str
+Rows = list[dict[str, Cell]]
 PlotFunction = Callable[[Rows, str], tuple[plt.Figure, str]]
 
 
@@ -58,6 +60,8 @@ class MetricSpec:
     plot: PlotFunction
     adapters_only: bool = False
     variable_series: bool = False
+    text_columns: tuple[str, ...] = ()
+    optional_columns: tuple[str, ...] = ()
 
     def source_name(self, read: str) -> str:
         return f"{self.source_prefix}_{read}.tsv"
@@ -87,7 +91,8 @@ def _read_numeric_tsv(path: Path, spec: MetricSpec) -> Rows:
         if spec.variable_series and len(columns) <= len(spec.required_columns):
             raise PlotDataError(f"{path.name}: contains no data series")
         if not spec.variable_series:
-            unexpected = [column for column in columns if column not in spec.required_columns]
+            allowed_columns = spec.required_columns + spec.optional_columns
+            unexpected = [column for column in columns if column not in allowed_columns]
             if unexpected:
                 raise PlotDataError(
                     f"{path.name}: unexpected column(s): {', '.join(unexpected)}"
@@ -97,9 +102,16 @@ def _read_numeric_tsv(path: Path, spec: MetricSpec) -> Rows:
         for line_number, raw in enumerate(reader, start=2):
             if None in raw:
                 raise PlotDataError(f"{path.name}:{line_number}: too many fields")
-            converted: dict[str, float] = {}
+            converted: dict[str, Cell] = {}
             for column in columns:
                 value = (raw.get(column) or "").strip()
+                if column in spec.text_columns:
+                    if not value:
+                        raise PlotDataError(
+                            f"{path.name}:{line_number}: {column} must not be empty"
+                        )
+                    converted[column] = value
+                    continue
                 try:
                     number = float(value)
                 except ValueError as error:
@@ -123,7 +135,17 @@ def _read_numeric_tsv(path: Path, spec: MetricSpec) -> Rows:
 
 
 def _values(rows: Rows, column: str) -> list[float]:
-    return [row[column] for row in rows]
+    values = [row[column] for row in rows]
+    if any(not isinstance(value, float) for value in values):
+        raise PlotDataError(f"{column} must be numeric")
+    return [value for value in values if isinstance(value, float)]
+
+
+def _labels(rows: Rows, column: str) -> list[str]:
+    values = [row[column] for row in rows]
+    if any(not isinstance(value, str) for value in values):
+        raise PlotDataError(f"{column} must contain labels")
+    return [value for value in values if isinstance(value, str)]
 
 
 def _ensure_range(values: Sequence[float], label: str, lower: float, upper: float) -> None:
@@ -154,52 +176,6 @@ def _mark_statistic(ax, value: float, label: str, color: str, linestyle: str) ->
 
 def _line_marker_stride(values: Sequence[float]) -> int:
     return max(1, len(values) // 16)
-
-
-def _fastqc_theoretical_gc(
-    x: Sequence[float], counts: Sequence[float]
-) -> tuple[list[int], list[float], float, float]:
-    """Reproduce FastQC's mode-centred normal model on the 0..100 GC scale."""
-
-    observed = [0.0] * 101
-    for percentage, count in zip(x, counts):
-        index = int(round(percentage))
-        if not math.isclose(percentage, index, abs_tol=1e-6):
-            raise PlotDataError("GC percentage values must be whole numbers")
-        observed[index] += count
-
-    total = sum(observed)
-    if total <= 1:
-        raise PlotDataError("GC distribution needs at least two reads")
-
-    first_mode = max(range(101), key=observed.__getitem__)
-    threshold = observed[first_mode] * 0.9
-    modal_bins = [first_mode]
-    for index in range(first_mode + 1, 101):
-        if observed[index] <= threshold:
-            break
-        modal_bins.append(index)
-    for index in range(first_mode - 1, -1, -1):
-        if observed[index] <= threshold:
-            break
-        modal_bins.append(index)
-
-    # FastQC keeps the first mode when the high plateau touches either edge.
-    touches_edge = min(modal_bins) == 0 or max(modal_bins) == 100
-    centre = float(first_mode) if touches_edge else sum(modal_bins) / len(modal_bins)
-    variance = sum(((index - centre) ** 2) * count for index, count in enumerate(observed))
-    stdev = math.sqrt(variance / (total - 1))
-    if stdev <= 0:
-        theoretical = [0.0] * 101
-        theoretical[int(round(centre))] = total
-    else:
-        scale = total / (math.sqrt(2.0 * math.pi) * stdev)
-        theoretical = [
-            scale * math.exp(-((index - centre) ** 2) / (2.0 * stdev * stdev))
-            for index in range(101)
-        ]
-    deviation = sum(abs(model - actual) for model, actual in zip(theoretical, observed)) / total * 100.0
-    return list(range(101)), theoretical, centre, deviation
 
 
 def plot_per_base_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
@@ -343,7 +319,7 @@ def plot_gc_content(rows: Rows, read: str) -> tuple[plt.Figure, str]:
     _ensure_range(x, "GC percentage", 0, 100)
     counts = _values(rows, "reads")
     mean, median, mode = _weighted_summary(x, counts)
-    theoretical_x, theoretical, theoretical_centre, deviation = _fastqc_theoretical_gc(x, counts)
+    theoretical_x, theoretical, theoretical_centre, deviation = fastqc_theoretical_gc(x, counts)
     fig, ax = plt.subplots(figsize=FIGURE_SIZE)
     setup_axes(ax, "Per sequence GC content", "GC content (%)", "Reads", read)
     ax.fill_between(x, counts, color=ACCENT, alpha=0.20, linewidth=0)
@@ -486,13 +462,86 @@ def plot_length_distribution(rows: Rows, read: str) -> tuple[plt.Figure, str]:
     )
 
 
+def plot_sequence_duplication_levels(rows: Rows, read: str) -> tuple[plt.Figure, str]:
+    labels = _labels(rows, "duplication_level")
+    total = _values(rows, "total_sequences_percent")
+    deduplicated = _values(rows, "deduplicated_sequences_percent")
+    _ensure_range(total, "total sequences percentage", 0, 100)
+    _ensure_range(deduplicated, "deduplicated sequences percentage", 0, 100)
+    if len(set(labels)) != len(labels):
+        raise PlotDataError("duplication_level values must be unique")
+
+    positions = list(range(len(labels)))
+    fig, ax = plt.subplots(figsize=FIGURE_SIZE)
+    setup_axes(
+        ax,
+        "Sequence duplication levels",
+        "Sequence duplication level",
+        "Sequences (%)",
+        read,
+    )
+    for index in range(0, len(labels), 2):
+        ax.axvspan(index - 0.5, index + 0.5, color=PANEL, linewidth=0, zorder=0)
+    ax.plot(
+        positions,
+        total,
+        color=BRAND,
+        marker="o",
+        markersize=3.8,
+        linewidth=2.2,
+        label="Total sequences",
+        zorder=3,
+    )
+    ax.plot(
+        positions,
+        deduplicated,
+        color=DANGER,
+        marker="s",
+        markersize=3.6,
+        linewidth=2.0,
+        label="Deduplicated sequences",
+        zorder=3,
+    )
+    ax.set_xlim(-0.5, len(labels) - 0.5)
+    ax.set_ylim(0, 100)
+    ax.set_xticks(positions, labels)
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}%"))
+    ax.legend(loc="upper right")
+    finish_figure(fig)
+
+    total_peak = max(range(len(total)), key=total.__getitem__)
+    deduplicated_peak = max(range(len(deduplicated)), key=deduplicated.__getitem__)
+    return fig, (
+        f"FastQC-style sequence duplication profile for {read}; total-sequence peak "
+        f"{total[total_peak]:.2f}% at level {labels[total_peak]}, and deduplicated-sequence "
+        f"peak {deduplicated[deduplicated_peak]:.2f}% at level {labels[deduplicated_peak]}."
+    )
+
+
 METRICS: tuple[MetricSpec, ...] = (
-    MetricSpec("per_base_quality", "per_cycle", "per_base_quality", "Per base sequence quality", ("cycle", "mean_quality"), plot_per_base_quality),
+    MetricSpec(
+        "per_base_quality",
+        "per_cycle",
+        "per_base_quality",
+        "Per base sequence quality",
+        ("cycle", "mean_quality"),
+        plot_per_base_quality,
+        optional_columns=("lower_quartile", "median"),
+    ),
     MetricSpec("adapter_content", "adapter_content", "adapter_content", "Adapter content", ("pos",), plot_adapter_content, adapters_only=True, variable_series=True),
     MetricSpec("per_base_sequence_content", "per_base_sequence_content", "per_base_sequence_content", "Per base sequence content", ("position", "A", "C", "G", "T", "N"), plot_base_content),
     MetricSpec("per_sequence_gc_content", "per_sequence_gc_content", "per_sequence_gc_content", "Per sequence GC content", ("gc_percent", "reads"), plot_gc_content),
     MetricSpec("per_base_n_content", "per_base_n_content", "per_base_n_content", "Per base N content", ("position", "N_percent"), plot_n_content),
     MetricSpec("sequence_length_distribution", "sequence_length_distribution", "sequence_length_distribution", "Sequence length distribution", ("length", "reads"), plot_length_distribution),
+    MetricSpec(
+        "sequence_duplication_levels",
+        "sequence_duplication_levels",
+        "sequence_duplication_levels",
+        "Sequence duplication levels",
+        ("duplication_level", "total_sequences_percent", "deduplicated_sequences_percent"),
+        plot_sequence_duplication_levels,
+        text_columns=("duplication_level",),
+    ),
     MetricSpec("per_sequence_quality", "per_sequence_quality", "per_sequence_quality", "Per sequence quality scores", ("mean_quality", "read_count"), plot_per_sequence_quality),
 )
 

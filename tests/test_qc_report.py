@@ -74,6 +74,56 @@ def write_manifest(plot_dir: Path, *, unsafe: bool = False) -> None:
     )
 
 
+def write_evaluation(result_dir: Path) -> None:
+    evaluation = {
+        "schema_version": 1,
+        "ruleset": {"id": "test-rules", "version": "1.2.3"},
+        "evaluations": [
+            {
+                "metric_id": "per_base_quality",
+                "read": "R1",
+                "qc_status": "pass",
+                "observations": {"minimum_median": 31.0},
+                "checks": [
+                    {
+                        "observation": "minimum_median",
+                        "label": "Minimum median",
+                        "unit": "Phred",
+                    }
+                ],
+                "reasons": [
+                    {
+                        "code": "quality.within_thresholds",
+                        "message": "All observations are within thresholds.",
+                    }
+                ],
+            },
+            {
+                "metric_id": "adapter_content",
+                "read": "R1",
+                "qc_status": "warning",
+                "observations": {"maximum_adapter_percent": 7.0},
+                "checks": [
+                    {
+                        "observation": "maximum_adapter_percent",
+                        "label": "Maximum adapter content",
+                        "unit": "%",
+                    }
+                ],
+                "reasons": [
+                    {
+                        "code": "adapter.warning",
+                        "message": "Adapter content exceeds 5%.",
+                    }
+                ],
+            },
+        ],
+    }
+    (result_dir / "qc_evaluation.json").write_text(
+        json.dumps(evaluation), encoding="utf-8"
+    )
+
+
 class QcReportTest(unittest.TestCase):
     def test_self_contained_single_read_report(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-report-") as temporary:
@@ -119,6 +169,23 @@ class QcReportTest(unittest.TestCase):
             document = generate_qc_report(result_dir).read_text(encoding="utf-8")
             self.assertNotIn("<script>alert(1)</script>", document)
             self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", document)
+
+    def test_qc_distribution_matrix_and_card_decisions(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-report-status-") as temporary:
+            result_dir = Path(temporary)
+            write_summary(result_dir / "status_R1_summary.txt", "status", "R1")
+            write_manifest(result_dir / "plots")
+            write_evaluation(result_dir)
+
+            document = generate_qc_report(result_dir).read_text(encoding="utf-8")
+            self.assertIn("PASS / WARNING / FAIL distribution", document)
+            self.assertIn("test-rules · v1.2.3", document)
+            self.assertIn("PASS 1, WARNING 1, FAIL 0, NOT EVALUATED 0", document)
+            self.assertIn("✓</span> PASS", document)
+            self.assertIn("▲</span> WARNING", document)
+            self.assertIn("Minimum median", document)
+            self.assertIn("31 Phred", document)
+            self.assertIn("Adapter content exceeds 5%.", document)
 
     def test_asset_path_cannot_escape_plot_directory(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-report-safe-path-") as temporary:

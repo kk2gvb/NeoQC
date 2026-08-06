@@ -10,6 +10,7 @@ from typing import Sequence
 
 from .html_report import write_html_report
 from .models import ReportData, ReportValidationError
+from .qc_integration import attach_qc_evaluation
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -18,6 +19,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--input", required=True, type=Path, help="Input UTF-8 JSON file")
     parser.add_argument("--output", required=True, type=Path, help="Output HTML file")
+    parser.add_argument(
+        "--qc-evaluation",
+        type=Path,
+        help="NeoQC qc_evaluation.json to insert into the quality-control section",
+    )
     parser.add_argument(
         "--no-print-button", action="store_true", help="Do not include the print/PDF button"
     )
@@ -30,6 +36,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         with args.input.open(encoding="utf-8") as source:
             raw_data = json.load(source)
         report = ReportData.from_dict(raw_data)
+        if args.qc_evaluation is not None:
+            report = attach_qc_evaluation(report, args.qc_evaluation)
         output = write_html_report(
             report,
             args.output,

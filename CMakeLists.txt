@@ -39,6 +39,11 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(test_qc_report PROPERTIES
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+    add_test(NAME test_qc_rules
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_qc_rules.py)
+    set_tests_properties(test_qc_rules PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
     execute_process(
         COMMAND ${Python3_EXECUTABLE} -c "import matplotlib"
         RESULT_VARIABLE MATPLOTLIB_IMPORT_STATUS
@@ -73,8 +78,13 @@ add_test(NAME test_per_sequence_quality
                  -P ${CMAKE_SOURCE_DIR}/tests/check_per_sequence_quality.cmake)
 set_tests_properties(test_per_sequence_quality PROPERTIES DEPENDS test_correct_single)
 
-# Test 2. Проверка качества последовательностей
-# (выше - Test 2 реализована как зависимая проверка)
+add_test(NAME test_per_cycle_quality
+         COMMAND ${CMAKE_COMMAND}
+                 -DREPORT=${TEST_OUT_DIR}/per_cycle_R1.tsv
+                 -P ${CMAKE_SOURCE_DIR}/tests/check_per_cycle_quality.cmake)
+set_tests_properties(test_per_cycle_quality PROPERTIES DEPENDS test_correct_single)
+
+# Test 2. Проверки качества последовательностей реализованы как зависимые тесты.
 
 # Test 3. Пропуск поиска адаптеров для измерения влияния на скорость
 add_test(NAME test_skip_adapters
@@ -247,4 +257,3 @@ add_test(NAME test_pair_mismatch
                  --sample-id mismatch
                  --out ${TEST_OUT_DIR})
 set_tests_properties(test_pair_mismatch PROPERTIES WILL_FAIL TRUE)
-

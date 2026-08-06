@@ -34,6 +34,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="generate chart assets only, without neoqc_qc_report.html",
     )
+    parser.add_argument(
+        "--ruleset",
+        type=Path,
+        help="versioned QC ruleset JSON (default: fastqc-compatible-v1)",
+    )
     return parser.parse_args(argv)
 
 
@@ -68,6 +73,17 @@ def main(argv: list[str] | None = None) -> int:
         f"errors={summary['errors']}"
     )
     print(f"Manifest: {args.output_dir / 'plots_manifest.json'}")
+    try:
+        from qc_rules import DEFAULT_RULESET, write_evaluation
+
+        evaluation_path = write_evaluation(
+            args.input_dir,
+            ruleset_path=args.ruleset or DEFAULT_RULESET,
+        )
+    except (ImportError, OSError, ValueError) as error:
+        print(f"QC evaluation error: {error}", file=sys.stderr)
+        return 2
+    print(f"QC evaluation: {evaluation_path}")
     if not args.no_html_report:
         try:
             from qc_report import generate_qc_report

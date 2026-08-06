@@ -236,6 +236,8 @@ void writeSummaryTxt(const QualityStats& stats,
 }
 
 void writePerCycleQualityTsv(const std::vector<double>& meanQuality,
+                             const std::vector<double>& lowerQuartile,
+                             const std::vector<double>& median,
                              const std::string& outDir,
                              const std::string& readName)
 {
@@ -246,7 +248,12 @@ void writePerCycleQualityTsv(const std::vector<double>& meanQuality,
     if (!out)
         throw std::runtime_error("Cannot write to " + path);
 
-    out << "cycle\tmean_quality\n";
+    if (lowerQuartile.size() != meanQuality.size() ||
+        median.size() != meanQuality.size()) {
+        throw std::runtime_error("Per-cycle quality vectors have different sizes");
+    }
+
+    out << "cycle\tmean_quality\tlower_quartile\tmedian\n";
 
     for (size_t i = 0; i < meanQuality.size(); ++i)
     {
@@ -255,6 +262,10 @@ void writePerCycleQualityTsv(const std::vector<double>& meanQuality,
             << std::fixed
             << std::setprecision(4)
             << meanQuality[i]
+            << "\t"
+            << lowerQuartile[i]
+            << "\t"
+            << median[i]
             << "\n";
     }
 }
@@ -610,6 +621,8 @@ AnalysisResult processOneFile(const std::string& path,
         writeSummaryTxt(stats, outDir, sampleId + "_" + readName, skipAdapters);
         writePerCycleQualityTsv(
             stats.meanQualityPerPosition,
+            stats.lowerQuartileQualityPerPosition,
+            stats.medianQualityPerPosition,
             outDir,
             readName);
 
@@ -799,10 +812,14 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
 
         writePerCycleQualityTsv(
             statsR1.meanQualityPerPosition,
+            statsR1.lowerQuartileQualityPerPosition,
+            statsR1.medianQualityPerPosition,
             outDir,
             "R1");
         writePerCycleQualityTsv(
             statsR2.meanQualityPerPosition,
+            statsR2.lowerQuartileQualityPerPosition,
+            statsR2.medianQualityPerPosition,
             outDir,
             "R2");
 

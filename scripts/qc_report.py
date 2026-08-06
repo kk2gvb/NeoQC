@@ -37,6 +37,9 @@ class PlotCard:
     alt_text: str = ""
     svg: str = ""
     png: str = ""
+    qc_status: str = "not_evaluated"
+    qc_reasons: tuple[str, ...] = ()
+    qc_observations: tuple[tuple[str, float, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -54,6 +57,13 @@ class PlotModule:
             return "ready"
         return "not_run"
 
+    @property
+    def qc_status(self) -> str:
+        severity = {"not_evaluated": -1, "pass": 0, "warning": 1, "fail": 2}
+        statuses = [card.qc_status for card in self.cards]
+        evaluated = [status for status in statuses if status != "not_evaluated"]
+        return max(evaluated, key=severity.__getitem__) if evaluated else "not_evaluated"
+
 
 @dataclass(frozen=True)
 class QcReportModel:
@@ -64,6 +74,9 @@ class QcReportModel:
     modules: tuple[PlotModule, ...]
     generated_plots: int
     errors: int
+    qc_counts: tuple[tuple[str, int], ...]
+    overall_qc_status: str
+    ruleset_label: str
 
 
 def _text(value: object, path: str, *, required: bool = False) -> str:
@@ -124,6 +137,104 @@ def _find_summary(result_dir: Path, read: str) -> BasicStatistics | None:
     return _parse_summary(candidates[0], read)
 
 
+def _load_qc_evaluations(
+    result_dir: Path,
+) -> tuple[
+    dict[tuple[str, str], tuple[str, tuple[str, ...], tuple[tuple[str, float, str], ...]]],
+    str,
+]:
+    path = result_dir / "qc_evaluation.json"
+    if not path.is_file():
+        return {}, "No QC ruleset evaluation"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as error:
+        raise QcReportError(f"cannot read {path}: {error}") from error
+    except json.JSONDecodeError as error:
+        raise QcReportError(f"invalid JSON in {path}: {error}") from error
+    document = _mapping(raw, "qc_evaluation")
+    if document.get("schema_version") != 1:
+        raise QcReportError("unsupported QC evaluation schema")
+    ruleset = _mapping(document.get("ruleset"), "qc_evaluation.ruleset")
+    ruleset_id = _text(ruleset.get("id"), "qc_evaluation.ruleset.id", required=True)
+    ruleset_version = _text(
+        ruleset.get("version"), "qc_evaluation.ruleset.version", required=True
+    )
+    decisions: dict[
+        tuple[str, str], tuple[str, tuple[str, ...], tuple[tuple[str, float, str], ...]]
+    ] = {}
+    for index, raw_evaluation in enumerate(
+        _sequence(document.get("evaluations"), "qc_evaluation.evaluations")
+    ):
+        evaluation = _mapping(raw_evaluation, f"qc_evaluation.evaluations[{index}]")
+        metric_id = _text(
+            evaluation.get("metric_id"),
+            f"qc_evaluation.evaluations[{index}].metric_id",
+            required=True,
+        )
+        read = _text(
+            evaluation.get("read"),
+            f"qc_evaluation.evaluations[{index}].read",
+            required=True,
+        )
+        status = _text(
+            evaluation.get("qc_status"),
+            f"qc_evaluation.evaluations[{index}].qc_status",
+            required=True,
+        )
+        if read not in {"R1", "R2"} or status not in {
+            "pass",
+            "warning",
+            "fail",
+            "not_evaluated",
+        }:
+            raise QcReportError(f"qc_evaluation.evaluations[{index}] is invalid")
+        key = (metric_id, read)
+        if key in decisions:
+            raise QcReportError(f"duplicate QC evaluation for {metric_id}/{read}")
+        raw_reasons = _sequence(
+            evaluation.get("reasons"), f"qc_evaluation.evaluations[{index}].reasons"
+        )
+        reasons = tuple(
+            _text(
+                _mapping(reason, f"qc_evaluation.evaluations[{index}].reasons[{reason_index}]").get("message"),
+                f"qc_evaluation.evaluations[{index}].reasons[{reason_index}].message",
+                required=True,
+            )
+            for reason_index, reason in enumerate(raw_reasons)
+        )
+        raw_observations = _mapping(
+            evaluation.get("observations"),
+            f"qc_evaluation.evaluations[{index}].observations",
+        )
+        check_labels: dict[str, tuple[str, str]] = {}
+        for check_index, raw_check in enumerate(
+            _sequence(evaluation.get("checks"), f"qc_evaluation.evaluations[{index}].checks")
+        ):
+            check = _mapping(
+                raw_check, f"qc_evaluation.evaluations[{index}].checks[{check_index}]"
+            )
+            observation = _text(
+                check.get("observation"),
+                f"qc_evaluation.evaluations[{index}].checks[{check_index}].observation",
+                required=True,
+            )
+            check_labels[observation] = (
+                _text(check.get("label"), f"check[{check_index}].label", required=True),
+                _text(check.get("unit"), f"check[{check_index}].unit"),
+            )
+        observations: list[tuple[str, float, str]] = []
+        for name, value in raw_observations.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise QcReportError(f"observation {name} must be numeric")
+            if name not in check_labels:
+                continue
+            label, unit = check_labels[name]
+            observations.append((label, float(value), unit))
+        decisions[key] = (status, reasons, tuple(observations))
+    return decisions, f"{ruleset_id} · v{ruleset_version}"
+
+
 def load_report_model(result_dir: Path, plot_dir: Path | None = None) -> QcReportModel:
     result_dir = result_dir.resolve()
     plot_dir = (plot_dir or result_dir / "plots").resolve()
@@ -139,6 +250,7 @@ def load_report_model(result_dir: Path, plot_dir: Path | None = None) -> QcRepor
     if manifest.get("schema_version") != 1:
         raise QcReportError("unsupported plots manifest schema")
 
+    decisions, ruleset_label = _load_qc_evaluations(result_dir)
     raw_plots = _sequence(manifest.get("plots"), "manifest.plots")
     cards: list[PlotCard] = []
     for index, raw_entry in enumerate(raw_plots):
@@ -149,9 +261,11 @@ def load_report_model(result_dir: Path, plot_dir: Path | None = None) -> QcRepor
         read = _text(entry.get("read"), f"manifest.plots[{index}].read", required=True)
         if read not in {"R1", "R2"}:
             raise QcReportError(f"manifest.plots[{index}].read must be R1 or R2")
+        metric_id = _text(entry.get("id"), f"manifest.plots[{index}].id", required=True)
+        decision = decisions.get((metric_id, read))
         cards.append(
             PlotCard(
-                metric_id=_text(entry.get("id"), f"manifest.plots[{index}].id", required=True),
+                metric_id=metric_id,
                 read=read,
                 title=_text(entry.get("title"), f"manifest.plots[{index}].title", required=True),
                 status=status,
@@ -159,6 +273,9 @@ def load_report_model(result_dir: Path, plot_dir: Path | None = None) -> QcRepor
                 alt_text=_text(entry.get("alt_text"), f"manifest.plots[{index}].alt_text"),
                 svg=_text(entry.get("svg"), f"manifest.plots[{index}].svg"),
                 png=_text(entry.get("png"), f"manifest.plots[{index}].png"),
+                qc_status=decision[0] if decision else "not_evaluated",
+                qc_reasons=decision[1] if decision else ("QC evaluation is not available.",),
+                qc_observations=decision[2] if decision else (),
             )
         )
 
@@ -191,6 +308,13 @@ def load_report_model(result_dir: Path, plot_dir: Path | None = None) -> QcRepor
     sample_id = next(iter(sample_ids)) if len(sample_ids) == 1 else result_dir.name
     generated_plots = sum(card.status == "generated" for card in cards if card.read in reads)
     errors = sum(card.status == "error" for card in cards if card.read in reads)
+    counts = {status: 0 for status in ("pass", "warning", "fail", "not_evaluated")}
+    for card in cards:
+        if card.read in reads:
+            counts[card.qc_status] += 1
+    severity = {"not_evaluated": -1, "pass": 0, "warning": 1, "fail": 2}
+    evaluated = [status for status in ("pass", "warning", "fail") if counts[status]]
+    overall = max(evaluated, key=severity.__getitem__) if evaluated else "not_evaluated"
     return QcReportModel(
         sample_id=sample_id,
         generated_at=datetime.now(MOSCOW_TIME).strftime(
@@ -201,6 +325,9 @@ def load_report_model(result_dir: Path, plot_dir: Path | None = None) -> QcRepor
         modules=modules,
         generated_plots=generated_plots,
         errors=errors,
+        qc_counts=tuple(counts.items()),
+        overall_qc_status=overall,
+        ruleset_label=ruleset_label,
     )
 
 
@@ -240,6 +367,20 @@ def _badge(status: str, label: str | None = None) -> str:
     return f'<span class="badge {escape(status)}">{escape(label or labels[status])}</span>'
 
 
+def _qc_badge(status: str) -> str:
+    labels = {
+        "pass": ("✓", "PASS"),
+        "warning": ("▲", "WARNING"),
+        "fail": ("✕", "FAIL"),
+        "not_evaluated": ("—", "NOT EVALUATED"),
+    }
+    symbol, label = labels[status]
+    return (
+        f'<span class="badge qc {escape(status)}"><span aria-hidden="true">'
+        f'{symbol}</span> {label}</span>'
+    )
+
+
 def _render_basic_statistics(model: QcReportModel) -> str:
     cards: list[str] = []
     for stats in model.basic_statistics:
@@ -269,7 +410,7 @@ def _render_plot_card(card: PlotCard, plot_dir: Path) -> str:
                 f'<img class="chart-image" src="{source}" alt="{escape(card.alt_text or card.title)}" loading="lazy">'
                 '<span class="expand-hint">Open full size</span></button>'
             )
-            state = _badge("ready")
+            state = _qc_badge(card.qc_status)
         except QcReportError as error:
             image = f'<div class="empty error-box">Chart asset unavailable: {escape(str(error))}</div>'
             state = _badge("error")
@@ -281,10 +422,22 @@ def _render_plot_card(card: PlotCard, plot_dir: Path) -> str:
         message = reasons.get(card.reason, card.reason or "Chart was not generated.")
         image = f'<div class="empty">{escape(message)}</div>'
         state = _badge("error" if card.status == "error" else "not_run")
+    observations = "".join(
+        '<span class="observation"><small>' + escape(label) + "</small><strong>" +
+        escape(f"{value:.4g}{(' ' + unit) if unit else ''}") + "</strong></span>"
+        for label, value, unit in card.qc_observations
+    )
+    reasons = "".join(f"<p>{escape(reason)}</p>" for reason in card.qc_reasons)
+    decision = (
+        '<div class="decision-detail">'
+        + (f'<div class="observations">{observations}</div>' if observations else "")
+        + reasons
+        + "</div>"
+    )
     return (
         '<article class="plot-card">'
         f'<div class="plot-card-head"><h3>{escape(card.read)}</h3>{state}</div>'
-        f'{image}</article>'
+        f'{image}{decision}</article>'
     )
 
 
@@ -293,16 +446,58 @@ def _render_module(module: PlotModule, plot_dir: Path) -> str:
     return (
         f'<section class="module" id="module-{escape(module.metric_id)}">'
         '<div class="module-head">'
-        f'<h2>{escape(module.title)}</h2>{_badge(module.availability)}</div>'
+        f'<h2>{escape(module.title)}</h2>{_qc_badge(module.qc_status)}</div>'
         f'<div class="plot-grid">{cards}</div></section>'
     )
 
 
+def _render_qc_summary(model: QcReportModel) -> str:
+    counts = dict(model.qc_counts)
+    labels = {
+        "pass": "PASS",
+        "warning": "WARNING",
+        "fail": "FAIL",
+        "not_evaluated": "NOT EVALUATED",
+    }
+    total = sum(counts.values()) or 1
+    segments = "".join(
+        f'<span class="summary-segment {status}" style="width:{counts[status] / total * 100:.6f}%" '
+        f'title="{labels[status]}: {counts[status]}"></span>'
+        for status in labels
+        if counts[status]
+    )
+    counters = "".join(
+        f'<div class="qc-count {status}"><span>{labels[status]}</span><strong>{counts[status]}</strong></div>'
+        for status in labels
+    )
+    rows = []
+    for module in model.modules:
+        by_read = {card.read: card for card in module.cards}
+        cells = "".join(
+            f'<td>{_qc_badge(by_read[read].qc_status) if read in by_read else "—"}</td>'
+            for read in model.reads
+        )
+        rows.append(f'<tr><th scope="row">{escape(module.title)}</th>{cells}</tr>')
+    headers = "".join(f'<th scope="col">{escape(read)}</th>' for read in model.reads)
+    return (
+        '<section class="module qc-summary" id="qc-summary">'
+        '<div class="module-head"><div><p class="section-kicker">Technical QC overview</p>'
+        f'<h2>PASS / WARNING / FAIL distribution</h2></div>{_qc_badge(model.overall_qc_status)}</div>'
+        f'<p class="ruleset">Ruleset: {escape(model.ruleset_label)}</p>'
+        f'<div class="qc-counts">{counters}</div><div class="summary-bar" role="img" '
+        f'aria-label="PASS {counts["pass"]}, WARNING {counts["warning"]}, FAIL {counts["fail"]}, '
+        f'NOT EVALUATED {counts["not_evaluated"]}">{segments}</div>'
+        '<div class="qc-matrix-wrap"><table class="qc-matrix"><thead><tr>'
+        f'<th scope="col">QC module</th>{headers}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
+        '</section>'
+    )
+
+
 _CSS = """
-:root{--ink:#0a132d;--muted:#657285;--line:#dce3ea;--panel:#f4f7f9;--brand:#2947a0;--brand-dark:#192f70;--accent:#539d96;--white:#fff;--danger:#c84a5a;--warn:#e69f00}
-*{box-sizing:border-box}html{scroll-behavior:auto;scroll-padding-top:20px}body{margin:0;background:#edf1f5;color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}.layout{display:grid;grid-template-columns:280px minmax(0,1fr);max-width:1540px;margin:0 auto;min-height:100vh}.sidebar{position:sticky;top:0;height:100vh;padding:28px 22px;color:#fff;overflow:auto;background-color:var(--ink);background-image:radial-gradient(circle at 18% 8%,#365fc03d 0,transparent 27%),linear-gradient(#ffffff08 1px,transparent 1px),linear-gradient(90deg,#ffffff08 1px,transparent 1px);background-size:auto,28px 28px,28px 28px;background-position:0 0,-1px -1px,-1px -1px;border-top:3px solid #7190e2}.brand{display:flex;align-items:center;gap:11px;font-size:19px;font-weight:800;letter-spacing:.01em}.brand-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:linear-gradient(145deg,#4268c9,#2947a0);color:#fff;box-shadow:0 8px 22px #0004}.sidebar-meta{margin:24px 0;padding:16px;border:1px solid #ffffff24;border-radius:11px;background:#101b38cc;box-shadow:inset 0 1px #ffffff0d,0 12px 28px #0002;backdrop-filter:blur(4px)}.sidebar-meta small{display:block;color:#aebbd1}.sidebar-meta strong{display:block;margin:3px 0 12px;overflow-wrap:anywhere}.sidebar-meta strong:last-child{margin-bottom:0}.nav-title{margin:22px 8px 8px;color:#91a9de;font-size:11px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}.nav{list-style:none;margin:0;padding:0}.nav a{display:grid;grid-template-columns:24px minmax(0,1fr) 8px;align-items:center;gap:8px;margin:2px 0;padding:9px 10px;border:1px solid transparent;border-radius:8px;color:#dce3ef;text-decoration:none;font-size:13px;transition:background .12s,border-color .12s}.nav a:hover,.nav a:focus{background:#ffffff10;border-color:#ffffff13;color:#fff}.nav a.active{background:linear-gradient(90deg,#3153a650,#ffffff0b);border-color:#7894db42;color:#fff;box-shadow:inset 3px 0 #7190e2}.nav-index{color:#8395b4;font:700 10px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.04em}.nav a.active .nav-index{color:#aac0fa}.nav-label{min-width:0}.nav-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px #539d961c;flex:0 0 auto}.nav-dot.info{background:#7190e2}.nav-dot.not_run{background:#77849a}.nav-dot.error{background:var(--danger)}.main{min-width:0;padding:34px}.report-head,.module{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 28px #0a132d0d}.report-head{padding:34px 38px;border-top:6px solid var(--brand)}.eyebrow{margin:0 0 7px;color:var(--brand);font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}h1{margin:0;font-size:30px;line-height:1.2}h2{margin:0;font-size:21px}h3{margin:0;font-size:15px}.subtitle{max-width:80ch;margin:12px 0 0;color:var(--muted)}.overview{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:24px}.overview-card{padding:15px 17px;border:1px solid var(--line);border-radius:9px;background:var(--panel)}.overview-card span{display:block;color:var(--muted);font-size:12px}.overview-card strong{display:block;margin-top:3px;font-size:21px}.notice{margin-top:18px;padding:12px 14px;border-left:3px solid var(--accent);background:#e8f3f1;color:var(--brand-dark);font-size:13px}.module{margin-top:18px;padding:28px 30px;scroll-margin-top:20px}.module-head,.plot-card-head{display:flex;align-items:center;justify-content:space-between;gap:18px}.badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:10px;font-weight:800;letter-spacing:.06em;white-space:nowrap}.badge.ready{background:#e8f3f1;color:#276c66}.badge.info{background:#eef1f8;color:var(--brand-dark)}.badge.not_run{background:#f1f3f5;color:var(--muted)}.badge.error{background:#fae9ec;color:#9f3041}.stats-grid,.plot-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:20px}.stats-card,.plot-card{min-width:0;border:1px solid var(--line);border-radius:10px;overflow:hidden}.stats-card h3,.plot-card-head{padding:12px 15px;background:var(--panel);border-bottom:1px solid var(--line)}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 13px;border-bottom:1px solid var(--line);text-align:left}th{width:58%;color:var(--muted);font-weight:500}tr:last-child th,tr:last-child td{border-bottom:0}.chart-button{position:relative;display:block;width:100%;padding:0;border:0;background:#fff;cursor:zoom-in}.chart-image{display:block;width:100%;height:auto}.expand-hint{position:absolute;right:10px;bottom:10px;padding:5px 8px;border-radius:6px;background:#0a132ddd;color:#fff;font-size:10px;opacity:0;transition:opacity .15s}.chart-button:hover .expand-hint,.chart-button:focus .expand-hint{opacity:1}.empty{display:grid;place-items:center;min-height:210px;padding:28px;text-align:center;color:var(--muted);background:var(--panel)}.error-box{color:#9f3041}.footer{padding:24px 6px;color:var(--muted);font-size:12px;text-align:center}.print-button{position:fixed;right:22px;bottom:22px;border:0;border-radius:9px;padding:11px 16px;background:var(--brand);color:#fff;font-weight:700;box-shadow:0 8px 22px #0a132d35;cursor:pointer}dialog{width:min(96vw,1400px);max-height:94vh;padding:18px;border:0;border-radius:14px;box-shadow:0 20px 70px #0008}dialog::backdrop{background:#071127c9}.dialog-head{display:flex;justify-content:flex-end;margin-bottom:8px}.dialog-close{border:0;border-radius:7px;padding:8px 12px;background:var(--ink);color:#fff;cursor:pointer}#dialog-image{display:block;max-width:100%;max-height:82vh;margin:auto}
+:root{--ink:#0a132d;--muted:#657285;--line:#dce3ea;--panel:#f4f7f9;--brand:#2947a0;--brand-dark:#192f70;--accent:#539d96;--white:#fff;--danger:#c84a5a;--warn:#e69f00;--neutral:#77849a}
+*{box-sizing:border-box}html{scroll-behavior:auto;scroll-padding-top:20px}body{margin:0;background:#edf1f5;color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}.layout{display:grid;grid-template-columns:280px minmax(0,1fr);max-width:1540px;margin:0 auto;min-height:100vh}.sidebar{position:sticky;top:0;height:100vh;padding:28px 22px;color:#fff;overflow:auto;background-color:var(--ink);background-image:radial-gradient(circle at 18% 8%,#365fc03d 0,transparent 27%),linear-gradient(#ffffff08 1px,transparent 1px),linear-gradient(90deg,#ffffff08 1px,transparent 1px);background-size:auto,28px 28px,28px 28px;background-position:0 0,-1px -1px,-1px -1px;border-top:3px solid #7190e2}.brand{display:flex;align-items:center;gap:11px;font-size:19px;font-weight:800;letter-spacing:.01em}.brand-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:linear-gradient(145deg,#4268c9,#2947a0);color:#fff;box-shadow:0 8px 22px #0004}.sidebar-meta{margin:24px 0;padding:16px;border:1px solid #ffffff24;border-radius:11px;background:#101b38cc;box-shadow:inset 0 1px #ffffff0d,0 12px 28px #0002;backdrop-filter:blur(4px)}.sidebar-meta small{display:block;color:#aebbd1}.sidebar-meta strong{display:block;margin:3px 0 12px;overflow-wrap:anywhere}.sidebar-meta strong:last-child{margin-bottom:0}.nav-title{margin:22px 8px 8px;color:#91a9de;font-size:11px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}.nav{list-style:none;margin:0;padding:0}.nav a{display:grid;grid-template-columns:24px minmax(0,1fr) 8px;align-items:center;gap:8px;margin:2px 0;padding:9px 10px;border:1px solid transparent;border-radius:8px;color:#dce3ef;text-decoration:none;font-size:13px;transition:background .12s,border-color .12s}.nav a:hover,.nav a:focus{background:#ffffff10;border-color:#ffffff13;color:#fff}.nav a.active{background:linear-gradient(90deg,#3153a650,#ffffff0b);border-color:#7894db42;color:#fff;box-shadow:inset 3px 0 #7190e2}.nav-index{color:#8395b4;font:700 10px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.04em}.nav a.active .nav-index{color:#aac0fa}.nav-label{min-width:0}.nav-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px #539d961c;flex:0 0 auto}.nav-dot.info{background:#7190e2}.nav-dot.not_run,.nav-dot.not_evaluated{background:var(--neutral)}.nav-dot.pass{background:var(--accent)}.nav-dot.warning{background:var(--warn)}.nav-dot.fail,.nav-dot.error{background:var(--danger)}.main{min-width:0;padding:34px}.report-head,.module{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 28px #0a132d0d}.report-head{padding:34px 38px;border-top:6px solid var(--brand)}.eyebrow,.section-kicker{margin:0 0 7px;color:var(--brand);font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}h1{margin:0;font-size:30px;line-height:1.2}h2{margin:0;font-size:21px}h3{margin:0;font-size:15px}.subtitle{max-width:80ch;margin:12px 0 0;color:var(--muted)}.overview{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:24px}.overview-card{padding:15px 17px;border:1px solid var(--line);border-radius:9px;background:var(--panel)}.overview-card span{display:block;color:var(--muted);font-size:12px}.overview-card strong{display:block;margin-top:3px;font-size:21px}.notice{margin-top:18px;padding:12px 14px;border-left:3px solid var(--accent);background:#e8f3f1;color:var(--brand-dark);font-size:13px}.module{margin-top:18px;padding:28px 30px;scroll-margin-top:20px}.module-head,.plot-card-head{display:flex;align-items:center;justify-content:space-between;gap:18px}.badge{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:4px 9px;font-size:10px;font-weight:800;letter-spacing:.06em;white-space:nowrap}.badge.ready,.badge.pass{background:#e8f3f1;color:#276c66}.badge.info{background:#eef1f8;color:var(--brand-dark)}.badge.not_run,.badge.not_evaluated{background:#f1f3f5;color:var(--muted)}.badge.warning{background:#fff3d6;color:#8c5b00}.badge.fail,.badge.error{background:#fae9ec;color:#9f3041}.stats-grid,.plot-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:20px}.stats-card,.plot-card{min-width:0;border:1px solid var(--line);border-radius:10px;overflow:hidden}.stats-card h3,.plot-card-head{padding:12px 15px;background:var(--panel);border-bottom:1px solid var(--line)}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 13px;border-bottom:1px solid var(--line);text-align:left}th{width:58%;color:var(--muted);font-weight:500}tr:last-child th,tr:last-child td{border-bottom:0}.chart-button{position:relative;display:block;width:100%;padding:0;border:0;background:#fff;cursor:zoom-in}.chart-image{display:block;width:100%;height:auto}.expand-hint{position:absolute;right:10px;bottom:10px;padding:5px 8px;border-radius:6px;background:#0a132ddd;color:#fff;font-size:10px;opacity:0;transition:opacity .15s}.chart-button:hover .expand-hint,.chart-button:focus .expand-hint{opacity:1}.empty{display:grid;place-items:center;min-height:210px;padding:28px;text-align:center;color:var(--muted);background:var(--panel)}.error-box{color:#9f3041}.decision-detail{padding:13px 15px;border-top:1px solid var(--line);background:#fff}.decision-detail p{margin:7px 0 0;color:var(--muted);font-size:12px}.observations{display:flex;flex-wrap:wrap;gap:8px 18px}.observation small,.observation strong{display:block}.observation small{color:var(--muted);font-size:10px}.observation strong{font-size:13px}.ruleset{margin:7px 0 0;color:var(--muted);font-size:12px}.qc-counts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:20px}.qc-count{display:flex;align-items:center;justify-content:space-between;padding:11px 13px;border:1px solid var(--line);border-left:4px solid var(--neutral);border-radius:8px;background:var(--panel)}.qc-count.pass{border-left-color:var(--accent)}.qc-count.warning{border-left-color:var(--warn)}.qc-count.fail{border-left-color:var(--danger)}.qc-count span{color:var(--muted);font-size:10px;font-weight:800}.qc-count strong{font-size:20px}.summary-bar{display:flex;height:14px;margin-top:12px;overflow:hidden;border-radius:999px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line)}.summary-segment.pass{background:var(--accent)}.summary-segment.warning{background:var(--warn)}.summary-segment.fail{background:var(--danger)}.summary-segment.not_evaluated{background:var(--neutral)}.qc-matrix-wrap{margin-top:20px;overflow-x:auto;border:1px solid var(--line);border-radius:9px}.qc-matrix th:first-child{width:auto}.qc-matrix th:not(:first-child),.qc-matrix td{text-align:center}.qc-matrix .badge{font-size:9px}.footer{padding:24px 6px;color:var(--muted);font-size:12px;text-align:center}.print-button{position:fixed;right:22px;bottom:22px;border:0;border-radius:9px;padding:11px 16px;background:var(--brand);color:#fff;font-weight:700;box-shadow:0 8px 22px #0a132d35;cursor:pointer}dialog{width:min(96vw,1400px);max-height:94vh;padding:18px;border:0;border-radius:14px;box-shadow:0 20px 70px #0008}dialog::backdrop{background:#071127c9}.dialog-head{display:flex;justify-content:flex-end;margin-bottom:8px}.dialog-close{border:0;border-radius:7px;padding:8px 12px;background:var(--ink);color:#fff;cursor:pointer}#dialog-image{display:block;max-width:100%;max-height:82vh;margin:auto}
 @media(max-width:980px){.layout{grid-template-columns:1fr}.sidebar{position:relative;height:auto}.nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.main{padding:20px}.stats-grid,.plot-grid{grid-template-columns:1fr}}
-@media(max-width:620px){.main{padding:0}.report-head,.module{border-radius:0;border-left:0;border-right:0}.report-head,.module{padding:22px}.overview,.nav{grid-template-columns:1fr}.sidebar{padding:22px}h1{font-size:25px}}
+@media(max-width:620px){.main{padding:0}.report-head,.module{border-radius:0;border-left:0;border-right:0}.report-head,.module{padding:22px}.overview,.nav,.qc-counts{grid-template-columns:1fr}.sidebar{padding:22px}h1{font-size:25px}}
 @media print{body{background:#fff}.layout{display:block;max-width:none}.sidebar,.print-button,dialog{display:none!important}.main{padding:0}.report-head,.module{box-shadow:none;border-radius:0;break-inside:avoid}.module{margin-top:12px}.chart-button{cursor:default}.expand-hint{display:none}.plot-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 """.strip()
 
@@ -357,14 +552,16 @@ updateActiveNav();
 def render_qc_report(model: QcReportModel, plot_dir: Path) -> str:
     modules = "".join(_render_module(module, plot_dir) for module in model.modules)
     nav_items = [
-        '<li><a href="#basic-statistics"><span class="nav-index">00</span>'
+        f'<li><a href="#qc-summary"><span class="nav-index">00</span>'
+        f'<span class="nav-label">QC overview</span><i class="nav-dot {escape(model.overall_qc_status)}"></i></a></li>',
+        '<li><a href="#basic-statistics"><span class="nav-index">01</span>'
         '<span class="nav-label">Basic Statistics</span><i class="nav-dot info"></i></a></li>'
     ]
     nav_items.extend(
         f'<li><a href="#module-{escape(module.metric_id)}"><span class="nav-index">{index:02d}</span>'
         f'<span class="nav-label">{escape(module.title)}</span>'
-        f'<i class="nav-dot {escape(module.availability)}"></i></a></li>'
-        for index, module in enumerate(model.modules, start=1)
+        f'<i class="nav-dot {escape(module.qc_status)}"></i></a></li>'
+        for index, module in enumerate(model.modules, start=2)
     )
     read_label = " / ".join(model.reads)
     error_label = str(model.errors) if model.errors else "None"
@@ -377,8 +574,8 @@ def render_qc_report(model: QcReportModel, plot_dir: Path) -> str:
 <main class="main"><header class="report-head"><p class="eyebrow">Sequencing quality control</p><h1>{escape(model.sample_id)}</h1>
 <p class="subtitle">Compact, self-contained NeoQC report with all available read-quality charts.</p>
 <div class="overview"><div class="overview-card"><span>Read sets</span><strong>{escape(read_label)}</strong></div><div class="overview-card"><span>Charts available</span><strong>{model.generated_plots}</strong></div><div class="overview-card"><span>Rendering errors</span><strong>{escape(error_label)}</strong></div></div>
-<div class="notice">READY / NOT RUN / ERROR describe report artifact availability. Biological QC thresholds will be reported separately when the FastQC-compatible decision engine is implemented.</div></header>
-{_render_basic_statistics(model)}{modules}<footer class="footer">Generated by NeoQC • Self-contained QC report</footer></main></div>
+<div class="notice">PASS / WARNING / FAIL are technical QC flags from the displayed versioned ruleset, not clinical conclusions. Plot availability errors are reported separately and never converted into biological FAIL results.</div></header>
+{_render_qc_summary(model)}{_render_basic_statistics(model)}{modules}<footer class="footer">Generated by NeoQC • Self-contained QC report</footer></main></div>
 <button class="print-button" type="button" onclick="window.print()">Print / Save PDF</button>
 <dialog id="chart-dialog"><div class="dialog-head"><button class="dialog-close" id="dialog-close" type="button">Close</button></div><img id="dialog-image" alt=""></dialog>
 <script>{_JS}</script></body></html>"""

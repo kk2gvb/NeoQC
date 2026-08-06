@@ -21,6 +21,10 @@ self-contained sequencing QC report, separate from the complete clinical HTML
 report. It groups R1 and R2 by metric, embeds chart assets as data URIs, includes
 basic statistics, provides print/PDF styling and can open charts at full size.
 
+NeoQC also writes `<result>/qc_evaluation.json`. It contains explainable,
+versioned technical QC decisions for every metric/read pair. Plot artifact
+status remains independent from QC status.
+
 Supported plot identifiers are:
 
 - `per_base_quality`;
@@ -29,7 +33,20 @@ Supported plot identifiers are:
 - `per_sequence_gc_content`;
 - `per_base_n_content`;
 - `sequence_length_distribution`;
+- `sequence_duplication_levels`;
 - `per_sequence_quality`.
+
+`sequence_duplication_levels_R1.tsv` and
+`sequence_duplication_levels_R2.tsv` use the columns
+`duplication_level`, `total_sequences_percent` and
+`deduplicated_sequences_percent`. Duplication levels are labels (for example,
+`1`, `2`, `>10`), while both percentage columns must contain values from 0 to
+100.
+
+`per_cycle_R1.tsv` and `per_cycle_R2.tsv` use `cycle`, `mean_quality`,
+`lower_quartile` and `median`. The latter two columns are required for the
+FastQC-compatible per-base quality decision. Older mean-only files still plot,
+but are reported as `NOT EVALUATED` rather than receiving an inferred PASS.
 
 Missing R2 inputs are recorded as `source_not_found`. When adapter analysis is
 disabled, adapter entries are recorded as `adapter_analysis_disabled`; all
@@ -64,10 +81,24 @@ python3 scripts/generate_qc_report.py results/sample01 \
   --output results/sample01/sample01_fastqc.html
 ```
 
-The report badges `READY`, `NOT RUN` and `ERROR` describe artifact availability.
-They intentionally do not claim FastQC-compatible biological
-`PASS`/`WARNING`/`FAIL` decisions; that requires the separate metric threshold
-engine.
+Evaluate existing TSV files without rendering charts:
+
+```bash
+python3 scripts/evaluate_qc.py results/sample01
+```
+
+Select an explicit ruleset when plotting:
+
+```bash
+python3 scripts/plot_results.py results/sample01 results/sample01/plots \
+  --ruleset config/qc_rules/fastqc-compatible-v1.json
+```
+
+The report displays technical `PASS`, `WARNING`, `FAIL` and `NOT EVALUATED`
+decisions from the named ruleset. Artifact `generated`, `skipped` and `error`
+states remain separate; a rendering failure is never converted into QC FAIL.
+The data contract, ruleset strategy and aggregation are described in
+[`qc-status-engine.md`](qc-status-engine.md).
 
 ## Visual language
 

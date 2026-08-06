@@ -11,6 +11,7 @@ from .models import (
     Status,
     Table,
 )
+from .qc_integration import attach_qc_evaluation, qc_section_from_dict
 
 __all__ = [
     "Conclusion",
@@ -23,4 +24,6 @@ __all__ = [
     "Table",
     "render_html_report",
     "write_html_report",
+    "attach_qc_evaluation",
+    "qc_section_from_dict",
 ]

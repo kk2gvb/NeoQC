@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <array>
 #include <unordered_map>
 #include "fastq_reader.h"
 
@@ -37,6 +38,8 @@ struct QualityStats {
 
     // Качество по позициям (среднее Phred-значение на каждой позиции)
     std::vector<double> meanQualityPerPosition;
+    std::vector<double> lowerQuartileQualityPerPosition;
+    std::vector<double> medianQualityPerPosition;
 
     // Распределение среднего Phred-качества по прочтениям.
     // Индекс = среднее качество прочтения, округлённое до ближайшего целого.
@@ -138,6 +141,7 @@ private:
     // Качество по позициям
     std::vector<uint64_t> qualitySum;
     std::vector<uint64_t> qualityCount;
+    std::vector<std::array<uint64_t, 94>> qualityHistogram;
 
     std::vector<uint64_t> perSequenceQualityDistribution;
 };

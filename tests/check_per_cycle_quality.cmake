@@ -1,0 +1,18 @@
+if(NOT EXISTS "${REPORT}")
+    message(FATAL_ERROR "Per-cycle quality report not found: ${REPORT}")
+endif()
+
+file(STRINGS "${REPORT}" ROWS)
+list(GET ROWS 0 HEADER)
+if(NOT HEADER STREQUAL "cycle\tmean_quality\tlower_quartile\tmedian")
+    message(FATAL_ERROR "Per-cycle quality report has an unexpected header")
+endif()
+
+list(LENGTH ROWS ROW_COUNT)
+if(ROW_COUNT LESS 2)
+    message(FATAL_ERROR "Per-cycle quality report contains no data rows")
+endif()
+list(GET ROWS 1 FIRST_ROW)
+if(NOT FIRST_ROW MATCHES "^1\t[0-9]+(\\.[0-9]+)?\t[0-9]+(\\.[0-9]+)?\t[0-9]+(\\.[0-9]+)?$")
+    message(FATAL_ERROR "Per-cycle quality report does not contain quartile and median values")
+endif()

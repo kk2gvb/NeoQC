@@ -4,6 +4,20 @@
 
 namespace {
 constexpr size_t kAdapterDetectionKmerLength = 12;
+
+double qualityQuantile(const std::array<uint64_t, 94>& histogram,
+                       uint64_t count,
+                       double probability) {
+    if (count == 0) return 0.0;
+    const uint64_t target = std::max<uint64_t>(
+        1, static_cast<uint64_t>(std::ceil(probability * count)));
+    uint64_t cumulative = 0;
+    for (size_t quality = 0; quality < histogram.size(); ++quality) {
+        cumulative += histogram[quality];
+        if (cumulative >= target) return static_cast<double>(quality);
+    }
+    return static_cast<double>(histogram.size() - 1);
+}
 }
 
 QualityAnalyzer::QualityAnalyzer(ReadDirection direction) {
@@ -68,6 +82,7 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
     if (len > qualitySum.size()) {
         qualitySum.resize(len, 0);
         qualityCount.resize(len, 0);
+        qualityHistogram.resize(len);
 
         baseCountA.resize(len, 0);
         baseCountC.resize(len, 0);
@@ -104,6 +119,9 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
             if (q >= 0) {
                 qualitySum[i] += q;
                 qualityCount[i]++;
+                if (static_cast<size_t>(q) < qualityHistogram[i].size()) {
+                    qualityHistogram[i][static_cast<size_t>(q)]++;
+                }
                 readQualSum += q;
                 validQualityBases++;
 
@@ -194,11 +212,19 @@ QualityStats QualityAnalyzer::getStats() const {
 
     // Качество по позициям
     stats.meanQualityPerPosition.resize(maxLength);
+    stats.lowerQuartileQualityPerPosition.resize(maxLength);
+    stats.medianQualityPerPosition.resize(maxLength);
     for (size_t i = 0; i < maxLength; ++i) {
         if (i < qualityCount.size() && qualityCount[i] > 0) {
             stats.meanQualityPerPosition[i] = static_cast<double>(qualitySum[i]) / qualityCount[i];
+            stats.lowerQuartileQualityPerPosition[i] = qualityQuantile(
+                qualityHistogram[i], qualityCount[i], 0.25);
+            stats.medianQualityPerPosition[i] = qualityQuantile(
+                qualityHistogram[i], qualityCount[i], 0.50);
         } else {
             stats.meanQualityPerPosition[i] = 0.0;
+            stats.lowerQuartileQualityPerPosition[i] = 0.0;
+            stats.medianQualityPerPosition[i] = 0.0;
         }
     }
 

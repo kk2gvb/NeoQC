@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "id": "fastqc-compatible-v1",
+  "version": "1.0.0",
+  "library_type": "generic",
+  "description": "FastQC-compatible technical QC thresholds for NeoQC metrics.",
+  "rules": {
+    "per_base_quality": {
+      "title": "Per base sequence quality",
+      "checks": [
+        {
+          "observation": "minimum_lower_quartile",
+          "label": "Minimum lower quartile",
+          "unit": "Phred",
+          "warning": {"operator": "<", "value": 10},
+          "fail": {"operator": "<", "value": 5}
+        },
+        {
+          "observation": "minimum_median",
+          "label": "Minimum median",
+          "unit": "Phred",
+          "warning": {"operator": "<", "value": 25},
+          "fail": {"operator": "<", "value": 20}
+        }
+      ]
+    },
+    "per_sequence_quality": {
+      "title": "Per sequence quality scores",
+      "checks": [
+        {
+          "observation": "modal_mean_quality",
+          "label": "Modal mean read quality",
+          "unit": "Phred",
+          "warning": {"operator": "<", "value": 27},
+          "fail": {"operator": "<", "value": 20}
+        }
+      ]
+    },
+    "per_base_sequence_content": {
+      "title": "Per base sequence content",
+      "checks": [
+        {
+          "observation": "maximum_base_difference_percent",
+          "label": "Maximum A/T or G/C difference",
+          "unit": "%",
+          "warning": {"operator": ">", "value": 10},
+          "fail": {"operator": ">", "value": 20}
+        }
+      ]
+    },
+    "per_sequence_gc_content": {
+      "title": "Per sequence GC content",
+      "checks": [
+        {
+          "observation": "modeled_deviation_percent",
+          "label": "Deviation from modeled distribution",
+          "unit": "%",
+          "warning": {"operator": ">", "value": 15},
+          "fail": {"operator": ">", "value": 30}
+        }
+      ]
+    },
+    "per_base_n_content": {
+      "title": "Per base N content",
+      "checks": [
+        {
+          "observation": "maximum_n_percent",
+          "label": "Maximum N content",
+          "unit": "%",
+          "warning": {"operator": ">", "value": 5},
+          "fail": {"operator": ">", "value": 20}
+        }
+      ]
+    },
+    "sequence_length_distribution": {
+      "title": "Sequence length distribution",
+      "checks": [
+        {
+          "observation": "observed_length_count",
+          "label": "Observed read lengths",
+          "unit": "",
+          "warning": {"operator": ">", "value": 1}
+        },
+        {
+          "observation": "minimum_length",
+          "label": "Minimum read length",
+          "unit": "bp",
+          "fail": {"operator": "<=", "value": 0}
+        }
+      ]
+    },
+    "sequence_duplication_levels": {
+      "title": "Sequence duplication levels",
+      "checks": [
+        {
+          "observation": "deduplicated_loss_percent",
+          "label": "Sequences removed by deduplication",
+          "unit": "%",
+          "warning": {"operator": ">", "value": 20},
+          "fail": {"operator": ">", "value": 50}
+        }
+      ]
+    },
+    "adapter_content": {
+      "title": "Adapter content",
+      "checks": [
+        {
+          "observation": "maximum_adapter_percent",
+          "label": "Maximum adapter content",
+          "unit": "%",
+          "warning": {"operator": ">", "value": 5},
+          "fail": {"operator": ">", "value": 10}
+        }
+      ]
+    }
+  }
+}

@@ -17,7 +17,10 @@ SCRIPT = ROOT / "scripts" / "plot_results.py"
 
 
 FIXTURES = {
-    "per_cycle": "cycle\tmean_quality\n1\t35.2\n2\t34.8\n3\t31.4\n4\t28.6\n",
+    "per_cycle": (
+        "cycle\tmean_quality\tlower_quartile\tmedian\n"
+        "1\t35.2\t33\t35\n2\t34.8\t32\t35\n3\t31.4\t28\t31\n4\t28.6\t24\t28\n"
+    ),
     "adapter_content": "pos\tTruSeq\tNextera\n1\t0\t0\n2\t0.5\t0\n3\t2.5\t0.25\n4\t7.0\t1.5\n",
     "per_base_sequence_content": (
         "position\tA\tC\tG\tT\tN\n"
@@ -26,6 +29,11 @@ FIXTURES = {
     "per_sequence_gc_content": "gc_percent\treads\n30\t5\n40\t30\n50\t80\n60\t25\n70\t4\n",
     "per_base_n_content": "position\tN_percent\n1\t0\n2\t0.2\n3\t1.5\n4\t0.4\n",
     "sequence_length_distribution": "length\treads\n75\t5\n100\t15\n150\t80\n",
+    "sequence_duplication_levels": (
+        "duplication_level\ttotal_sequences_percent\tdeduplicated_sequences_percent\n"
+        "1\t13.4\t51.5\n2\t10.2\t20.4\n3\t8.1\t10.7\n"
+        "4\t6.0\t6.1\n5\t3.8\t3.0\n>10\t14.0\t2.9\n>50\t5.2\t0.3\n"
+    ),
     "per_sequence_quality": "mean_quality\tread_count\n20\t4\n30\t45\n35\t70\n40\t10\n",
 }
 
@@ -90,8 +98,8 @@ class PlotResultsTest(unittest.TestCase):
             self.assertEqual(manifest["figure"]["png_width_px"], 2400)
             self.assertEqual(manifest["figure"]["png_height_px"], 1350)
             self.assertEqual(manifest["figure"]["png_dpi"], 300)
-            self.assertEqual(manifest["summary"], {"generated": 14, "errors": 0, "skipped": 0})
-            self.assertEqual(len(manifest["plots"]), 14)
+            self.assertEqual(manifest["summary"], {"generated": 16, "errors": 0, "skipped": 0})
+            self.assertEqual(len(manifest["plots"]), 16)
             for entry in manifest["plots"]:
                 self.assertEqual(entry["status"], "generated")
                 self.assertFalse(Path(entry["svg"]).is_absolute())
@@ -112,6 +120,39 @@ class PlotResultsTest(unittest.TestCase):
             gc_svg = (output_dir / "per_sequence_gc_content_R1.svg").read_text(encoding="utf-8")
             self.assertIn("Observed", gc_svg)
             self.assertIn("Theoretical distribution", gc_svg)
+            duplication_svg = (output_dir / "sequence_duplication_levels_R1.svg").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("Total sequences", duplication_svg)
+            self.assertIn("Deduplicated sequences", duplication_svg)
+            self.assertIn("&gt;50", duplication_svg)
+            self.assertIn("Sequence duplication levels", report_text)
+            self.assertIn("PASS / WARNING / FAIL distribution", report_text)
+            self.assertIn("fastqc-compatible-v1", report_text)
+            self.assertTrue((input_dir / "qc_evaluation.json").is_file())
+
+    def test_duplication_percentages_outside_range_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-duplication-invalid-") as temporary:
+            root = Path(temporary)
+            input_dir = root / "input"
+            output_dir = root / "output"
+            input_dir.mkdir()
+            (input_dir / "sequence_duplication_levels_R1.tsv").write_text(
+                "duplication_level\ttotal_sequences_percent\tdeduplicated_sequences_percent\n"
+                "1\t101\t50\n",
+                encoding="utf-8",
+            )
+
+            result = run_plotter(input_dir, output_dir, "--formats", "svg", "--strict")
+            self.assertEqual(result.returncode, 1)
+            manifest = json.loads((output_dir / "plots_manifest.json").read_text(encoding="utf-8"))
+            failed = next(
+                entry
+                for entry in manifest["plots"]
+                if entry["id"] == "sequence_duplication_levels" and entry["read"] == "R1"
+            )
+            self.assertEqual(failed["status"], "error")
+            self.assertIn("between 0 and 100", failed["reason"])
 
     def test_fixed_length_chart_uses_readable_single_value_layout(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-fixed-length-") as temporary:
