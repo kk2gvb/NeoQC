@@ -90,6 +90,7 @@ class PlotResultsTest(unittest.TestCase):
 
             result = run_plotter(input_dir, output_dir, "--formats", "svg", "--strict")
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("findfont:", result.stderr)
 
             manifest = json.loads((output_dir / "plots_manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["schema_version"], 1)

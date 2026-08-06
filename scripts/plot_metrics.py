@@ -234,7 +234,7 @@ def plot_per_sequence_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
         va="top",
         color=INK,
         fontsize=8,
-        fontweight=600,
+        fontweight=700,
         bbox={"boxstyle": "round,pad=0.45", "facecolor": WHITE, "edgecolor": GRID, "alpha": 0.94},
     )
     finish_figure(fig)
@@ -280,7 +280,7 @@ def plot_adapter_content(rows: Rows, read: str) -> tuple[plt.Figure, str]:
             va="center",
             color=MUTED,
             fontsize=12,
-            fontweight=600,
+            fontweight=700,
             bbox={"boxstyle": "round,pad=0.7", "facecolor": PANEL, "edgecolor": GRID},
         )
     ax.set_xlim(min(x), max(x) if len(x) > 1 else min(x) + 1)
@@ -408,7 +408,7 @@ def plot_length_distribution(rows: Rows, read: str) -> tuple[plt.Figure, str]:
             va="top",
             color=INK,
             fontsize=8.5,
-            fontweight=600,
+            fontweight=700,
             bbox={"boxstyle": "round,pad=0.45", "facecolor": PANEL, "edgecolor": GRID},
         )
         ax.annotate(
@@ -420,7 +420,7 @@ def plot_length_distribution(rows: Rows, read: str) -> tuple[plt.Figure, str]:
             va="bottom",
             color=INK,
             fontsize=8,
-            fontweight=600,
+            fontweight=700,
         )
         use_compact_y_axis(ax)
         finish_figure(fig)
@@ -451,7 +451,7 @@ def plot_length_distribution(rows: Rows, read: str) -> tuple[plt.Figure, str]:
         va="top",
         color=INK,
         fontsize=8,
-        fontweight=600,
+        fontweight=700,
         bbox={"boxstyle": "round,pad=0.45", "facecolor": WHITE, "edgecolor": GRID, "alpha": 0.94},
     )
     use_compact_y_axis(ax)

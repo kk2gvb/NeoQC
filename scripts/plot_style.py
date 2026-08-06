@@ -97,7 +97,7 @@ def setup_axes(ax: Axes, title: str, xlabel: str, ylabel: str, read: str) -> Non
         va="bottom",
         color=MUTED,
         fontsize=7.5,
-        fontweight=600,
+        fontweight=700,
     )
 
 
