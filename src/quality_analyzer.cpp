@@ -4,6 +4,71 @@
 
 namespace {
 constexpr size_t kAdapterDetectionKmerLength = 12;
+constexpr std::array<const char*, 16> kDuplicationLabels = {
+    "1", "2", "3", "4", "5", "6", "7", "8", "9",
+    ">10", ">50", ">100", ">500", ">1k", ">5k", ">10k+"
+};
+
+std::size_t duplicationSlot(uint64_t duplicationLevel) {
+    if (duplicationLevel > 10000) return 15;
+    if (duplicationLevel > 5000) return 14;
+    if (duplicationLevel > 1000) return 13;
+    if (duplicationLevel > 500) return 12;
+    if (duplicationLevel > 100) return 11;
+    if (duplicationLevel > 50) return 10;
+    if (duplicationLevel > 10) return 9;
+    return static_cast<std::size_t>(duplicationLevel - 1);
+}
+
+uint64_t duplicationBaseCode(char base) {
+    switch (base) {
+        case 'A': case 'a': return 1;
+        case 'C': case 'c': return 2;
+        case 'G': case 'g': return 3;
+        case 'T': case 't': return 4;
+        case 'N': case 'n': return 5;
+        default: return 0;
+    }
+}
+
+char duplicationBase(uint64_t code) {
+    constexpr std::array<char, 6> bases = {'\0', 'A', 'C', 'G', 'T', 'N'};
+    return code < bases.size() ? bases[code] : '\0';
+}
+
+DuplicationKey encodeDuplicationKey(const std::string& sequence) {
+    DuplicationKey key;
+    const std::size_t length = std::min(DUPLICATION_PREFIX_LENGTH, sequence.size());
+    for (std::size_t position = 0; position < length; ++position) {
+        const uint64_t code = duplicationBaseCode(sequence[position]);
+        const std::size_t bit = position * 3;
+        const std::size_t word = bit / 64;
+        const std::size_t offset = bit % 64;
+        key.words[word] |= code << offset;
+        if (offset > 61) {
+            key.words[word + 1] |= code >> (64 - offset);
+        }
+    }
+    return key;
+}
+
+std::string decodeDuplicationKey(const DuplicationKey& key) {
+    std::string sequence;
+    sequence.reserve(DUPLICATION_PREFIX_LENGTH);
+    for (std::size_t position = 0; position < DUPLICATION_PREFIX_LENGTH; ++position) {
+        const std::size_t bit = position * 3;
+        const std::size_t word = bit / 64;
+        const std::size_t offset = bit % 64;
+        uint64_t code = (key.words[word] >> offset) & 0x7;
+        if (offset > 61) {
+            code |= (key.words[word + 1] << (64 - offset)) & 0x7;
+        }
+        const char base = duplicationBase(code);
+        if (base == '\0') break;
+        sequence.push_back(base);
+    }
+    return sequence;
+}
 
 double qualityQuantile(const std::array<uint64_t, 94>& histogram,
                        uint64_t count,
@@ -20,20 +85,33 @@ double qualityQuantile(const std::array<uint64_t, 94>& histogram,
 }
 }
 
+std::size_t DuplicationKeyHash::operator()(const DuplicationKey& key) const noexcept {
+    uint64_t hash = 0x9e3779b97f4a7c15ULL;
+    for (uint64_t word : key.words) {
+        word ^= word >> 30;
+        word *= 0xbf58476d1ce4e5b9ULL;
+        word ^= word >> 27;
+        word *= 0x94d049bb133111ebULL;
+        word ^= word >> 31;
+        hash ^= word + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
+    }
+    return static_cast<std::size_t>(hash);
+}
+
 QualityAnalyzer::QualityAnalyzer(ReadDirection direction) {
     if (direction == ReadDirection::R1) {
         adapters = {
-            {"TruSeq_R1", "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA"},
-            {"SmallRNA3'", "TGGAATTCTCGGGTGCCAAGG"},
-            {"SmallRNA5'", "GTTCAGAGTTCTACAGTCCGACGATC"},
-            {"Nextera", "CTGTCTCTTATACACATCT"}
+            {"TruSeq_R1", "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA", ""},
+            {"SmallRNA3'", "TGGAATTCTCGGGTGCCAAGG", ""},
+            {"SmallRNA5'", "GTTCAGAGTTCTACAGTCCGACGATC", ""},
+            {"Nextera", "CTGTCTCTTATACACATCT", ""}
         };
     } else {
         adapters = {
-            {"TruSeq_R2", "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT"},
-            {"SmallRNA3'", "TGGAATTCTCGGGTGCCAAGG"},
-            {"SmallRNA5'", "GTTCAGAGTTCTACAGTCCGACGATC"},
-            {"Nextera", "CTGTCTCTTATACACATCT"}
+            {"TruSeq_R2", "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT", ""},
+            {"SmallRNA3'", "TGGAATTCTCGGGTGCCAAGG", ""},
+            {"SmallRNA5'", "GTTCAGAGTTCTACAGTCCGACGATC", ""},
+            {"Nextera", "CTGTCTCTTATACACATCT", ""}
         };
     }
 
@@ -47,26 +125,15 @@ QualityAnalyzer::QualityAnalyzer(ReadDirection direction) {
 
 void QualityAnalyzer::processRecord(const FastqRecord& record) {
     const std::string& seq = record.sequence;
-
-    // Ключ для подсчёта дубликатов.
-    // NeoQC сравнивает только первые 50 оснований.
-    std::string dupSeq = seq;
-    if (dupSeq.length() > DUPLICATION_PREFIX_LENGTH)
-    {
-        dupSeq.resize(DUPLICATION_PREFIX_LENGTH);
-    }
-
     const std::string& qual = record.quality;
     size_t len = seq.length();
 
-    if (len == 0)
-        return;
+    if (len == 0) return;
 
-    // Считаем количество одинаковых последовательностей
-    sequenceCounts[dupSeq]++;
-        // Длина
     totalReads++;
     totalLength += len;
+
+    sequenceCounts[encodeDuplicationKey(seq)]++;
 
     if (len >= lengthDistribution.size())
     {
@@ -230,32 +297,65 @@ QualityStats QualityAnalyzer::getStats() const {
 
     stats.perSequenceQualityDistribution = perSequenceQualityDistribution;
 
-    stats.sequenceCounts = sequenceCounts;
-    
-    // stats.overrepresentedSequences.reserve(sequenceCounts.size());
+    return stats;
+}
 
-    for (const auto& [sequence, count] : sequenceCounts)
-    {
-        const double percent =
-            100.0 * static_cast<double>(count) /
-            static_cast<double>(totalReads);
+DuplicationStats QualityAnalyzer::getDuplicationStats() const {
+    DuplicationStats stats;
+    stats.totalReads = totalReads;
+    stats.uniqueSequences = sequenceCounts.size();
+    stats.levels.reserve(kDuplicationLabels.size());
 
-        if (percent >= OVERREPRESENTED_SEQUENCE_THRESHOLD)
-        {
+    std::unordered_map<uint64_t, uint64_t> collatedCounts;
+    collatedCounts.reserve(std::min<std::size_t>(sequenceCounts.size(), 16384));
+    for (const auto& [sequence, count] : sequenceCounts) {
+        (void)sequence;
+        collatedCounts[count]++;
+    }
+
+    std::array<double, 16> rawByLevel{};
+    std::array<double, 16> deduplicatedByLevel{};
+    double rawTotal = 0.0;
+    double deduplicatedTotal = 0.0;
+    for (const auto& [level, observations] : collatedCounts) {
+        const double exactCount = static_cast<double>(observations);
+        const std::size_t slot = duplicationSlot(level);
+        rawByLevel[slot] += exactCount * static_cast<double>(level);
+        deduplicatedByLevel[slot] += exactCount;
+        rawTotal += exactCount * static_cast<double>(level);
+        deduplicatedTotal += exactCount;
+    }
+
+    stats.deduplicatedRemainingPercent = rawTotal > 0.0
+        ? 100.0 * deduplicatedTotal / rawTotal
+        : 100.0;
+    for (std::size_t i = 0; i < kDuplicationLabels.size(); ++i) {
+        stats.levels.push_back({
+            kDuplicationLabels[i],
+            rawTotal > 0.0 ? 100.0 * rawByLevel[i] / rawTotal : 0.0,
+            deduplicatedTotal > 0.0
+                ? 100.0 * deduplicatedByLevel[i] / deduplicatedTotal
+                : 0.0,
+        });
+    }
+
+    for (const auto& [sequence, count] : sequenceCounts) {
+        const double percent = totalReads > 0
+            ? 100.0 * static_cast<double>(count) / static_cast<double>(totalReads)
+            : 0.0;
+        if (percent > OVERREPRESENTED_SEQUENCE_THRESHOLD) {
             stats.overrepresentedSequences.push_back({
-                sequence,
-                count,
-                percent
+                decodeDuplicationKey(sequence), count, percent
             });
         }
     }
-
     std::sort(
         stats.overrepresentedSequences.begin(),
         stats.overrepresentedSequences.end(),
-        [](const auto& lhs, const auto& rhs)
-        {
-            return lhs.count > rhs.count;
+        [](const auto& left, const auto& right) {
+            return left.count != right.count
+                ? left.count > right.count
+                : left.sequence < right.sequence;
         });
 
     return stats;

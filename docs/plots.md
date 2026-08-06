@@ -43,6 +43,21 @@ Supported plot identifiers are:
 `1`, `2`, `>10`), while both percentage columns must contain values from 0 to
 100.
 
+Native FASTQ analysis also writes
+`sequence_duplication_summary_R1.tsv`/`R2.tsv`. This one-row provenance record
+contains the algorithm identifier, source FASTQ filename, prefix length,
+total/unique counts and the exact `deduplicated_remaining_percent` used by the QC
+decision engine. The level-1 ratio is retained only as a compatibility fallback
+for previously imported FastQC two-series TSV files.
+
+Duplication outputs are a small transaction. NeoQC removes stale artifacts at
+the beginning of a run, publishes each file atomically, publishes the summary
+last and removes `sequence_duplication_R1.incomplete`/`R2.incomplete` only after
+success. The evaluator rejects a set while this marker exists, so a crashed run
+cannot silently reuse a partial or stale duplication profile. The full method
+and file semantics are documented in
+[`sequence-duplication.md`](sequence-duplication.md).
+
 `per_cycle_R1.tsv` and `per_cycle_R2.tsv` use `cycle`, `mean_quality`,
 `lower_quartile` and `median`. The latter two columns are required for the
 FastQC-compatible per-base quality decision. Older mean-only files still plot,

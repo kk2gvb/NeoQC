@@ -212,7 +212,7 @@ EOF
 gzip -f tests/data/empty_quality.fq
 echo "15. Empty quality generated: tests/data/empty_quality.fq.gz"
 
-# 16. Пустая строка между записями 
+# 16. Пустая строка между записями
 cat > tests/data/blank_line_between_records.fq << 'EOF'
 @READ_001
 AGCT
@@ -290,5 +290,6 @@ bash scripts/generate_adapter_tests.sh
 
 echo
 echo "====================================="
+
 echo "All test datasets generated successfully."
 echo "====================================="

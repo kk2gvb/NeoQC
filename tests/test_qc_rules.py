@@ -23,6 +23,20 @@ except ModuleNotFoundError:
 
 
 class QcRulesTest(unittest.TestCase):
+    @staticmethod
+    def write_native_duplication_summary(
+        directory: Path,
+        *,
+        remaining: float,
+    ) -> None:
+        (directory / "sequence_duplication_summary_R1.tsv").write_text(
+            "source_kind\talgorithm\tsource_fastq\tprefix_length\ttotal_reads\t"
+            "unique_sequences\tdeduplicated_remaining_percent\n"
+            "native_fastq\tneoqc-exact-prefix-v1\tsample_R1.fastq.gz\t50\t"
+            f"10\t6\t{remaining}\n",
+            encoding="utf-8",
+        )
+
     def test_complete_fixture_produces_explainable_statuses(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-rules-") as temporary:
             input_dir = Path(temporary)
@@ -60,6 +74,79 @@ class QcRulesTest(unittest.TestCase):
             self.assertEqual(quality["qc_status"], "not_evaluated")
             self.assertEqual(quality["reasons"][0]["code"], "evaluation.data_invalid")
             self.assertNotEqual(result["summary"]["overall_status"], "pass")
+
+    def test_native_duplication_summary_supports_profiles_without_level_one(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-native-duplication-") as temporary:
+            input_dir = Path(temporary)
+            (input_dir / "sequence_duplication_levels_R1.tsv").write_text(
+                "duplication_level\ttotal_sequences_percent\t"
+                "deduplicated_sequences_percent\n"
+                "2\t40\t70\n4\t60\t30\n",
+                encoding="utf-8",
+            )
+            self.write_native_duplication_summary(input_dir, remaining=60)
+
+            result = evaluate_directory(input_dir)
+            duplication = next(
+                item
+                for item in result["evaluations"]
+                if item["metric_id"] == "sequence_duplication_levels"
+            )
+            self.assertEqual(duplication["qc_status"], "warning")
+            self.assertEqual(
+                duplication["observations"]["deduplicated_remaining_percent"], 60
+            )
+
+    def test_incomplete_native_duplication_transaction_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-incomplete-duplication-") as temporary:
+            input_dir = Path(temporary)
+            (input_dir / "sequence_duplication_levels_R1.tsv").write_text(
+                "duplication_level\ttotal_sequences_percent\t"
+                "deduplicated_sequences_percent\n1\t100\t100\n",
+                encoding="utf-8",
+            )
+            (input_dir / "sequence_duplication_R1.incomplete").write_text(
+                "incomplete\n", encoding="utf-8"
+            )
+
+            result = evaluate_directory(input_dir)
+            duplication = next(
+                item
+                for item in result["evaluations"]
+                if item["metric_id"] == "sequence_duplication_levels"
+            )
+            self.assertEqual(duplication["qc_status"], "not_evaluated")
+            self.assertEqual(duplication["reasons"][0]["code"], "evaluation.data_invalid")
+            self.assertIn("incomplete", duplication["reasons"][0]["message"])
+
+    def test_bounded_prototype_summary_remains_readable(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-bounded-compatibility-") as temporary:
+            input_dir = Path(temporary)
+            (input_dir / "sequence_duplication_levels_R1.tsv").write_text(
+                "duplication_level\ttotal_sequences_percent\t"
+                "deduplicated_sequences_percent\n1\t50\t100\n2\t50\t0\n",
+                encoding="utf-8",
+            )
+            (input_dir / "sequence_duplication_summary_R1.tsv").write_text(
+                "source_kind\talgorithm\tsource_fastq\tprefix_length\t"
+                "max_tracked_unique\ttotal_reads\ttracked_unique_sequences\t"
+                "count_at_unique_limit\tsampling_limited\t"
+                "deduplicated_remaining_percent\n"
+                "native_fastq\tfastqc-compatible-bounded-v1\tsample_R1.fastq.gz\t"
+                "50\t100000\t200000\t100000\t100250\ttrue\t50\n",
+                encoding="utf-8",
+            )
+
+            result = evaluate_directory(input_dir)
+            duplication = next(
+                item
+                for item in result["evaluations"]
+                if item["metric_id"] == "sequence_duplication_levels"
+            )
+            self.assertEqual(duplication["qc_status"], "warning")
+            self.assertEqual(
+                duplication["observations"]["deduplicated_remaining_percent"], 50
+            )
 
     def test_per_sequence_quality_threshold_boundaries(self) -> None:
         expected = ((27, "pass"), (26, "warning"), (20, "warning"), (19, "fail"))

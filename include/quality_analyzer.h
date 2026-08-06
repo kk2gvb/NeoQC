@@ -7,8 +7,38 @@
 #include <unordered_map>
 #include "fastq_reader.h"
 
-constexpr size_t DUPLICATION_PREFIX_LENGTH = 50;
+constexpr std::size_t DUPLICATION_PREFIX_LENGTH = 50;
 constexpr double OVERREPRESENTED_SEQUENCE_THRESHOLD = 0.1;
+
+struct DuplicationKey {
+    // 50 symbols from A/C/G/T/N encoded with three bits each (150 bits).
+    std::array<uint64_t, 3> words{};
+    bool operator==(const DuplicationKey&) const = default;
+};
+
+struct DuplicationKeyHash {
+    std::size_t operator()(const DuplicationKey& key) const noexcept;
+};
+
+struct DuplicationLevelRow {
+    std::string label;
+    double totalSequencesPercent = 0.0;
+    double deduplicatedSequencesPercent = 0.0;
+};
+
+struct OverrepresentedSequence {
+    std::string sequence;
+    uint64_t count = 0;
+    double percent = 0.0;
+};
+
+struct DuplicationStats {
+    std::vector<DuplicationLevelRow> levels;
+    std::vector<OverrepresentedSequence> overrepresentedSequences;
+    uint64_t totalReads = 0;
+    uint64_t uniqueSequences = 0;
+    double deduplicatedRemainingPercent = 100.0;
+};
 
 // ---------------------------------------------------------------------------
 // Структура результатов анализа
@@ -52,18 +82,6 @@ struct QualityStats {
     std::vector<uint64_t> baseCountN;
 
     std::vector<uint64_t> readsPerPosition;
-    
-    // Количество каждой уникальной последовательности
-    std::unordered_map<std::string, uint64_t> sequenceCounts;
-
-    struct OverrepresentedSequence
-    {
-        std::string sequence;
-        uint64_t count;
-        double percent;
-    };
-
-    std::vector<OverrepresentedSequence> overrepresentedSequences;
 };
 
 enum class ReadDirection {
@@ -86,6 +104,11 @@ public:
 
     // Получить итоговую статистику
     QualityStats getStats() const;
+
+    // Получить точную статистику по всем уникальным 50-nt префиксам.
+    DuplicationStats getDuplicationStats() const;
+
+    uint64_t getTotalReads() const { return totalReads; }
 
     // -----------------------------------------------------------------------
     // Публичные поля (нужны для вывода в TSV)
@@ -116,8 +139,9 @@ private:
     uint64_t countT = 0;
     uint64_t countN = 0;
 
-    // Частота каждой уникальной последовательности
-    std::unordered_map<std::string, uint64_t> sequenceCounts;
+    // Все уникальные 50-нуклеотидные префиксы отслеживаются до конца файла.
+    // Компактное 3-битное представление уменьшает стоимость точной карты.
+    std::unordered_map<DuplicationKey, uint64_t, DuplicationKeyHash> sequenceCounts;
 
     std::vector<uint64_t> baseCountA;
     std::vector<uint64_t> baseCountC;

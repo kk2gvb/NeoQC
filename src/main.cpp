@@ -476,95 +476,145 @@ void writeSequenceLengthDistributionTsv(
     }
 }
 
-void writeSequenceDuplicationLevelsTsv(
-    const std::unordered_map<std::string, uint64_t>& sequenceCounts,
-    const std::string& outDir,
-    const std::string& readName)
-{
-    // duplication level -> number of unique sequences
-    std::unordered_map<uint64_t, uint64_t> duplicationLevels;
-
-    for (const auto& [sequence, count] : sequenceCounts)
+template <typename Writer>
+void writeAtomically(const fs::path& path, Writer writer) {
+    fs::path temporary = path;
+    temporary += ".tmp";
     {
-        duplicationLevels[count]++;
+        std::ofstream out(temporary, std::ios::trunc);
+        if (!out) throw std::runtime_error("Cannot write to " + temporary.string());
+        writer(out);
+        out.flush();
+        if (!out) {
+            std::error_code cleanupError;
+            fs::remove(temporary, cleanupError);
+            throw std::runtime_error("Cannot complete write to " + temporary.string());
+        }
     }
 
-    uint64_t totalUniqueSequences = 0;
-    uint64_t totalReads = 0;
-
-    for (const auto& [level, uniqueCount] : duplicationLevels)
-    {
-        totalUniqueSequences += uniqueCount;
-        totalReads += level * uniqueCount;
+    std::error_code error;
+    fs::rename(temporary, path, error);
+    if (error) {
+        std::error_code removeError;
+        fs::remove(path, removeError);
+        error.clear();
+        fs::rename(temporary, path, error);
     }
-
-    std::vector<std::pair<uint64_t, uint64_t>> rows(
-        duplicationLevels.begin(),
-        duplicationLevels.end());
-
-    std::sort(rows.begin(), rows.end());
-
-    const std::string path =
-        outDir + "/sequence_duplication_levels_" + readName + ".tsv";
-
-    std::ofstream out(path);
-
-    if (!out)
-    {
-        throw std::runtime_error("Cannot write to " + path);
-    }
-
-    out << "duplication_level"
-        << "\ttotal_sequences"
-        << "\tdeduplicated_sequences\n";
-
-    for (const auto& [level, uniqueCount] : rows)
-    {
-        const double totalPercent =
-            100.0 * static_cast<double>(level * uniqueCount) /
-            static_cast<double>(totalReads);
-
-        const double deduplicatedPercent =
-            100.0 * static_cast<double>(uniqueCount) /
-            static_cast<double>(totalUniqueSequences);
-
-        out << level
-            << '\t'
-            << std::fixed << std::setprecision(4)
-            << totalPercent
-            << '\t'
-            << deduplicatedPercent
-            << '\n';
+    if (error) {
+        std::error_code cleanupError;
+        fs::remove(temporary, cleanupError);
+        throw std::runtime_error("Cannot publish " + path.string() + ": " + error.message());
     }
 }
 
-void writeOverrepresentedSequencesTsv(
-    const std::vector<QualityStats::OverrepresentedSequence>& sequences,
-    const std::string& outDir,
-    const std::string& readName)
-{
-    const std::string path =
-        outDir + "/overrepresented_sequences_" + readName + ".tsv";
+std::string tsvSafeFilename(const std::string& path) {
+    std::string filename = fs::path(path).filename().string();
+    std::replace(filename.begin(), filename.end(), '\t', '_');
+    std::replace(filename.begin(), filename.end(), '\n', '_');
+    std::replace(filename.begin(), filename.end(), '\r', '_');
+    return filename;
+}
 
-    std::ofstream out(path);
+fs::path duplicationIncompletePath(const std::string& outDir,
+                                   const std::string& readName) {
+    return fs::path(outDir) / ("sequence_duplication_" + readName + ".incomplete");
+}
 
-    if (!out)
-    {
-        throw std::runtime_error("Cannot write to " + path);
+void beginDuplicationArtifacts(const std::string& outDir,
+                               const std::string& readName,
+                               const std::string& sourceFastq) {
+    for (const char* prefix : {
+             "sequence_duplication_levels_",
+             "sequence_duplication_summary_",
+             "overrepresented_sequences_",
+         }) {
+        const fs::path path = fs::path(outDir) / (prefix + readName + ".tsv");
+        std::error_code error;
+        fs::remove(path, error);
+        if (error) {
+            throw std::runtime_error("Cannot remove stale artifact " + path.string()
+                                     + ": " + error.message());
+        }
+        fs::path temporary = path;
+        temporary += ".tmp";
+        error.clear();
+        fs::remove(temporary, error);
+        if (error) {
+            throw std::runtime_error("Cannot remove stale artifact " + temporary.string()
+                                     + ": " + error.message());
+        }
     }
 
-    out << "sequence\tcount\tpercent\n";
+    const fs::path marker = duplicationIncompletePath(outDir, readName);
+    std::error_code error;
+    fs::remove(marker, error);
+    if (error) {
+        throw std::runtime_error("Cannot remove stale marker " + marker.string()
+                                 + ": " + error.message());
+    }
+    fs::path temporaryMarker = marker;
+    temporaryMarker += ".tmp";
+    error.clear();
+    fs::remove(temporaryMarker, error);
+    if (error) {
+        throw std::runtime_error("Cannot remove stale marker " + temporaryMarker.string()
+                                 + ": " + error.message());
+    }
+    writeAtomically(marker, [&](std::ostream& out) {
+        out << "Duplication artifacts are incomplete for "
+            << tsvSafeFilename(sourceFastq) << '\n';
+    });
+}
 
-    for (const auto& seq : sequences)
-    {
-        out << seq.sequence
-            << '\t'
-            << seq.count
-            << '\t'
-            << std::fixed
-            << std::setprecision(4)
-            << seq.percent
-            << '\n';
+void writeDuplicationArtifacts(const DuplicationStats& stats,
+                               const std::string& sourceFastq,
+                               const std::string& outDir,
+                               const std::string& readName) {
+    const fs::path root(outDir);
+    writeAtomically(root / ("sequence_duplication_levels_" + readName + ".tsv"),
+        [&](std::ostream& out) {
+            out << "duplication_level\ttotal_sequences_percent"
+                   "\tdeduplicated_sequences_percent\n";
+            out << std::fixed << std::setprecision(10);
+            for (const auto& row : stats.levels) {
+                out << row.label << '\t'
+                    << row.totalSequencesPercent << '\t'
+                    << row.deduplicatedSequencesPercent << '\n';
+            }
+        });
+
+    writeAtomically(root / ("overrepresented_sequences_" + readName + ".tsv"),
+        [&](std::ostream& out) {
+            out << "sequence\tcount\tpercentage\tpossible_source\n";
+            out << std::fixed << std::setprecision(10);
+            for (const auto& sequence : stats.overrepresentedSequences) {
+                out << sequence.sequence << '\t'
+                    << sequence.count << '\t'
+                    << sequence.percent << "\tNo Hit\n";
+            }
+        });
+
+    // The summary is the transaction's provenance record and is published last.
+    writeAtomically(root / ("sequence_duplication_summary_" + readName + ".tsv"),
+        [&](std::ostream& out) {
+            out << "source_kind\talgorithm\tsource_fastq\tprefix_length"
+                   "\ttotal_reads\tunique_sequences"
+                   "\tdeduplicated_remaining_percent\n";
+            out << "native_fastq\tneoqc-exact-prefix-v1\t"
+                << tsvSafeFilename(sourceFastq) << '\t'
+                << DUPLICATION_PREFIX_LENGTH << '\t'
+                << stats.totalReads << '\t'
+                << stats.uniqueSequences << '\t'
+                << std::fixed << std::setprecision(10)
+                << stats.deduplicatedRemainingPercent << '\n';
+        });
+
+    const fs::path marker = duplicationIncompletePath(outDir, readName);
+    std::error_code error;
+    if (!fs::remove(marker, error) || error) {
+        throw std::runtime_error("Cannot complete duplication transaction "
+                                 + marker.string() + ": "
+                                 + (error ? error.message() : "marker is missing"));
     }
 }
 // ---------------------------------------------------------------------------
@@ -579,6 +629,7 @@ AnalysisResult processOneFile(const std::string& path,
     AnalysisResult result;
     PerformanceTimers& timers = result.timers;
     removeRetiredQualityDistributionArtifacts(outDir, readName);
+    beginDuplicationArtifacts(outDir, readName, path);
     QualityAnalyzer analyzer;
 
     {
@@ -614,6 +665,7 @@ AnalysisResult processOneFile(const std::string& path,
         ScopedTimer timer(timers.metrics, collectTimings);
         stats = analyzer.getStats();
     }
+    const DuplicationStats duplicationStats = analyzer.getDuplicationStats();
 
     printConsoleSummary(stats, readName, skipAdapters);
     {
@@ -656,15 +708,7 @@ AnalysisResult processOneFile(const std::string& path,
             outDir,
             readName);
 
-        writeSequenceDuplicationLevelsTsv(
-            stats.sequenceCounts,
-            outDir,
-            "R1");
-
-        writeOverrepresentedSequencesTsv(
-            stats.overrepresentedSequences,
-            outDir,
-            "R1");
+        writeDuplicationArtifacts(duplicationStats, path, outDir, readName);
 
         if (!skipAdapters) {
             writeAdapterTsv(analyzer.adapters,
@@ -696,6 +740,8 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
     PerformanceTimers& timers = result.timers;
     removeRetiredQualityDistributionArtifacts(outDir, "R1");
     removeRetiredQualityDistributionArtifacts(outDir, "R2");
+    beginDuplicationArtifacts(outDir, "R1", r1Path);
+    beginDuplicationArtifacts(outDir, "R2", r2Path);
     const auto openStart = collectTimings ? Clock::now() : Clock::time_point{};
     FastqReader readerR1(r1Path, collectTimings);
     FastqReader readerR2(r2Path, collectTimings);
@@ -771,11 +817,11 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
     }
 
     std::cout << "R1: total reads = "
-              << analyzerR1.getStats().totalReads
+              << analyzerR1.getTotalReads()
               << "\n";
 
     std::cout << "R2: total reads = "
-              << analyzerR2.getStats().totalReads
+              << analyzerR2.getTotalReads()
               << "\n";
 
     if (collectTimings) {
@@ -792,6 +838,8 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
         statsR1 = analyzerR1.getStats();
         statsR2 = analyzerR2.getStats();
     }
+    const DuplicationStats duplicationStatsR1 = analyzerR1.getDuplicationStats();
+    const DuplicationStats duplicationStatsR2 = analyzerR2.getDuplicationStats();
 
     printConsoleSummary(statsR1, "R1", skipAdapters);
     printConsoleSummary(statsR2, "R2", skipAdapters);
@@ -876,25 +924,8 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
             outDir,
             "R2");
 
-        writeSequenceDuplicationLevelsTsv(
-            statsR1.sequenceCounts,
-            outDir,
-            "R1");
-
-        writeSequenceDuplicationLevelsTsv(
-            statsR2.sequenceCounts,
-            outDir,
-            "R2");    
-
-        writeOverrepresentedSequencesTsv(
-            statsR1.overrepresentedSequences,
-            outDir,
-            "R1");
-
-        writeOverrepresentedSequencesTsv(
-            statsR2.overrepresentedSequences,
-            outDir,
-            "R2");
+        writeDuplicationArtifacts(duplicationStatsR1, r1Path, outDir, "R1");
+        writeDuplicationArtifacts(duplicationStatsR2, r2Path, outDir, "R2");
 
         if (!skipAdapters) {
             writeAdapterTsv(analyzerR1.adapters, analyzerR1.adapterPosCounts,

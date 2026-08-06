@@ -28,9 +28,18 @@ target_compile_definitions(neoqc PRIVATE
     NEOQC_PLOT_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/scripts/plot_results.py"
 )
 
+add_executable(neoqc_duplication_test
+    tests/test_quality_analyzer_duplication.cpp
+    src/quality_analyzer.cpp
+)
+target_include_directories(neoqc_duplication_test PRIVATE include)
+
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 enable_testing()
+
+add_test(NAME test_unlimited_sequence_duplication
+         COMMAND neoqc_duplication_test)
 
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
@@ -84,7 +93,8 @@ add_test(NAME test_per_cycle_quality
                  -P ${CMAKE_SOURCE_DIR}/tests/check_per_cycle_quality.cmake)
 set_tests_properties(test_per_cycle_quality PROPERTIES DEPENDS test_correct_single)
 
-# Test 2. Проверки качества последовательностей реализованы как зависимые тесты.
+# Test 2. Проверка качества последовательностей
+# (выше - Test 2 реализована как зависимая проверка)
 
 # Test 3. Пропуск поиска адаптеров для измерения влияния на скорость
 add_test(NAME test_skip_adapters
@@ -104,7 +114,7 @@ foreach(sheet missing_patient duplicate_sample missing_file duplicate_file diffe
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endforeach()
 
-# Test 13. Предупреждение о отсутствии опухолевой РНК
+# Test 13. Предупреждение об отсутствии опухолевой РНК
 add_test(NAME test_sample_sheet_missing_tumor_rna_warning
          COMMAND neoqc --samples ${CMAKE_SOURCE_DIR}/tests/sample_sheets/missing_tumor_rna.csv)
 set_tests_properties(test_sample_sheet_missing_tumor_rna_warning PROPERTIES
@@ -129,6 +139,20 @@ set_tests_properties(test_case_summary PROPERTIES DEPENDS test_sample_sheet_batc
 # Test 16. Корректная пара R1/R2
 add_test(NAME test_correct_paired
          COMMAND neoqc --r1 ${TEST_DATA_DIR}/correct_pair_R1.fq.gz --r2 ${TEST_DATA_DIR}/correct_pair_R2.fq.gz --sample-id test_pair --out ${TEST_OUT_DIR})
+
+# Контракт точных метрик дупликации 50-nt префиксов.
+add_test(NAME test_sequence_duplication
+         COMMAND neoqc
+                 --r1 ${CMAKE_SOURCE_DIR}/tests/fixtures/sequence_duplication.fq
+                 --sample-id duplication_contract
+                 --out ${TEST_OUT_DIR}/sequence_duplication)
+
+add_test(NAME test_sequence_duplication_artifacts
+         COMMAND ${CMAKE_COMMAND}
+                 -DOUTPUT_DIR=${TEST_OUT_DIR}/sequence_duplication
+                 -P ${CMAKE_SOURCE_DIR}/tests/check_sequence_duplication.cmake)
+set_tests_properties(test_sequence_duplication_artifacts PROPERTIES
+    DEPENDS test_sequence_duplication)
 
 # Test 17. Профили адаптеров в полной выборке
 add_test(NAME test_adapter_profiles

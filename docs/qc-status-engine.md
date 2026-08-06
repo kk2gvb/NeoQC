@@ -116,7 +116,7 @@ automatically define acceptance criteria for an RNA-seq or clinical workflow.
 | `per_sequence_gc_content` | total deviation from modeled normal distribution | Ready |
 | `per_base_n_content` | maximum N percentage at any position | Ready |
 | `sequence_length_distribution` | variable lengths and presence of zero-length reads | Ready |
-| `sequence_duplication_levels` | exact percentage lost after deduplication | Ready; derived from the level-1 total/deduplicated ratio |
+| `sequence_duplication_levels` | percentage lost after exact 50-nt-prefix deduplication | Ready; native runs use exact total/unique counts, legacy imported profiles fall back to the level-1 ratio |
 | `adapter_content` | maximum cumulative percentage for any adapter | Ready |
 
 FastQC-compatible thresholds encoded in the versioned configuration are:
@@ -207,6 +207,7 @@ Implemented now:
 - immutable rules, validated observations and atomic `qc_evaluation.json`;
 - the FastQC-compatible versioned configuration and content hash;
 - per-base lower quartile/median output and exact duplication headline;
+- exact native prefix-duplication calculation, provenance summary and incomplete-run guard;
 - automatic evaluation from `plot_results.py` and standalone evaluation CLI;
 - backward-compatible `NOT EVALUATED` behaviour;
 - summary strip, R1/R2 matrix, accessible badges, observations and reasons in

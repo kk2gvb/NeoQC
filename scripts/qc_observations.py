@@ -203,7 +203,121 @@ def _length_distribution(path: Path, _read: str) -> dict[str, float]:
     }
 
 
-def _duplication(path: Path, _read: str) -> dict[str, float]:
+def _native_duplication_summary(path: Path, read: str) -> float | None:
+    marker = path.parent / f"sequence_duplication_{read}.incomplete"
+    if marker.exists():
+        raise ObservationError(
+            f"{marker.name}: native duplication artifacts are incomplete"
+        )
+
+    summary = path.parent / f"sequence_duplication_summary_{read}.tsv"
+    if not summary.exists():
+        return None
+
+    exact_columns = (
+        "source_kind",
+        "algorithm",
+        "source_fastq",
+        "prefix_length",
+        "total_reads",
+        "unique_sequences",
+        "deduplicated_remaining_percent",
+    )
+    bounded_columns = (
+        "source_kind",
+        "algorithm",
+        "source_fastq",
+        "prefix_length",
+        "max_tracked_unique",
+        "total_reads",
+        "tracked_unique_sequences",
+        "count_at_unique_limit",
+        "sampling_limited",
+        "deduplicated_remaining_percent",
+    )
+    try:
+        handle = summary.open("r", encoding="utf-8", newline="")
+    except OSError as error:
+        raise ObservationError(f"cannot read {summary.name}: {error}") from error
+    with handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        columns = tuple(reader.fieldnames or ())
+        if columns not in {exact_columns, bounded_columns}:
+            raise ObservationError(
+                f"{summary.name}: unsupported summary schema"
+            )
+        rows = list(reader)
+    if len(rows) != 1 or None in rows[0]:
+        raise ObservationError(f"{summary.name}: expected exactly one complete data row")
+    row = {key: (value or "").strip() for key, value in rows[0].items()}
+    if row["source_kind"] != "native_fastq":
+        raise ObservationError(f"{summary.name}: unsupported source_kind")
+    if not row["source_fastq"] or Path(row["source_fastq"]).name != row["source_fastq"]:
+        raise ObservationError(f"{summary.name}: source_fastq must be a filename")
+
+    integer_fields = tuple(
+        column
+        for column in columns
+        if column
+        in {
+            "prefix_length",
+            "max_tracked_unique",
+            "total_reads",
+            "unique_sequences",
+            "tracked_unique_sequences",
+            "count_at_unique_limit",
+        }
+    )
+    try:
+        integers = {field: int(row[field]) for field in integer_fields}
+        remaining = float(row["deduplicated_remaining_percent"])
+    except ValueError as error:
+        raise ObservationError(f"{summary.name}: invalid numeric value") from error
+    if any(value < 0 for value in integers.values()) or not math.isfinite(remaining):
+        raise ObservationError(f"{summary.name}: invalid numeric range")
+    if integers["prefix_length"] != 50:
+        raise ObservationError(f"{summary.name}: unsupported prefix_length")
+    if integers["total_reads"] <= 0:
+        raise ObservationError(f"{summary.name}: total_reads must be positive")
+    _range([remaining], "deduplicated remaining percentage", 0, 100)
+
+    if columns == exact_columns:
+        if row["algorithm"] != "neoqc-exact-prefix-v1":
+            raise ObservationError(f"{summary.name}: unsupported exact algorithm")
+        unique = integers["unique_sequences"]
+        total = integers["total_reads"]
+        if not 0 < unique <= total:
+            raise ObservationError(f"{summary.name}: unique_sequences is inconsistent")
+        calculated = 100.0 * unique / total
+        if not math.isclose(remaining, calculated, abs_tol=1e-8):
+            raise ObservationError(f"{summary.name}: exact headline is inconsistent")
+        return remaining
+
+    # Compatibility with artifacts produced by the earlier bounded prototype.
+    if row["algorithm"] != "fastqc-compatible-bounded-v1":
+        raise ObservationError(f"{summary.name}: unsupported bounded algorithm")
+    if integers["max_tracked_unique"] != 100_000:
+        raise ObservationError(f"{summary.name}: unsupported bounded-analysis parameters")
+    if not 0 < integers["tracked_unique_sequences"] <= integers["max_tracked_unique"]:
+        raise ObservationError(f"{summary.name}: tracked_unique_sequences is inconsistent")
+    if not 0 < integers["count_at_unique_limit"] <= integers["total_reads"]:
+        raise ObservationError(f"{summary.name}: count_at_unique_limit is inconsistent")
+    if row["sampling_limited"] not in {"true", "false"}:
+        raise ObservationError(f"{summary.name}: sampling_limited must be true or false")
+    sampling_limited = row["sampling_limited"] == "true"
+    if sampling_limited != (
+        integers["tracked_unique_sequences"] == integers["max_tracked_unique"]
+    ):
+        raise ObservationError(f"{summary.name}: sampling_limited is inconsistent")
+    if not sampling_limited and (
+        integers["count_at_unique_limit"] != integers["total_reads"]
+    ):
+        raise ObservationError(f"{summary.name}: unsampled counts are inconsistent")
+    return remaining
+
+
+def _duplication(path: Path, read: str) -> dict[str, float]:
+    native_remaining = _native_duplication_summary(path, read)
     try:
         handle = path.open("r", encoding="utf-8", newline="")
     except OSError as error:
@@ -218,6 +332,8 @@ def _duplication(path: Path, _read: str) -> dict[str, float]:
         if tuple(reader.fieldnames or ()) != expected:
             raise ObservationError(f"{path.name}: expected columns: {', '.join(expected)}")
         level_one: tuple[float, float] | None = None
+        totals: list[float] = []
+        deduplicated_values: list[float] = []
         seen: set[str] = set()
         for line_number, raw in enumerate(reader, start=2):
             label = (raw.get("duplication_level") or "").strip()
@@ -232,17 +348,36 @@ def _duplication(path: Path, _read: str) -> dict[str, float]:
             if not math.isfinite(total) or not math.isfinite(deduplicated):
                 raise ObservationError(f"{path.name}:{line_number}: percentages must be finite")
             _range([total, deduplicated], "duplication percentage", 0, 100)
+            totals.append(total)
+            deduplicated_values.append(deduplicated)
             if label in {"1", "1.0"}:
                 level_one = (total, deduplicated)
-    if level_one is None:
-        raise ObservationError("duplication level 1 is required for the headline statistic")
-    total_one, deduplicated_one = level_one
-    if deduplicated_one <= 0:
-        raise ObservationError("deduplicated percentage at level 1 must be positive")
-    remaining = 100.0 * total_one / deduplicated_one
-    if remaining > 100.0 + 1e-6:
-        raise ObservationError("duplication level percentages are inconsistent")
-    remaining = min(100.0, remaining)
+
+    if native_remaining is not None:
+        if not math.isclose(sum(totals), 100.0, abs_tol=1e-5):
+            raise ObservationError("native total-sequence percentages must sum to 100")
+        if not math.isclose(sum(deduplicated_values), 100.0, abs_tol=1e-5):
+            raise ObservationError("native deduplicated percentages must sum to 100")
+        if level_one is not None and level_one[1] > 0:
+            level_one_remaining = 100.0 * level_one[0] / level_one[1]
+            if not math.isclose(native_remaining, level_one_remaining, abs_tol=1e-5):
+                raise ObservationError(
+                    "native duplication summary and level percentages are inconsistent"
+                )
+        remaining = native_remaining
+    else:
+        # Compatibility path for previously imported FastQC two-line profiles.
+        if level_one is None:
+            raise ObservationError(
+                "duplication level 1 or a native summary is required for the headline statistic"
+            )
+        total_one, deduplicated_one = level_one
+        if deduplicated_one <= 0:
+            raise ObservationError("deduplicated percentage at level 1 must be positive")
+        remaining = 100.0 * total_one / deduplicated_one
+        if remaining > 100.0 + 1e-6:
+            raise ObservationError("duplication level percentages are inconsistent")
+        remaining = min(100.0, remaining)
     return {
         "deduplicated_remaining_percent": remaining,
         "deduplicated_loss_percent": 100.0 - remaining,
