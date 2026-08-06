@@ -13,6 +13,7 @@
 #include <chrono>
 #include <optional>
 #include <ctime>
+#include <algorithm>
 
 namespace fs = std::filesystem;
 using Duration = std::chrono::nanoseconds;
@@ -464,6 +465,67 @@ void writeSequenceLengthDistributionTsv(
     }
 }
 
+void writeSequenceDuplicationLevelsTsv(
+    const std::unordered_map<std::string, uint64_t>& sequenceCounts,
+    const std::string& outDir,
+    const std::string& readName)
+{
+    // duplication level -> number of unique sequences
+    std::unordered_map<uint64_t, uint64_t> duplicationLevels;
+
+    for (const auto& [sequence, count] : sequenceCounts)
+    {
+        duplicationLevels[count]++;
+    }
+
+    uint64_t totalUniqueSequences = 0;
+    uint64_t totalReads = 0;
+
+    for (const auto& [level, uniqueCount] : duplicationLevels)
+    {
+        totalUniqueSequences += uniqueCount;
+        totalReads += level * uniqueCount;
+    }
+
+    std::vector<std::pair<uint64_t, uint64_t>> rows(
+        duplicationLevels.begin(),
+        duplicationLevels.end());
+
+    std::sort(rows.begin(), rows.end());
+
+    const std::string path =
+        outDir + "/sequence_duplication_levels_" + readName + ".tsv";
+
+    std::ofstream out(path);
+
+    if (!out)
+    {
+        throw std::runtime_error("Cannot write to " + path);
+    }
+
+    out << "duplication_level"
+        << "\ttotal_sequences"
+        << "\tdeduplicated_sequences\n";
+
+    for (const auto& [level, uniqueCount] : rows)
+    {
+        const double totalPercent =
+            100.0 * static_cast<double>(level * uniqueCount) /
+            static_cast<double>(totalReads);
+
+        const double deduplicatedPercent =
+            100.0 * static_cast<double>(uniqueCount) /
+            static_cast<double>(totalUniqueSequences);
+
+        out << level
+            << '\t'
+            << std::fixed << std::setprecision(4)
+            << totalPercent
+            << '\t'
+            << deduplicatedPercent
+            << '\n';
+    }
+}
 // ---------------------------------------------------------------------------
 // Обработка одного файла (R1 или R2)
 // ---------------------------------------------------------------------------
@@ -550,6 +612,11 @@ AnalysisResult processOneFile(const std::string& path,
             stats.lengthDistribution,
             outDir,
             readName);
+
+        writeSequenceDuplicationLevelsTsv(
+            stats.sequenceCounts,
+            outDir,
+            "R1");
 
         if (!skipAdapters) {
             writeAdapterTsv(analyzer.adapters,
@@ -756,6 +823,16 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
             statsR2.lengthDistribution,
             outDir,
             "R2");
+
+        writeSequenceDuplicationLevelsTsv(
+            statsR1.sequenceCounts,
+            outDir,
+            "R1");
+
+        writeSequenceDuplicationLevelsTsv(
+            statsR2.sequenceCounts,
+            outDir,
+            "R2");    
 
         if (!skipAdapters) {
             writeAdapterTsv(analyzerR1.adapters, analyzerR1.adapterPosCounts,

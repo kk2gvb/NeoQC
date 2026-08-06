@@ -33,12 +33,24 @@ QualityAnalyzer::QualityAnalyzer(ReadDirection direction) {
 
 void QualityAnalyzer::processRecord(const FastqRecord& record) {
     const std::string& seq = record.sequence;
+
+    // Ключ для подсчёта дубликатов.
+    // NeoQC сравнивает только первые 50 оснований.
+    std::string dupSeq = seq;
+    if (dupSeq.length() > DUPLICATION_PREFIX_LENGTH)
+    {
+        dupSeq.resize(DUPLICATION_PREFIX_LENGTH);
+    }
+
     const std::string& qual = record.quality;
     size_t len = seq.length();
 
-    if (len == 0) return;
+    if (len == 0)
+        return;
 
-    // Длина
+    // Считаем количество одинаковых последовательностей
+    sequenceCounts[dupSeq]++;
+        // Длина
     totalReads++;
     totalLength += len;
 
@@ -191,6 +203,34 @@ QualityStats QualityAnalyzer::getStats() const {
     }
 
     stats.perSequenceQualityDistribution = perSequenceQualityDistribution;
+
+    stats.sequenceCounts = sequenceCounts;
+    
+    // stats.overrepresentedSequences.reserve(sequenceCounts.size());
+
+    for (const auto& [sequence, count] : sequenceCounts)
+    {
+        const double percent =
+            100.0 * static_cast<double>(count) /
+            static_cast<double>(totalReads);
+
+        if (percent >= OVERREPRESENTED_SEQUENCE_THRESHOLD)
+        {
+            stats.overrepresentedSequences.push_back({
+                sequence,
+                count,
+                percent
+            });
+        }
+    }
+
+    std::sort(
+        stats.overrepresentedSequences.begin(),
+        stats.overrepresentedSequences.end(),
+        [](const auto& lhs, const auto& rhs)
+        {
+            return lhs.count > rhs.count;
+        });
 
     return stats;
 }

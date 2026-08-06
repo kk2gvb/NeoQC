@@ -3,9 +3,11 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <unordered_map>
 #include "fastq_reader.h"
 
-
+constexpr size_t DUPLICATION_PREFIX_LENGTH = 50;
+constexpr double OVERREPRESENTED_SEQUENCE_THRESHOLD = 0.1;
 
 // ---------------------------------------------------------------------------
 // Структура результатов анализа
@@ -47,6 +49,18 @@ struct QualityStats {
     std::vector<uint64_t> baseCountN;
 
     std::vector<uint64_t> readsPerPosition;
+    
+    // Количество каждой уникальной последовательности
+    std::unordered_map<std::string, uint64_t> sequenceCounts;
+
+    struct OverrepresentedSequence
+    {
+        std::string sequence;
+        uint64_t count;
+        double percent;
+    };
+
+    std::vector<OverrepresentedSequence> overrepresentedSequences;
 };
 
 enum class ReadDirection {
@@ -98,6 +112,9 @@ private:
     uint64_t countG = 0;
     uint64_t countT = 0;
     uint64_t countN = 0;
+
+    // Частота каждой уникальной последовательности
+    std::unordered_map<std::string, uint64_t> sequenceCounts;
 
     std::vector<uint64_t> baseCountA;
     std::vector<uint64_t> baseCountC;
