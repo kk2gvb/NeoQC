@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import csv
 import json
+import math
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -28,6 +30,14 @@ class BasicStatistics:
 
 
 @dataclass(frozen=True)
+class OverrepresentedSequence:
+    sequence: str
+    count: int
+    percentage: float
+    possible_source: str
+
+
+@dataclass(frozen=True)
 class PlotCard:
     metric_id: str
     read: str
@@ -40,6 +50,7 @@ class PlotCard:
     qc_status: str = "not_evaluated"
     qc_reasons: tuple[str, ...] = ()
     qc_observations: tuple[tuple[str, float, str], ...] = ()
+    overrepresented_sequences: tuple[OverrepresentedSequence, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +146,60 @@ def _find_summary(result_dir: Path, read: str) -> BasicStatistics | None:
     if len(candidates) > 1:
         raise QcReportError(f"multiple {read} summary files found in {result_dir}")
     return _parse_summary(candidates[0], read)
+
+
+def _load_overrepresented_sequences(
+    result_dir: Path, read: str
+) -> tuple[OverrepresentedSequence, ...] | None:
+    path = result_dir / f"overrepresented_sequences_{read}.tsv"
+    if not path.is_file():
+        return None
+    expected_header = ["sequence", "count", "percentage", "possible_source"]
+    try:
+        with path.open(encoding="utf-8", newline="") as stream:
+            reader = csv.DictReader(stream, delimiter="\t")
+            if reader.fieldnames != expected_header:
+                raise QcReportError(
+                    f"{path.name} must use columns: " + ", ".join(expected_header)
+                )
+            rows: list[OverrepresentedSequence] = []
+            seen_sequences: set[str] = set()
+            for line_number, row in enumerate(reader, start=2):
+                if None in row or any(row[column] is None for column in expected_header):
+                    raise QcReportError(f"{path.name}:{line_number} has an invalid column count")
+                sequence = row["sequence"].strip()
+                source = row["possible_source"].strip()
+                if not sequence:
+                    raise QcReportError(f"{path.name}:{line_number} has an empty sequence")
+                if sequence in seen_sequences:
+                    raise QcReportError(
+                        f"{path.name}:{line_number} repeats sequence {sequence!r}"
+                    )
+                try:
+                    count = int(row["count"])
+                    percentage = float(row["percentage"])
+                except ValueError as error:
+                    raise QcReportError(
+                        f"{path.name}:{line_number} contains a non-numeric value"
+                    ) from error
+                if count <= 0:
+                    raise QcReportError(f"{path.name}:{line_number} count must be positive")
+                if not math.isfinite(percentage) or not 0.0 <= percentage <= 100.0:
+                    raise QcReportError(
+                        f"{path.name}:{line_number} percentage must be between 0 and 100"
+                    )
+                seen_sequences.add(sequence)
+                rows.append(
+                    OverrepresentedSequence(
+                        sequence=sequence,
+                        count=count,
+                        percentage=percentage,
+                        possible_source=source or "Unknown",
+                    )
+                )
+    except OSError as error:
+        raise QcReportError(f"cannot read {path.name}: {error}") from error
+    return tuple(rows)
 
 
 def _load_qc_evaluations(
@@ -253,6 +318,9 @@ def load_report_model(result_dir: Path, plot_dir: Path | None = None) -> QcRepor
     decisions, ruleset_label = _load_qc_evaluations(result_dir)
     raw_plots = _sequence(manifest.get("plots"), "manifest.plots")
     cards: list[PlotCard] = []
+    overrepresented_by_read: dict[
+        str, tuple[OverrepresentedSequence, ...] | None
+    ] = {}
     for index, raw_entry in enumerate(raw_plots):
         entry = _mapping(raw_entry, f"manifest.plots[{index}]")
         status = _text(entry.get("status"), f"manifest.plots[{index}].status", required=True)
@@ -263,6 +331,8 @@ def load_report_model(result_dir: Path, plot_dir: Path | None = None) -> QcRepor
             raise QcReportError(f"manifest.plots[{index}].read must be R1 or R2")
         metric_id = _text(entry.get("id"), f"manifest.plots[{index}].id", required=True)
         decision = decisions.get((metric_id, read))
+        if metric_id == "sequence_duplication_levels" and read not in overrepresented_by_read:
+            overrepresented_by_read[read] = _load_overrepresented_sequences(result_dir, read)
         cards.append(
             PlotCard(
                 metric_id=metric_id,
@@ -276,6 +346,11 @@ def load_report_model(result_dir: Path, plot_dir: Path | None = None) -> QcRepor
                 qc_status=decision[0] if decision else "not_evaluated",
                 qc_reasons=decision[1] if decision else ("QC evaluation is not available.",),
                 qc_observations=decision[2] if decision else (),
+                overrepresented_sequences=(
+                    overrepresented_by_read[read]
+                    if metric_id == "sequence_duplication_levels"
+                    else None
+                ),
             )
         )
 
@@ -401,6 +476,40 @@ def _render_basic_statistics(model: QcReportModel) -> str:
     )
 
 
+def _render_overrepresented_sequences(card: PlotCard) -> str:
+    rows = card.overrepresented_sequences
+    if rows is None:
+        return ""
+    if not rows:
+        body = (
+            '<p class="overrepresented-empty">'
+            "No sequences exceeded the reporting threshold.</p>"
+        )
+    else:
+        table_rows = "".join(
+            "<tr>"
+            f'<td class="sequence"><code>{escape(row.sequence)}</code></td>'
+            f'<td class="numeric">{row.count:,}</td>'
+            f'<td class="numeric">{row.percentage:.4f}%</td>'
+            f"<td>{escape(row.possible_source)}</td>"
+            "</tr>"
+            for row in rows
+        )
+        body = (
+            '<div class="overrepresented-table-wrap"><table class="overrepresented-table">'
+            '<colgroup><col class="sequence-col"><col class="count-col">'
+            '<col class="percentage-col"><col class="source-col"></colgroup>'
+            "<thead><tr><th>Sequence</th><th>Count</th><th>Percentage</th>"
+            f"<th>Possible source</th></tr></thead><tbody>{table_rows}</tbody></table></div>"
+        )
+    return (
+        '<section class="overrepresented-block" aria-label="Overrepresented sequences">'
+        '<div class="overrepresented-head"><div><p class="section-kicker">Sequence screen</p>'
+        f'<h4>Overrepresented sequences</h4></div><span class="table-count">{len(rows)}</span></div>'
+        f"{body}</section>"
+    )
+
+
 def _render_plot_card(card: PlotCard, plot_dir: Path) -> str:
     if card.status == "generated":
         try:
@@ -437,7 +546,7 @@ def _render_plot_card(card: PlotCard, plot_dir: Path) -> str:
     return (
         '<article class="plot-card">'
         f'<div class="plot-card-head"><h3>{escape(card.read)}</h3>{state}</div>'
-        f'{image}{decision}</article>'
+        f'{image}{_render_overrepresented_sequences(card)}{decision}</article>'
     )
 
 
@@ -496,9 +605,10 @@ def _render_qc_summary(model: QcReportModel) -> str:
 _CSS = """
 :root{--ink:#0a132d;--muted:#657285;--line:#dce3ea;--panel:#f4f7f9;--brand:#2947a0;--brand-dark:#192f70;--accent:#539d96;--white:#fff;--danger:#c84a5a;--warn:#e69f00;--neutral:#77849a}
 *{box-sizing:border-box}html{scroll-behavior:auto;scroll-padding-top:20px}body{margin:0;background:#edf1f5;color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}.layout{display:grid;grid-template-columns:280px minmax(0,1fr);max-width:1540px;margin:0 auto;min-height:100vh}.sidebar{position:sticky;top:0;height:100vh;padding:28px 22px;color:#fff;overflow:auto;background-color:var(--ink);background-image:radial-gradient(circle at 18% 8%,#365fc03d 0,transparent 27%),linear-gradient(#ffffff08 1px,transparent 1px),linear-gradient(90deg,#ffffff08 1px,transparent 1px);background-size:auto,28px 28px,28px 28px;background-position:0 0,-1px -1px,-1px -1px;border-top:3px solid #7190e2}.brand{display:flex;align-items:center;gap:11px;font-size:19px;font-weight:800;letter-spacing:.01em}.brand-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:linear-gradient(145deg,#4268c9,#2947a0);color:#fff;box-shadow:0 8px 22px #0004}.sidebar-meta{margin:24px 0;padding:16px;border:1px solid #ffffff24;border-radius:11px;background:#101b38cc;box-shadow:inset 0 1px #ffffff0d,0 12px 28px #0002;backdrop-filter:blur(4px)}.sidebar-meta small{display:block;color:#aebbd1}.sidebar-meta strong{display:block;margin:3px 0 12px;overflow-wrap:anywhere}.sidebar-meta strong:last-child{margin-bottom:0}.nav-title{margin:22px 8px 8px;color:#91a9de;font-size:11px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}.nav{list-style:none;margin:0;padding:0}.nav a{display:grid;grid-template-columns:24px minmax(0,1fr) 8px;align-items:center;gap:8px;margin:2px 0;padding:9px 10px;border:1px solid transparent;border-radius:8px;color:#dce3ef;text-decoration:none;font-size:13px;transition:background .12s,border-color .12s}.nav a:hover,.nav a:focus{background:#ffffff10;border-color:#ffffff13;color:#fff}.nav a.active{background:linear-gradient(90deg,#3153a650,#ffffff0b);border-color:#7894db42;color:#fff;box-shadow:inset 3px 0 #7190e2}.nav-index{color:#8395b4;font:700 10px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.04em}.nav a.active .nav-index{color:#aac0fa}.nav-label{min-width:0}.nav-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px #539d961c;flex:0 0 auto}.nav-dot.info{background:#7190e2}.nav-dot.not_run,.nav-dot.not_evaluated{background:var(--neutral)}.nav-dot.pass{background:var(--accent)}.nav-dot.warning{background:var(--warn)}.nav-dot.fail,.nav-dot.error{background:var(--danger)}.main{min-width:0;padding:34px}.report-head,.module{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 28px #0a132d0d}.report-head{padding:34px 38px;border-top:6px solid var(--brand)}.eyebrow,.section-kicker{margin:0 0 7px;color:var(--brand);font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}h1{margin:0;font-size:30px;line-height:1.2}h2{margin:0;font-size:21px}h3{margin:0;font-size:15px}.subtitle{max-width:80ch;margin:12px 0 0;color:var(--muted)}.overview{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:24px}.overview-card{padding:15px 17px;border:1px solid var(--line);border-radius:9px;background:var(--panel)}.overview-card span{display:block;color:var(--muted);font-size:12px}.overview-card strong{display:block;margin-top:3px;font-size:21px}.notice{margin-top:18px;padding:12px 14px;border-left:3px solid var(--accent);background:#e8f3f1;color:var(--brand-dark);font-size:13px}.module{margin-top:18px;padding:28px 30px;scroll-margin-top:20px}.module-head,.plot-card-head{display:flex;align-items:center;justify-content:space-between;gap:18px}.badge{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:4px 9px;font-size:10px;font-weight:800;letter-spacing:.06em;white-space:nowrap}.badge.ready,.badge.pass{background:#e8f3f1;color:#276c66}.badge.info{background:#eef1f8;color:var(--brand-dark)}.badge.not_run,.badge.not_evaluated{background:#f1f3f5;color:var(--muted)}.badge.warning{background:#fff3d6;color:#8c5b00}.badge.fail,.badge.error{background:#fae9ec;color:#9f3041}.stats-grid,.plot-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:20px}.stats-card,.plot-card{min-width:0;border:1px solid var(--line);border-radius:10px;overflow:hidden}.stats-card h3,.plot-card-head{padding:12px 15px;background:var(--panel);border-bottom:1px solid var(--line)}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 13px;border-bottom:1px solid var(--line);text-align:left}th{width:58%;color:var(--muted);font-weight:500}tr:last-child th,tr:last-child td{border-bottom:0}.chart-button{position:relative;display:block;width:100%;padding:0;border:0;background:#fff;cursor:zoom-in}.chart-image{display:block;width:100%;height:auto}.expand-hint{position:absolute;right:10px;bottom:10px;padding:5px 8px;border-radius:6px;background:#0a132ddd;color:#fff;font-size:10px;opacity:0;transition:opacity .15s}.chart-button:hover .expand-hint,.chart-button:focus .expand-hint{opacity:1}.empty{display:grid;place-items:center;min-height:210px;padding:28px;text-align:center;color:var(--muted);background:var(--panel)}.error-box{color:#9f3041}.decision-detail{padding:13px 15px;border-top:1px solid var(--line);background:#fff}.decision-detail p{margin:7px 0 0;color:var(--muted);font-size:12px}.observations{display:flex;flex-wrap:wrap;gap:8px 18px}.observation small,.observation strong{display:block}.observation small{color:var(--muted);font-size:10px}.observation strong{font-size:13px}.ruleset{margin:7px 0 0;color:var(--muted);font-size:12px}.qc-counts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:20px}.qc-count{display:flex;align-items:center;justify-content:space-between;padding:11px 13px;border:1px solid var(--line);border-left:4px solid var(--neutral);border-radius:8px;background:var(--panel)}.qc-count.pass{border-left-color:var(--accent)}.qc-count.warning{border-left-color:var(--warn)}.qc-count.fail{border-left-color:var(--danger)}.qc-count span{color:var(--muted);font-size:10px;font-weight:800}.qc-count strong{font-size:20px}.summary-bar{display:flex;height:14px;margin-top:12px;overflow:hidden;border-radius:999px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line)}.summary-segment.pass{background:var(--accent)}.summary-segment.warning{background:var(--warn)}.summary-segment.fail{background:var(--danger)}.summary-segment.not_evaluated{background:var(--neutral)}.qc-matrix-wrap{margin-top:20px;overflow-x:auto;border:1px solid var(--line);border-radius:9px}.qc-matrix th:first-child{width:auto}.qc-matrix th:not(:first-child),.qc-matrix td{text-align:center}.qc-matrix .badge{font-size:9px}.footer{padding:24px 6px;color:var(--muted);font-size:12px;text-align:center}.print-button{position:fixed;right:22px;bottom:22px;border:0;border-radius:9px;padding:11px 16px;background:var(--brand);color:#fff;font-weight:700;box-shadow:0 8px 22px #0a132d35;cursor:pointer}dialog{width:min(96vw,1400px);max-height:94vh;padding:18px;border:0;border-radius:14px;box-shadow:0 20px 70px #0008}dialog::backdrop{background:#071127c9}.dialog-head{display:flex;justify-content:flex-end;margin-bottom:8px}.dialog-close{border:0;border-radius:7px;padding:8px 12px;background:var(--ink);color:#fff;cursor:pointer}#dialog-image{display:block;max-width:100%;max-height:82vh;margin:auto}
+.overrepresented-block{border-top:1px solid var(--line);background:#fff}.overrepresented-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px}.overrepresented-head .section-kicker{margin-bottom:2px}.overrepresented-head h4{margin:0;font-size:14px}.table-count{display:grid;place-items:center;min-width:27px;height:27px;padding:0 8px;border-radius:999px;background:#eef1f8;color:var(--brand-dark);font-size:11px;font-weight:800}.overrepresented-table-wrap{overflow-x:auto;border-top:1px solid var(--line)}.overrepresented-table{table-layout:fixed;font-size:11px}.overrepresented-table .sequence-col{width:46%}.overrepresented-table .count-col{width:17%}.overrepresented-table .percentage-col{width:17%}.overrepresented-table .source-col{width:20%}.overrepresented-table th{width:auto;padding:8px 10px;background:var(--panel);color:var(--brand-dark);font-size:10px;font-weight:800;letter-spacing:.035em;text-transform:uppercase}.overrepresented-table td{padding:9px 10px;vertical-align:top}.overrepresented-table td.numeric{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.overrepresented-table td.sequence code{color:var(--ink);font:10px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere;word-break:break-all}.overrepresented-empty{margin:0;padding:14px 15px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}.overrepresented-table tbody tr:nth-child(even){background:#f8fafb}
 @media(max-width:980px){.layout{grid-template-columns:1fr}.sidebar{position:relative;height:auto}.nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.main{padding:20px}.stats-grid,.plot-grid{grid-template-columns:1fr}}
 @media(max-width:620px){.main{padding:0}.report-head,.module{border-radius:0;border-left:0;border-right:0}.report-head,.module{padding:22px}.overview,.nav,.qc-counts{grid-template-columns:1fr}.sidebar{padding:22px}h1{font-size:25px}}
-@media print{body{background:#fff}.layout{display:block;max-width:none}.sidebar,.print-button,dialog{display:none!important}.main{padding:0}.report-head,.module{box-shadow:none;border-radius:0;break-inside:avoid}.module{margin-top:12px}.chart-button{cursor:default}.expand-hint{display:none}.plot-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media print{body{background:#fff}.layout{display:block;max-width:none}.sidebar,.print-button,dialog{display:none!important}.main{padding:0}.report-head,.module{box-shadow:none;border-radius:0;break-inside:avoid}.module{margin-top:12px}.chart-button{cursor:default}.expand-hint{display:none}.plot-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.overrepresented-block{break-inside:avoid}.overrepresented-table{font-size:9px}.overrepresented-table td.sequence code{font-size:8px}}
 """.strip()
 
 

@@ -74,6 +74,28 @@ def write_manifest(plot_dir: Path, *, unsafe: bool = False) -> None:
     )
 
 
+def add_duplication_plot(result_dir: Path) -> None:
+    plot_dir = result_dir / "plots"
+    (plot_dir / "duplication_R1.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 10"></svg>',
+        encoding="utf-8",
+    )
+    manifest_path = plot_dir / "plots_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["plots"].append(
+        {
+            "id": "sequence_duplication_levels",
+            "read": "R1",
+            "title": "Sequence duplication levels",
+            "source": "sequence_duplication_levels_R1.tsv",
+            "status": "generated",
+            "svg": "duplication_R1.svg",
+            "alt_text": "Sequence duplication levels for R1",
+        }
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
 def write_evaluation(result_dir: Path) -> None:
     evaluation = {
         "schema_version": 1,
@@ -195,6 +217,56 @@ class QcReportTest(unittest.TestCase):
             document = generate_qc_report(result_dir).read_text(encoding="utf-8")
             self.assertIn("asset path escapes the plot directory", document)
             self.assertNotIn("data:image/svg+xml;base64,", document)
+
+    def test_overrepresented_sequences_table_is_embedded_and_escaped(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-report-overrepresented-") as temporary:
+            result_dir = Path(temporary)
+            write_summary(result_dir / "sample_R1_summary.txt", "sample", "R1")
+            write_manifest(result_dir / "plots")
+            add_duplication_plot(result_dir)
+            sequence = "T" * 50
+            (result_dir / "overrepresented_sequences_R1.tsv").write_text(
+                "sequence\tcount\tpercentage\tpossible_source\n"
+                f"{sequence}\t269055\t0.4065003125\tNo Hit <script>alert(1)</script>\n",
+                encoding="utf-8",
+            )
+
+            document = generate_qc_report(result_dir).read_text(encoding="utf-8")
+            self.assertIn("Overrepresented sequences", document)
+            self.assertIn(sequence, document)
+            self.assertIn("269,055", document)
+            self.assertIn("0.4065%", document)
+            self.assertIn("No Hit &lt;script&gt;alert(1)&lt;/script&gt;", document)
+            self.assertNotIn("No Hit <script>alert(1)</script>", document)
+
+    def test_empty_overrepresented_sequences_table_has_explicit_state(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-report-overrepresented-empty-") as temporary:
+            result_dir = Path(temporary)
+            write_summary(result_dir / "sample_R1_summary.txt", "sample", "R1")
+            write_manifest(result_dir / "plots")
+            add_duplication_plot(result_dir)
+            (result_dir / "overrepresented_sequences_R1.tsv").write_text(
+                "sequence\tcount\tpercentage\tpossible_source\n", encoding="utf-8"
+            )
+
+            document = generate_qc_report(result_dir).read_text(encoding="utf-8")
+            self.assertIn("No sequences exceeded the reporting threshold.", document)
+            self.assertIn('class="table-count">0</span>', document)
+
+    def test_invalid_overrepresented_percentage_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-report-overrepresented-invalid-") as temporary:
+            result_dir = Path(temporary)
+            write_summary(result_dir / "sample_R1_summary.txt", "sample", "R1")
+            write_manifest(result_dir / "plots")
+            add_duplication_plot(result_dir)
+            (result_dir / "overrepresented_sequences_R1.tsv").write_text(
+                "sequence\tcount\tpercentage\tpossible_source\n"
+                "ACGT\t12\t101\tNo Hit\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(QcReportError, "percentage must be between 0 and 100"):
+                load_report_model(result_dir)
 
     def test_standalone_cli(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-report-cli-") as temporary:

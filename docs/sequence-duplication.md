@@ -35,7 +35,12 @@ Native runs additionally produce:
 - `overrepresented_sequences_R*.tsv` — tracked sequences above 0.1% of all
   reads, sorted deterministically;
 - `sequence_duplication_R*.incomplete` — a temporary transaction marker which
-  remains only when calculation or publication did not finish.
+remains only when calculation or publication did not finish.
+
+When the compact HTML report is generated, each duplication chart is followed
+by its read-specific `Overrepresented sequences` table. The report shows the
+sequence, exact count, percentage and possible source; a valid header-only TSV
+is rendered explicitly as “No sequences exceeded the reporting threshold.”
 
 The summary is published last. The QC evaluator rejects native artifacts while
 the incomplete marker exists and validates the summary against the percentage

@@ -43,6 +43,12 @@ def write_fixture_set(directory: Path, reads: tuple[str, ...] = ("R1", "R2")) ->
     for read in reads:
         for prefix, content in FIXTURES.items():
             (directory / f"{prefix}_{read}.tsv").write_text(content, encoding="utf-8")
+        overrepresented = "sequence\tcount\tpercentage\tpossible_source\n"
+        if read == "R2":
+            overrepresented += f"{'T' * 50}\t269055\t0.4065003125\tNo Hit\n"
+        (directory / f"overrepresented_sequences_{read}.tsv").write_text(
+            overrepresented, encoding="utf-8"
+        )
 
 
 def run_plotter(input_dir: Path, output_dir: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -128,6 +134,10 @@ class PlotResultsTest(unittest.TestCase):
             self.assertIn("Deduplicated sequences", duplication_svg)
             self.assertIn("&gt;50", duplication_svg)
             self.assertIn("Sequence duplication levels", report_text)
+            self.assertIn("Overrepresented sequences", report_text)
+            self.assertIn("269,055", report_text)
+            self.assertIn("0.4065%", report_text)
+            self.assertIn("No sequences exceeded the reporting threshold.", report_text)
             self.assertIn("PASS / WARNING / FAIL distribution", report_text)
             self.assertIn("fastqc-compatible-v1", report_text)
             self.assertTrue((input_dir / "qc_evaluation.json").is_file())
