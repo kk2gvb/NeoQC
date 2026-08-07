@@ -360,3 +360,107 @@ DuplicationStats QualityAnalyzer::getDuplicationStats() const {
 
     return stats;
 }
+
+void QualityAnalyzer::merge(const QualityAnalyzer& other)
+{
+    // ---------------------------------------------------------------------
+    // Простые счётчики
+    // ---------------------------------------------------------------------
+
+    totalGC += other.totalGC;
+    totalBases += other.totalBases;
+    totalReads += other.totalReads;
+
+    countA += other.countA;
+    countC += other.countC;
+    countG += other.countG;
+    countT += other.countT;
+    countN += other.countN;
+
+    totalLength += other.totalLength;
+
+    q20Count += other.q20Count;
+    q30Count += other.q30Count;
+
+    readsWithAdapter += other.readsWithAdapter;
+
+    minLength = std::min(minLength, other.minLength);
+    maxLength = std::max(maxLength, other.maxLength);
+
+    // ---------------------------------------------------------------------
+    // Вспомогательные функции
+    // ---------------------------------------------------------------------
+
+    auto mergeVector = [](auto& lhs, const auto& rhs)
+    {
+        if (lhs.size() < rhs.size())
+            lhs.resize(rhs.size(), 0);
+
+        for (size_t i = 0; i < rhs.size(); ++i)
+            lhs[i] += rhs[i];
+    };
+
+    // ---------------------------------------------------------------------
+    // Векторы
+    // ---------------------------------------------------------------------
+
+    mergeVector(baseCountA, other.baseCountA);
+    mergeVector(baseCountC, other.baseCountC);
+    mergeVector(baseCountG, other.baseCountG);
+    mergeVector(baseCountT, other.baseCountT);
+    mergeVector(baseCountN, other.baseCountN);
+
+    mergeVector(readsPerPosition, other.readsPerPosition);
+
+    mergeVector(gcDistribution, other.gcDistribution);
+    mergeVector(lengthDistribution, other.lengthDistribution);
+
+    mergeVector(qualitySum, other.qualitySum);
+    mergeVector(qualityCount, other.qualityCount);
+
+    mergeVector(perSequenceQualityDistribution,
+                other.perSequenceQualityDistribution);
+
+    // ---------------------------------------------------------------------
+    // Quality histogram
+    // ---------------------------------------------------------------------
+
+    if (qualityHistogram.size() < other.qualityHistogram.size())
+    {
+        qualityHistogram.resize(other.qualityHistogram.size());
+    }
+
+    for (size_t pos = 0; pos < other.qualityHistogram.size(); ++pos)
+    {
+        for (size_t q = 0; q < 94; ++q)
+        {
+            qualityHistogram[pos][q] += other.qualityHistogram[pos][q];
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Adapter positions
+    // ---------------------------------------------------------------------
+
+    if (adapterPosCounts.size() < other.adapterPosCounts.size())
+    {
+        adapterPosCounts.resize(other.adapterPosCounts.size());
+    }
+
+    for (size_t adapter = 0; adapter < other.adapterPosCounts.size(); ++adapter)
+    {
+        mergeVector(adapterPosCounts[adapter],
+                    other.adapterPosCounts[adapter]);
+    }
+
+    // ---------------------------------------------------------------------
+    // Sequence duplication
+    // ---------------------------------------------------------------------
+
+    for (const auto& [key, count] : other.sequenceCounts)
+    {
+        sequenceCounts[key] += count;
+    }
+}
+
+    

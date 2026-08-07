@@ -223,6 +223,25 @@ std::string normalizeReadId(const std::string& header)
     return id;
 }
 
+void processRecord(
+    QualityAnalyzer& analyzer,
+    const FastqRecord& record,
+    bool skipAdapters,
+    PerformanceTimers& timers,
+    bool collectTimings)
+{
+    {
+        ScopedTimer timer(timers.metrics, collectTimings);
+        analyzer.processRecord(record);
+    }
+
+    if (!skipAdapters)
+    {
+        ScopedTimer timer(timers.adapterSearch, collectTimings);
+        analyzer.analyzeAdapters(record);
+    }
+}
+
 void writeSummaryTxt(const QualityStats& stats,
                      const std::string& outDir,
                      const std::string& filename,
@@ -636,21 +655,31 @@ AnalysisResult processOneFile(const std::string& path,
         const auto openStart = collectTimings ? Clock::now() : Clock::time_point{};
         FastqReader reader(path, collectTimings);
         if (collectTimings) timers.fileOpen += Clock::now() - openStart;
-        FastqRecord rec;
+
+        constexpr std::size_t BATCH_SIZE = 100000;
+        std::vector<FastqRecord> batch;
+
         size_t count = 0;
 
-        while (reader.readNext(rec)) {
+        while (reader.readBatch(batch, BATCH_SIZE))
+        {
+            for (const auto& rec : batch)
             {
-                ScopedTimer timer(timers.metrics, collectTimings);
-                analyzer.processRecord(rec);
-            }
-            if (!skipAdapters) {
-                ScopedTimer timer(timers.adapterSearch, collectTimings);
-                analyzer.analyzeAdapters(rec);
-            }
-            ++count;
-            if (count % 1'000'000 == 0) {
-                std::cout << readName << ": processed " << count << " reads...\n";
+                processRecord(
+                    analyzer,
+                    rec,
+                    skipAdapters,
+                    timers,
+                    collectTimings);
+
+                ++count;
+
+                if (count % 1000000 == 0)
+                {
+                    std::cout << "Processed "
+                            << count
+                            << " reads...\n";
+                }
             }
         }
         std::cout << readName << ": total reads = " << count << "\n";
@@ -795,16 +824,30 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
                 "R2: " + rec2.header);
         }
 
-        {
-            ScopedTimer timer(timers.metrics, collectTimings);
-            analyzerR1.processRecord(rec1);
-            analyzerR2.processRecord(rec2);
-        }
-        if (!skipAdapters) {
-            ScopedTimer timer(timers.adapterSearch, collectTimings);
-            analyzerR1.analyzeAdapters(rec1);
-            analyzerR2.analyzeAdapters(rec2);
-        }
+        // {
+        //     ScopedTimer timer(timers.metrics, collectTimings);
+        //     analyzerR1.processRecord(rec1);
+        //     analyzerR2.processRecord(rec2);
+        // }
+        // if (!skipAdapters) {
+        //     ScopedTimer timer(timers.adapterSearch, collectTimings);
+        //     analyzerR1.analyzeAdapters(rec1);
+        //     analyzerR2.analyzeAdapters(rec2);
+        // }
+
+        processRecord(
+            analyzerR1,
+            rec1,
+            skipAdapters,
+            timers,
+            collectTimings);
+
+        processRecord(
+            analyzerR2,
+            rec2,
+            skipAdapters,
+            timers,
+            collectTimings);
 
         ++count;
 

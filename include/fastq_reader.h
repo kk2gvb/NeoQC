@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <chrono>
 #include <zlib.h>
+#include <vector>
 
 // ---------------------------------------------------------------------------
 // FASTQ-запись
@@ -32,6 +33,9 @@ public:
     // Читает следующую запись. Возвращает false, если файл закончился.
     // Бросает исключение при ошибках формата или распаковки.
     bool readNext(FastqRecord& record);
+
+    bool readBatch(std::vector<FastqRecord>& batch,
+               std::size_t batchSize);
 
     // Количество прочитанных записей
     std::size_t getReadCount() const;

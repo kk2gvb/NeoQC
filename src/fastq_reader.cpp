@@ -44,14 +44,19 @@ bool FastqReader::readLine(std::string& line) {
     char buffer[BUFFER_SIZE];
 
     while (true) {
-        if (gzgets(fileHandle, buffer, BUFFER_SIZE) == nullptr) {
-            // Конец файла или ошибка
-            int errnum = 0;
-            const char* errmsg = gzerror(fileHandle, &errnum);
-            if (errnum != Z_OK && errnum != Z_STREAM_END) {
-                throw std::runtime_error("Gzip read error in " + filename + ": " + errmsg);
+        if (gzgets(fileHandle, buffer, BUFFER_SIZE) == nullptr)
+        {
+            // Нормальный конец файла
+            if (gzeof(fileHandle))
+            {
+                return !line.empty();
             }
-            return !line.empty(); // если что-то прочитали — возвращаем true
+
+            int errnum = Z_OK;
+            const char* errmsg = gzerror(fileHandle, &errnum);
+
+            throw std::runtime_error(
+                "Gzip read error in " + filename + ": " + errmsg);
         }
 
         line += buffer;
@@ -219,6 +224,32 @@ bool FastqReader::readNext(FastqRecord& record) {
     if (collectTiming) timing.validation += std::chrono::steady_clock::now() - validationStart;
 
     return true;
+}
+
+bool FastqReader::readBatch(std::vector<FastqRecord>& batch,
+                            std::size_t batchSize)
+{
+    batch.clear();
+
+    if (batch.capacity() < batchSize)
+    {
+        batch.reserve(batchSize);
+    };
+
+    FastqRecord record;
+
+    while (batch.size() < batchSize)
+    {
+        if (!readNext(record))
+        {
+            break;
+        }
+
+        batch.emplace_back(std::move(record));
+        record = FastqRecord{};
+    }
+
+    return !batch.empty();
 }
 
 std::size_t FastqReader::getReadCount() const {
