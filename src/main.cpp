@@ -242,6 +242,88 @@ void processRecord(
     }
 }
 
+void processBatch(
+    QualityAnalyzer& analyzer,
+    const std::vector<FastqRecord>& batch,
+    bool skipAdapters,
+    PerformanceTimers& timers,
+    bool collectTimings)
+{
+    for (const auto& record : batch)
+    {
+        processRecord(
+            analyzer,
+            record,
+            skipAdapters,
+            timers,
+            collectTimings);
+    }
+}
+
+bool readPairedBatch(
+    FastqReader& readerR1,
+    FastqReader& readerR2,
+    std::vector<FastqRecord>& batchR1,
+    std::vector<FastqRecord>& batchR2,
+    std::size_t batchSize)
+{
+    batchR1.clear();
+    batchR2.clear();
+
+    if (batchR1.capacity() < batchSize)
+        batchR1.reserve(batchSize);
+
+    if (batchR2.capacity() < batchSize)
+        batchR2.reserve(batchSize);
+
+    FastqRecord rec1;
+    FastqRecord rec2;
+
+    while (batchR1.size() < batchSize)
+    {
+        bool ok1 = readerR1.readNext(rec1);
+        bool ok2 = readerR2.readNext(rec2);
+
+        // Оба файла закончились
+        if (!ok1 && !ok2)
+            break;
+
+        // R1 закончился раньше
+        if (!ok1)
+        {
+            throw std::runtime_error(
+                "FASTQ validation error:\n"
+                "reason: R1 contains fewer reads than R2");
+        }
+
+        // R2 закончился раньше
+        if (!ok2)
+        {
+            throw std::runtime_error(
+                "FASTQ validation error:\n"
+                "reason: R2 contains fewer reads than R1");
+        }
+
+        // Проверяем идентификаторы
+        if (normalizeReadId(rec1.header) != normalizeReadId(rec2.header))
+        {
+            throw std::runtime_error(
+                "FASTQ validation error:\n"
+                "reason: paired read identifiers do not match\n"
+                "R1: " + rec1.header + "\n"
+                "R2: " + rec2.header);
+        }
+
+        batchR1.emplace_back(std::move(rec1));
+        batchR2.emplace_back(std::move(rec2));
+
+        rec1 = FastqRecord{};
+        rec2 = FastqRecord{};
+    }
+
+    return !batchR1.empty();
+}
+
 void writeSummaryTxt(const QualityStats& stats,
                      const std::string& outDir,
                      const std::string& filename,
@@ -660,32 +742,23 @@ AnalysisResult processOneFile(const std::string& path,
         std::vector<FastqRecord> batch;
 
         size_t count = 0;
-
         while (reader.readBatch(batch, BATCH_SIZE))
         {
-            for (const auto& rec : batch)
+            processBatch(
+                analyzer,
+                batch,
+                skipAdapters,
+                timers,
+                collectTimings);
+
+            count += batch.size();
+
+            if (count % 1000000 == 0)
             {
-                processRecord(
-                    analyzer,
-                    rec,
-                    skipAdapters,
-                    timers,
-                    collectTimings);
-
-                ++count;
-
-                if (count % 1000000 == 0)
-                {
-                    std::cout << "Processed "
-                            << count
-                            << " reads...\n";
-                }
+                std::cout << "Processed "
+                        << count
+                        << " reads...\n";
             }
-        }
-        std::cout << readName << ": total reads = " << count << "\n";
-        if (collectTimings) {
-            timers.readAndDecompress += reader.getTiming().readAndDecompress;
-            timers.validation += reader.getTiming().validation;
         }
     }
 
@@ -782,80 +855,41 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
     FastqRecord rec1;
     FastqRecord rec2;
 
+    constexpr std::size_t BATCH_SIZE = 100000;
+
+    std::vector<FastqRecord> batchR1;
+    std::vector<FastqRecord> batchR2;
+
     size_t count = 0;
 
-    while (true)
+    while (readPairedBatch(
+        readerR1,
+        readerR2,
+        batchR1,
+        batchR2,
+        BATCH_SIZE))
     {
-        bool ok1 = readerR1.readNext(rec1);
-        bool ok2 = readerR2.readNext(rec2);
-
-        // Оба файла закончились
-        if (!ok1 && !ok2)
-            break;
-
-        // R1 закончился раньше
-        if (!ok1)
-        {
-            throw std::runtime_error(
-                "FASTQ validation error:\n"
-                "reason: R1 contains fewer reads than R2");
-        }
-
-        // R2 закончился раньше
-        if (!ok2)
-        {
-            throw std::runtime_error(
-                "FASTQ validation error:\n"
-                "reason: R2 contains fewer reads than R1");
-        }
-
-        // Проверка идентификаторов считываний
-        bool matchingReadIds;
-        {
-            ScopedTimer timer(timers.pairValidation, collectTimings);
-            matchingReadIds = normalizeReadId(rec1.header) == normalizeReadId(rec2.header);
-        }
-        if (!matchingReadIds)
-        {
-            throw std::runtime_error(
-                "FASTQ validation error:\n"
-                "reason: paired read identifiers do not match\n"
-                "R1: " + rec1.header + "\n"
-                "R2: " + rec2.header);
-        }
-
-        // {
-        //     ScopedTimer timer(timers.metrics, collectTimings);
-        //     analyzerR1.processRecord(rec1);
-        //     analyzerR2.processRecord(rec2);
-        // }
-        // if (!skipAdapters) {
-        //     ScopedTimer timer(timers.adapterSearch, collectTimings);
-        //     analyzerR1.analyzeAdapters(rec1);
-        //     analyzerR2.analyzeAdapters(rec2);
-        // }
-
-        processRecord(
+        processBatch(
             analyzerR1,
-            rec1,
+            batchR1,
             skipAdapters,
             timers,
             collectTimings);
 
-        processRecord(
+        processBatch(
             analyzerR2,
-            rec2,
+            batchR2,
             skipAdapters,
             timers,
             collectTimings);
 
-        ++count;
+        count += batchR1.size();
 
         if (count % 1000000 == 0)
         {
             std::cout << "Processed "
-                      << count
-                      << " paired reads...\n";
+                    << count
+                    << " paired reads...\n";
         }
     }
 
