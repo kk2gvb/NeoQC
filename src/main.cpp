@@ -1041,6 +1041,9 @@ void writeCaseSummary(const std::string& patientId,
 // main
 // ---------------------------------------------------------------------------
 int main(int argc, char* argv[]) {
+
+    const auto start = Clock::now();
+
     if (argc < 2) {
         printUsage(argv[0]);
         return 1;
@@ -1212,6 +1215,14 @@ int main(int argc, char* argv[]) {
         PlotRunner::runAll(args.outDir, plotDir, plotOptions);
     }
 
-    std::cout << "\nDone.\n";
+    const auto end = Clock::now();
+
+    const auto elapsed = std::chrono::duration<double>(end - start);
+
+    std::cout << "Done.\n"
+              << "Total processing time: "
+              << elapsed.count()
+              << " s\n";
+
     return 0;
 }
