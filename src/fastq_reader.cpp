@@ -2,11 +2,9 @@
 #include <stdexcept>
 #include <algorithm>
 #include <sstream>
-#include <cstring> 
-#include <chrono>
+#include <cstring>
 
-FastqReader::FastqReader(const std::string& filename, bool collectTiming)
-    : filename(filename), collectTiming(collectTiming) {
+FastqReader::FastqReader(const std::string& filename) : filename(filename) {
     fileHandle = gzopen(filename.c_str(), "rb");
     if (!fileHandle) {
         throw std::runtime_error("Cannot open file: " + filename);
@@ -84,14 +82,9 @@ bool FastqReader::readLine(std::string& line) {
 }
 
 bool FastqReader::readNext(FastqRecord& record) {
-    const auto readStart = collectTiming
-        ? std::chrono::steady_clock::now()
-        : std::chrono::steady_clock::time_point{};
 
     // Читаем заголовок
     if (!readLine(record.header)) {
-        if (collectTiming)
-            timing.readAndDecompress += std::chrono::steady_clock::now() - readStart;
 
         // Если это самое начало файла — FASTQ пустой
         if (readCount == 0) {
@@ -107,8 +100,6 @@ bool FastqReader::readNext(FastqRecord& record) {
     }
 
     if (record.header.empty()) {
-        if (collectTiming)
-            timing.readAndDecompress += std::chrono::steady_clock::now() - readStart;
 
         std::ostringstream oss;
         oss << "FASTQ validation error:\n"
@@ -118,11 +109,6 @@ bool FastqReader::readNext(FastqRecord& record) {
 
         throw std::runtime_error(oss.str());
     }
-
-    if (collectTiming) timing.readAndDecompress += std::chrono::steady_clock::now() - readStart;
-    const auto validationStart = collectTiming
-        ? std::chrono::steady_clock::now()
-        : std::chrono::steady_clock::time_point{};
 
     // Проверяем, что заголовок начинается с @
     if (record.header[0] != '@') {
@@ -221,8 +207,6 @@ bool FastqReader::readNext(FastqRecord& record) {
     readCount++;
     record.recordNumber = readCount;
 
-    if (collectTiming) timing.validation += std::chrono::steady_clock::now() - validationStart;
-
     return true;
 }
 
@@ -260,6 +244,4 @@ const std::string& FastqReader::getFilename() const {
     return filename;
 }
 
-const FastqReaderTiming& FastqReader::getTiming() const {
-    return timing;
-}
+
