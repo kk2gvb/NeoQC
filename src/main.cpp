@@ -3,6 +3,7 @@
 #include "../include/plot_runner.h"
 #include "../include/sample_sheet.h"
 
+#include <omp.h>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -739,13 +740,31 @@ AnalysisResult processOneFile(const std::string& path,
         if (collectTimings) timers.fileOpen += Clock::now() - openStart;
 
         constexpr std::size_t BATCH_SIZE = 100000;
+
+        const int threadCount = omp_get_max_threads();
+
+        std::cout << "OpenMP threads: "
+                << threadCount
+                << "\n";
+
+        std::vector<QualityAnalyzer> localAnalyzers;
+        localAnalyzers.reserve(threadCount);
+
+        for (int i = 0; i < threadCount; ++i)
+        {
+            localAnalyzers.emplace_back();
+        }
+
         std::vector<FastqRecord> batch;
 
         size_t count = 0;
+
         while (reader.readBatch(batch, BATCH_SIZE))
         {
+            const int threadId = omp_get_thread_num();
+
             processBatch(
-                analyzer,
+                localAnalyzers[threadId],
                 batch,
                 skipAdapters,
                 timers,

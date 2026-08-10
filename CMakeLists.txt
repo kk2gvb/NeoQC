@@ -13,6 +13,7 @@ endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native")
 
 find_package(ZLIB REQUIRED)
+find_package(OpenMP REQUIRED)
 
 add_executable(neoqc
     src/main.cpp
@@ -23,7 +24,10 @@ add_executable(neoqc
 )
 
 target_include_directories(neoqc PRIVATE include)
-target_link_libraries(neoqc PRIVATE ZLIB::ZLIB)
+target_link_libraries(neoqc PRIVATE
+    ZLIB::ZLIB
+    OpenMP::OpenMP_CXX
+)
 target_compile_definitions(neoqc PRIVATE
     NEOQC_PLOT_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/scripts/plot_results.py"
 )
