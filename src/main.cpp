@@ -15,6 +15,7 @@
 #include <optional>
 #include <ctime>
 #include <algorithm>
+#include <future>
 
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
@@ -191,16 +192,21 @@ void processRecord(
     }
 }
 
-void processBatch(
-    QualityAnalyzer& analyzer,
+void processBatchParallel(
+    std::vector<QualityAnalyzer>& analyzers,
     const std::vector<FastqRecord>& batch,
     bool skipAdapters)
 {
-    for (const auto& record : batch)
+    #pragma omp parallel for schedule(static)
+    for (std::int64_t i = 0;
+         i < static_cast<std::int64_t>(batch.size());
+         ++i)
     {
+        const int threadId = omp_get_thread_num();
+
         processRecord(
-            analyzer,
-            record,
+            analyzers[threadId],
+            batch[static_cast<std::size_t>(i)],
             skipAdapters);
     }
 }
@@ -663,6 +669,127 @@ void writeDuplicationArtifacts(const DuplicationStats& stats,
                                  + (error ? error.message() : "marker is missing"));
     }
 }
+
+void writeAnalysisReports(
+    const QualityStats& stats,
+    const DuplicationStats& duplicationStats,
+    const QualityAnalyzer& analyzer,
+    const std::string& sourcePath,
+    const std::string& outDir,
+    const std::string& sampleId,
+    const std::string& readName,
+    bool skipAdapters)
+{
+    writeSummaryTxt(
+        stats,
+        outDir,
+        sampleId + "_" + readName,
+        skipAdapters);
+
+    writePerCycleQualityTsv(
+        stats.meanQualityPerPosition,
+        stats.lowerQuartileQualityPerPosition,
+        stats.medianQualityPerPosition,
+        outDir,
+        readName);
+
+    writePerSequenceQualityTsv(
+        stats.perSequenceQualityDistribution,
+        outDir,
+        readName);
+
+    writePerBaseSequenceContentTsv(
+        stats.baseCountA,
+        stats.baseCountC,
+        stats.baseCountG,
+        stats.baseCountT,
+        stats.baseCountN,
+        outDir,
+        readName);
+
+    writePerSequenceGCContentTsv(
+        stats.gcDistribution,
+        outDir,
+        readName);
+
+    writePerBaseNContentTsv(
+        stats.baseCountN,
+        stats.readsPerPosition,
+        outDir,
+        readName);
+
+    writeSequenceLengthDistributionTsv(
+        stats.lengthDistribution,
+        outDir,
+        readName);
+
+    writeDuplicationArtifacts(
+        duplicationStats,
+        sourcePath,
+        outDir,
+        readName);
+
+    if (!skipAdapters)
+    {
+        writeAdapterTsv(
+            analyzer.adapters,
+            analyzer.adapterPosCounts,
+            stats.totalReads,
+            stats.maxLength,
+            outDir,
+            readName);
+    }
+}
+
+std::vector<DuplicationEntry> mergeSortedDuplicationEntries(
+    const std::vector<DuplicationEntry>& a,
+    const std::vector<DuplicationEntry>& b)
+{
+    std::vector<DuplicationEntry> result;
+    result.reserve(a.size() + b.size());
+
+    std::size_t i = 0;
+    std::size_t j = 0;
+
+    while (i < a.size() && j < b.size())
+    {
+        if (a[i].key.words < b[j].key.words)
+        {
+            result.push_back(a[i]);
+            ++i;
+        }
+        else if (b[j].key.words < a[i].key.words)
+        {
+            result.push_back(b[j]);
+            ++j;
+        }
+        else
+        {
+            result.push_back({
+                a[i].key,
+                a[i].count + b[j].count
+            });
+
+            ++i;
+            ++j;
+        }
+    }
+
+    while (i < a.size())
+    {
+        result.push_back(a[i]);
+        ++i;
+    }
+
+    while (j < b.size())
+    {
+        result.push_back(b[j]);
+        ++j;
+    }
+
+    return result;
+}
+
 // ---------------------------------------------------------------------------
 // Обработка одного файла (R1 или R2)
 // ---------------------------------------------------------------------------
@@ -700,10 +827,8 @@ AnalysisResult processOneFile(const std::string& path,
 
     while (reader.readBatch(batch, BATCH_SIZE))
     {
-        const int threadId = omp_get_thread_num();
-
-        processBatch(
-            localAnalyzers[threadId],
+        processBatchParallel(
+            localAnalyzers,
             batch,
             skipAdapters);
 
@@ -722,60 +847,56 @@ AnalysisResult processOneFile(const std::string& path,
         analyzer.merge(localAnalyzer);
     }
 
+    std::vector<std::vector<DuplicationEntry>> entries;
+
+    entries.reserve(localAnalyzers.size());
+
+    for (const auto& localAnalyzer : localAnalyzers)
+    {
+        entries.push_back(localAnalyzer.getDuplicationEntries());
+    }
+
+    for (auto& localEntries : entries)
+    {
+        std::sort(
+            localEntries.begin(),
+            localEntries.end(),
+            [](const DuplicationEntry& a,
+            const DuplicationEntry& b)
+            {
+                return a.key.words < b.key.words;
+            });
+    }
+
+    std::vector<DuplicationEntry> mergedEntries;
+
+    if (!entries.empty())
+    {
+        mergedEntries = entries[0];
+
+        for (std::size_t i = 1; i < entries.size(); ++i)
+        {
+            mergedEntries = mergeSortedDuplicationEntries(
+                mergedEntries,
+                entries[i]);
+        }
+    }
+
     QualityStats stats = analyzer.getStats();
-    
-    const DuplicationStats duplicationStats = analyzer.getDuplicationStats();
+
+    const DuplicationStats duplicationStats = analyzer.getDuplicationStats(mergedEntries);
 
     printConsoleSummary(stats, readName, skipAdapters);
     {
-        writeSummaryTxt(stats, outDir, sampleId + "_" + readName, skipAdapters);
-        writePerCycleQualityTsv(
-            stats.meanQualityPerPosition,
-            stats.lowerQuartileQualityPerPosition,
-            stats.medianQualityPerPosition,
-            outDir,
-            readName);
-
-        writePerSequenceQualityTsv(
-            stats.perSequenceQualityDistribution,
-            outDir,
-            readName);
-
-        writePerBaseSequenceContentTsv(
-            stats.baseCountA,
-            stats.baseCountC,
-            stats.baseCountG,
-            stats.baseCountT,
-            stats.baseCountN,
-            outDir,
-            readName);
-
-        writePerSequenceGCContentTsv(
-            stats.gcDistribution,
-            outDir,
-            readName);
-
-        writePerBaseNContentTsv(
-            stats.baseCountN,
-            stats.readsPerPosition,
-            outDir,
-            readName);
-
-        writeSequenceLengthDistributionTsv(
-            stats.lengthDistribution,
-            outDir,
-            readName);
-
-        writeDuplicationArtifacts(duplicationStats, path, outDir, readName);
-
-        if (!skipAdapters) {
-            writeAdapterTsv(analyzer.adapters,
-                            analyzer.adapterPosCounts,
-                            stats.totalReads,
-                            stats.maxLength,
-                            outDir,
-                            readName);
-        }
+    writeAnalysisReports(
+        stats,
+        duplicationStats,
+        analyzer,
+        path,
+        outDir,
+        sampleId,
+        readName,
+        skipAdapters);
     }
 
     result.r1Stats = stats;
@@ -809,6 +930,24 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
 
     constexpr std::size_t BATCH_SIZE = 100000;
 
+    const int threadCount = omp_get_max_threads();
+
+    std::cout << "OpenMP threads: "
+            << threadCount
+            << "\n";
+
+    std::vector<QualityAnalyzer> localAnalyzersR1;
+    std::vector<QualityAnalyzer> localAnalyzersR2;
+
+    localAnalyzersR1.reserve(threadCount);
+    localAnalyzersR2.reserve(threadCount);
+
+    for (int i = 0; i < threadCount; ++i)
+    {
+        localAnalyzersR1.emplace_back(ReadDirection::R1);
+        localAnalyzersR2.emplace_back(ReadDirection::R2);
+    }
+
     std::vector<FastqRecord> batchR1;
     std::vector<FastqRecord> batchR2;
 
@@ -821,13 +960,13 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
         batchR2,
         BATCH_SIZE))
     {
-        processBatch(
-            analyzerR1,
+        processBatchParallel(
+            localAnalyzersR1,
             batchR1,
             skipAdapters);
 
-        processBatch(
-            analyzerR2,
+        processBatchParallel(
+            localAnalyzersR2,
             batchR2,
             skipAdapters);
 
@@ -838,6 +977,102 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
             std::cout << "Processed "
                     << count
                     << " paired reads...\n";
+        }
+    }
+
+    for (auto& localAnalyzer : localAnalyzersR1)
+    {
+        analyzerR1.merge(localAnalyzer);
+    }
+
+    for (auto& localAnalyzer : localAnalyzersR2)
+    {
+        analyzerR2.merge(localAnalyzer);
+    }
+
+    std::vector<std::vector<DuplicationEntry>> entriesR1(
+        localAnalyzersR1.size());
+
+    std::vector<std::vector<DuplicationEntry>> entriesR2(
+        localAnalyzersR2.size());
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0;
+        i < static_cast<int>(localAnalyzersR1.size());
+        ++i)
+    {
+        entriesR1[i] =
+            localAnalyzersR1[i].getDuplicationEntries();
+    }
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0;
+        i < static_cast<int>(localAnalyzersR2.size());
+        ++i)
+    {
+        entriesR2[i] =
+            localAnalyzersR2[i].getDuplicationEntries();
+    }
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0;
+        i < static_cast<int>(entriesR1.size());
+        ++i)
+    {
+        auto& entries = entriesR1[i];
+
+        std::sort(
+            entries.begin(),
+            entries.end(),
+            [](const DuplicationEntry& a,
+            const DuplicationEntry& b)
+            {
+                return a.key.words < b.key.words;
+            });
+    }
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0;
+        i < static_cast<int>(entriesR2.size());
+        ++i)
+    {
+        auto& entries = entriesR2[i];
+
+        std::sort(
+            entries.begin(),
+            entries.end(),
+            [](const DuplicationEntry& a,
+            const DuplicationEntry& b)
+            {
+                return a.key.words < b.key.words;
+            });
+    }
+
+    std::vector<DuplicationEntry> mergedR1;
+
+    if (!entriesR1.empty())
+    {
+        mergedR1 = entriesR1[0];
+
+        for (std::size_t i = 1; i < entriesR1.size(); ++i)
+        {
+            mergedR1 = mergeSortedDuplicationEntries(
+                mergedR1,
+                entriesR1[i]);
+        }
+    }
+
+    std::vector<DuplicationEntry> mergedR2;
+
+    if (!entriesR2.empty())
+    {
+        mergedR2 = entriesR2[0];
+
+        for (std::size_t i = 1; i < entriesR2.size(); ++i)
+        {
+            mergedR2 = mergeSortedDuplicationEntries(
+                mergedR2,
+                entriesR2[i]);
         }
     }
 
@@ -852,98 +1087,44 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
     QualityStats statsR1 = analyzerR1.getStats();
     QualityStats statsR2 = analyzerR2.getStats();
         
-    const DuplicationStats duplicationStatsR1 = analyzerR1.getDuplicationStats();
-    const DuplicationStats duplicationStatsR2 = analyzerR2.getDuplicationStats();
+    const DuplicationStats duplicationStatsR1 = analyzerR1.getDuplicationStats(mergedR1);
+    const DuplicationStats duplicationStatsR2 = analyzerR2.getDuplicationStats(mergedR2);
 
     printConsoleSummary(statsR1, "R1", skipAdapters);
     printConsoleSummary(statsR2, "R2", skipAdapters);
 
-    writeSummaryTxt(
-        statsR1,
-        outDir,
-        sampleId + "_R1",
-        skipAdapters);
-    writeSummaryTxt(
-        statsR2,
-        outDir,
-        sampleId + "_R2",
-        skipAdapters);
+    auto futureR1 = std::async(
+        std::launch::async,
+        [&]()
+        {
+            writeAnalysisReports(
+                statsR1,
+                duplicationStatsR1,
+                analyzerR1,
+                r1Path,
+                outDir,
+                sampleId,
+                "R1",
+                skipAdapters);
+        });
 
-    writePerCycleQualityTsv(
-        statsR1.meanQualityPerPosition,
-        statsR1.lowerQuartileQualityPerPosition,
-        statsR1.medianQualityPerPosition,
-        outDir,
-        "R1");
-    writePerCycleQualityTsv(
-        statsR2.meanQualityPerPosition,
-        statsR2.lowerQuartileQualityPerPosition,
-        statsR2.medianQualityPerPosition,
-        outDir,
-        "R2");
+    auto futureR2 = std::async(
+        std::launch::async,
+        [&]()
+        {
+            writeAnalysisReports(
+                statsR2,
+                duplicationStatsR2,
+                analyzerR2,
+                r2Path,
+                outDir,
+                sampleId,
+                "R2",
+                skipAdapters);
+        });
 
-    writePerBaseSequenceContentTsv(
-        statsR1.baseCountA,
-        statsR1.baseCountC,
-        statsR1.baseCountG,
-        statsR1.baseCountT,
-        statsR1.baseCountN,
-        outDir,
-        "R1");
-    writePerBaseSequenceContentTsv(
-        statsR2.baseCountA,
-        statsR2.baseCountC,
-        statsR2.baseCountG,
-        statsR2.baseCountT,
-        statsR2.baseCountN,
-        outDir,
-        "R2");
-
-    writePerSequenceGCContentTsv(statsR1.gcDistribution,
-        outDir,
-        "R1");
-    writePerSequenceGCContentTsv(statsR2.gcDistribution,
-        outDir,
-        "R2");
-
-    writePerBaseNContentTsv(
-        statsR1.baseCountN,
-        statsR1.readsPerPosition,
-        outDir,
-        "R1");
-
-    writePerBaseNContentTsv(
-        statsR2.baseCountN,
-        statsR2.readsPerPosition,
-        outDir,
-        "R2");
-
-    writePerSequenceQualityTsv(statsR1.perSequenceQualityDistribution,
-        outDir,
-        "R1");
-    writePerSequenceQualityTsv(statsR2.perSequenceQualityDistribution,
-        outDir,
-        "R2");
-
-    writeSequenceLengthDistributionTsv(
-        statsR1.lengthDistribution,
-        outDir,
-        "R1");
-
-    writeSequenceLengthDistributionTsv(
-        statsR2.lengthDistribution,
-        outDir,
-        "R2");
-
-    writeDuplicationArtifacts(duplicationStatsR1, r1Path, outDir, "R1");
-    writeDuplicationArtifacts(duplicationStatsR2, r2Path, outDir, "R2");
-
-    if (!skipAdapters) {
-        writeAdapterTsv(analyzerR1.adapters, analyzerR1.adapterPosCounts,
-                        statsR1.totalReads, statsR1.maxLength, outDir, "R1");
-        writeAdapterTsv(analyzerR2.adapters, analyzerR2.adapterPosCounts,
-                        statsR2.totalReads, statsR2.maxLength, outDir, "R2");
-    }
+    futureR1.get();
+    futureR2.get();
 
     result.r1Stats = statsR1;
     result.r2Stats = statsR2;

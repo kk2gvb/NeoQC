@@ -16,6 +16,11 @@ struct DuplicationKey {
     bool operator==(const DuplicationKey&) const = default;
 };
 
+struct DuplicationEntry {
+    DuplicationKey key;
+    uint64_t count;
+};
+
 struct DuplicationKeyHash {
     std::size_t operator()(const DuplicationKey& key) const noexcept;
 };
@@ -108,6 +113,8 @@ public:
     // Получить точную статистику по всем уникальным 50-nt префиксам.
     DuplicationStats getDuplicationStats() const;
 
+    DuplicationStats getDuplicationStats(const std::vector<DuplicationEntry>& entries) const;
+
     uint64_t getTotalReads() const { return totalReads; }
 
     // -----------------------------------------------------------------------
@@ -132,6 +139,7 @@ public:
     // -----------------------------------------------------------------------
     void merge(const QualityAnalyzer& other);
 
+    std::vector<DuplicationEntry> getDuplicationEntries() const;
     
 
 private:

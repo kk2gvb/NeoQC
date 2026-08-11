@@ -1,6 +1,8 @@
 #include "../include/quality_analyzer.h"
 #include <algorithm>
 #include <cmath>
+#include <iostream>
+#include <utility>
 
 namespace {
 constexpr size_t kAdapterDetectionKmerLength = 12;
@@ -361,6 +363,114 @@ DuplicationStats QualityAnalyzer::getDuplicationStats() const {
     return stats;
 }
 
+DuplicationStats QualityAnalyzer::getDuplicationStats(
+    const std::vector<DuplicationEntry>& entries) const
+{
+    DuplicationStats stats;
+
+    stats.totalReads = totalReads;
+    stats.uniqueSequences = entries.size();
+
+    std::unordered_map<uint64_t, uint64_t> collatedCounts;
+
+    for (const auto& entry : entries)
+    {
+        collatedCounts[entry.count]++;
+    }
+
+    std::array<double, 16> rawByLevel{};
+    std::array<double, 16> deduplicatedByLevel{};
+
+    double rawTotal = 0.0;
+    double deduplicatedTotal = 0.0;
+
+    for (const auto& [level, observations] : collatedCounts)
+    {
+        const double exactCount =
+            static_cast<double>(observations);
+
+        const std::size_t slot = duplicationSlot(level);
+
+        rawByLevel[slot] +=
+            exactCount * static_cast<double>(level);
+
+        deduplicatedByLevel[slot] += exactCount;
+
+        rawTotal +=
+            exactCount * static_cast<double>(level);
+
+        deduplicatedTotal += exactCount;
+    }
+
+    stats.deduplicatedRemainingPercent =
+        rawTotal > 0.0
+            ? 100.0 * deduplicatedTotal / rawTotal
+            : 100.0;
+
+    stats.levels.reserve(kDuplicationLabels.size());
+
+    for (std::size_t i = 0;
+         i < kDuplicationLabels.size();
+         ++i)
+    {
+        stats.levels.push_back({
+            kDuplicationLabels[i],
+            rawTotal > 0.0
+                ? 100.0 * rawByLevel[i] / rawTotal
+                : 0.0,
+            deduplicatedTotal > 0.0
+                ? 100.0 * deduplicatedByLevel[i]
+                    / deduplicatedTotal
+                : 0.0
+        });
+    }
+
+    for (const auto& entry : entries)
+    {
+        const double percent =
+            totalReads > 0
+                ? 100.0 *
+                    static_cast<double>(entry.count) /
+                    static_cast<double>(totalReads)
+                : 0.0;
+
+        if (percent > OVERREPRESENTED_SEQUENCE_THRESHOLD)
+        {
+            stats.overrepresentedSequences.push_back({
+                decodeDuplicationKey(entry.key),
+                entry.count,
+                percent
+            });
+        }
+    }
+
+    std::sort(
+        stats.overrepresentedSequences.begin(),
+        stats.overrepresentedSequences.end(),
+        [](const auto& left, const auto& right)
+        {
+            return left.count != right.count
+                ? left.count > right.count
+                : left.sequence < right.sequence;
+        });
+
+    return stats;
+}
+
+std::vector<DuplicationEntry> QualityAnalyzer::getDuplicationEntries() const
+{
+    std::vector<DuplicationEntry> entries;
+    entries.reserve(sequenceCounts.size());
+
+    for (const auto& [key, count] : sequenceCounts)
+    {
+        entries.push_back({key, count});
+    }
+
+    return entries;
+}
+
+
 void QualityAnalyzer::merge(const QualityAnalyzer& other)
 {
     // ---------------------------------------------------------------------
@@ -451,15 +561,6 @@ void QualityAnalyzer::merge(const QualityAnalyzer& other)
     {
         mergeVector(adapterPosCounts[adapter],
                     other.adapterPosCounts[adapter]);
-    }
-
-    // ---------------------------------------------------------------------
-    // Sequence duplication
-    // ---------------------------------------------------------------------
-
-    for (const auto& [key, count] : other.sequenceCounts)
-    {
-        sequenceCounts[key] += count;
     }
 }
 
