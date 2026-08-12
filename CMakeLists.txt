@@ -285,3 +285,8 @@ add_test(NAME test_pair_mismatch
                  --sample-id mismatch
                  --out ${TEST_OUT_DIR})
 set_tests_properties(test_pair_mismatch PROPERTIES WILL_FAIL TRUE)
+
+# Test 36. Некорректные символы в последовательности
+add_test(NAME test_invalid_characters
+         COMMAND neoqc --r1 ${TEST_DATA_DIR}/invalid_base.fq --sample-id invalid_chars --out ${TEST_OUT_DIR})
+set_tests_properties(test_invalid_characters PROPERTIES WILL_FAIL TRUE)

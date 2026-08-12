@@ -125,12 +125,12 @@ QualityAnalyzer::QualityAnalyzer(ReadDirection direction) {
     adapterPosCounts.resize(adapters.size());
 }
 
-void QualityAnalyzer::processRecord(const FastqRecord& record) {
+BaseValidationError QualityAnalyzer::processRecord(const FastqRecord& record) {
     const std::string& seq = record.sequence;
     const std::string& qual = record.quality;
     size_t len = seq.length();
 
-    if (len == 0) return;
+    if (len == 0) return {};
 
     totalReads++;
     totalLength += len;
@@ -166,6 +166,7 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
     uint64_t readQualSum = 0;
     uint64_t validQualityBases = 0;
     size_t gc = 0;
+    BaseValidationError validationError;
     for (size_t i = 0; i < len; ++i) {
         readsPerPosition[i]++;
         char c = seq[i];
@@ -177,8 +178,18 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
             case 'T': case 't': countT++; totalBases++; baseCountT[i]++; break;
             case 'N': case 'n': countN++; totalBases++; baseCountN[i]++; break;
             default:
-                // Неизвестный символ — считаем как N
-                countN++; totalBases++;
+                // Перенесно из fastq_reader.h, чтобы выполнять проверку сразу в QualityAnalyzer::processRecord,
+                // а не в FastqReader::readNext и не создавать лишние циклы
+                if (!validationError.found)
+                {
+                    validationError.found = true;
+                    validationError.recordNumber = record.recordNumber;
+                    validationError.position = i;
+                    validationError.base = c;
+                }
+
+                countN++;
+                totalBases++;
                 break;
         }
 
@@ -214,6 +225,7 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
         perSequenceQualityDistribution[meanQuality]++;
     }
 
+    return validationError;
 }
 
 void QualityAnalyzer::analyzeAdapters(const FastqRecord& record) {

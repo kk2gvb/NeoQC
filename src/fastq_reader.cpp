@@ -23,19 +23,6 @@ void FastqReader::trimNewlines(std::string& s) {
     }
 }
 
-bool FastqReader::isValidBase(char c) {
-    switch (c) {
-        case 'A': case 'a':
-        case 'C': case 'c':
-        case 'G': case 'g':
-        case 'T': case 't':
-        case 'N': case 'n':
-            return true;
-        default:
-            return false;
-    }
-}
-
 bool FastqReader::readLine(std::string& line) {
     line.clear();
     const int BUFFER_SIZE = 8192;
@@ -188,19 +175,6 @@ bool FastqReader::readNext(FastqRecord& record) {
             << "reason: sequence and quality lengths differ: "
             << record.sequence.length() << " != " << record.quality.length();
         throw std::runtime_error(oss.str());
-    }
-
-    // Проверяем допустимые символы в последовательности
-    for (size_t i = 0; i < record.sequence.length(); ++i) {
-        if (!isValidBase(record.sequence[i])) {
-            std::ostringstream oss;
-            oss << "FASTQ validation error:\n"
-                << "file: " << filename << "\n"
-                << "record: " << (readCount + 1) << "\n"
-                << "reason: invalid base '" << record.sequence[i]
-                << "' at position " << (i + 1);
-            throw std::runtime_error(oss.str());
-        }
     }
 
     // Нумеруем запись

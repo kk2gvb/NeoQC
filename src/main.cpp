@@ -179,17 +179,20 @@ std::string normalizeReadId(const std::string& header)
     return id;
 }
 
-void processRecord(
+BaseValidationError processRecord(
     QualityAnalyzer& analyzer,
     const FastqRecord& record,
     bool skipAdapters)
 {
-    analyzer.processRecord(record);
+    BaseValidationError error =
+        analyzer.processRecord(record);
 
-    if (!skipAdapters)
+    if (!error.found && !skipAdapters)
     {
         analyzer.analyzeAdapters(record);
     }
+
+    return error;
 }
 
 void processBatchParallel(
@@ -197,17 +200,41 @@ void processBatchParallel(
     const std::vector<FastqRecord>& batch,
     bool skipAdapters)
 {
+    std::vector<BaseValidationError> validationErrors(
+        analyzers.size());
+
     #pragma omp parallel for schedule(static)
-    for (std::int64_t i = 0;
-         i < static_cast<std::int64_t>(batch.size());
-         ++i)
+    for (int i = 0; i < static_cast<int>(batch.size()); ++i)
     {
         const int threadId = omp_get_thread_num();
 
-        processRecord(
+        BaseValidationError error = processRecord(
             analyzers[threadId],
-            batch[static_cast<std::size_t>(i)],
+            batch[i],
             skipAdapters);
+
+        if (error.found)
+        {
+            validationErrors[threadId] = error;
+        }
+    }
+
+    for (const auto& error : validationErrors)
+    {
+        if (error.found)
+        {
+            std::ostringstream oss;
+
+            oss << "FASTQ validation error:\n"
+                << "record: " << error.recordNumber
+                << "\n"
+                << "reason: invalid base '"
+                << error.base
+                << "' at position "
+                << (error.position + 1);
+
+            throw std::runtime_error(oss.str());
+        }
     }
 }
 

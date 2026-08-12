@@ -48,9 +48,6 @@ private:
     // Удаляет \r и \n в конце строки
     static void trimNewlines(std::string& s);
 
-    // Проверяет, что символ — допустимое основание (A/C/G/T/N, регистр не важен)
-    static bool isValidBase(char c);
-
     gzFile fileHandle = nullptr;
     std::string filename;
     std::uint64_t readCount = 0;

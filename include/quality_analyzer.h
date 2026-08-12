@@ -21,6 +21,14 @@ struct DuplicationEntry {
     uint64_t count;
 };
 
+// Перенесно из fastq_reader.h, чтобы выполнять проверку сразу в QualityAnalyzer::processRecord, а не в FastqReader::readNext и не создавать лишние циклы
+struct BaseValidationError {
+    bool found = false;
+    std::size_t recordNumber = 0;
+    std::size_t position = 0;
+    char base = '\0';
+};
+
 struct DuplicationKeyHash {
     std::size_t operator()(const DuplicationKey& key) const noexcept;
 };
@@ -102,7 +110,7 @@ public:
     explicit QualityAnalyzer(ReadDirection direction = ReadDirection::R1);
 
     // Обработка одной FASTQ-записи
-    void processRecord(const FastqRecord& record);
+    BaseValidationError processRecord(const FastqRecord& record);
 
     // Поиск адаптеров в записи
     void analyzeAdapters(const FastqRecord& record);
