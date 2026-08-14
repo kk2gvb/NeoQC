@@ -817,6 +817,38 @@ std::vector<DuplicationEntry> mergeSortedDuplicationEntries(
     return result;
 }
 
+std::vector<DuplicationEntry> mergeDuplicationEntriesTree(
+    std::vector<std::vector<DuplicationEntry>> entries)
+{
+    if (entries.empty())
+        return {};
+
+    while (entries.size() > 1)
+    {
+        std::vector<std::vector<DuplicationEntry>> next;
+        next.reserve((entries.size() + 1) / 2);
+
+        for (std::size_t i = 0; i < entries.size(); i += 2)
+        {
+            if (i + 1 < entries.size())
+            {
+                next.push_back(
+                    mergeSortedDuplicationEntries(
+                        entries[i],
+                        entries[i + 1]));
+            }
+            else
+            {
+                next.push_back(std::move(entries[i]));
+            }
+        }
+
+        entries = std::move(next);
+    }
+
+    return std::move(entries[0]);
+}
+
 // ---------------------------------------------------------------------------
 // Обработка одного файла (R1 или R2)
 // ---------------------------------------------------------------------------
@@ -895,19 +927,7 @@ AnalysisResult processOneFile(const std::string& path,
             });
     }
 
-    std::vector<DuplicationEntry> mergedEntries;
-
-    if (!entries.empty())
-    {
-        mergedEntries = entries[0];
-
-        for (std::size_t i = 1; i < entries.size(); ++i)
-        {
-            mergedEntries = mergeSortedDuplicationEntries(
-                mergedEntries,
-                entries[i]);
-        }
-    }
+    std::vector<DuplicationEntry> mergedEntries = mergeDuplicationEntriesTree(std::move(entries));
 
     QualityStats stats = analyzer.getStats();
 
@@ -1075,33 +1095,9 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
             });
     }
 
-    std::vector<DuplicationEntry> mergedR1;
+    std::vector<DuplicationEntry> mergedR1 = mergeDuplicationEntriesTree(std::move(entriesR1));
 
-    if (!entriesR1.empty())
-    {
-        mergedR1 = entriesR1[0];
-
-        for (std::size_t i = 1; i < entriesR1.size(); ++i)
-        {
-            mergedR1 = mergeSortedDuplicationEntries(
-                mergedR1,
-                entriesR1[i]);
-        }
-    }
-
-    std::vector<DuplicationEntry> mergedR2;
-
-    if (!entriesR2.empty())
-    {
-        mergedR2 = entriesR2[0];
-
-        for (std::size_t i = 1; i < entriesR2.size(); ++i)
-        {
-            mergedR2 = mergeSortedDuplicationEntries(
-                mergedR2,
-                entriesR2[i]);
-        }
-    }
+    std::vector<DuplicationEntry> mergedR2 = mergeDuplicationEntriesTree(std::move(entriesR2));
 
     std::cout << "R1: total reads = "
               << analyzerR1.getTotalReads()
