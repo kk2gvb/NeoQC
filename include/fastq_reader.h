@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <chrono>
 #include <zlib.h>
+#include <vector>
 
 // ---------------------------------------------------------------------------
 // FASTQ-запись
@@ -16,22 +17,21 @@ struct FastqRecord {
     std::uint64_t recordNumber = 0;
 };
 
-struct FastqReaderTiming {
-    std::chrono::nanoseconds readAndDecompress{};
-    std::chrono::nanoseconds validation{};
-};
 
 // ---------------------------------------------------------------------------
 // Читатель FASTQ (поддерживает plain и .gz)
 // ---------------------------------------------------------------------------
 class FastqReader {
 public:
-    explicit FastqReader(const std::string& filename, bool collectTiming = false);
+    FastqReader(const std::string& filename);
     ~FastqReader();
 
     // Читает следующую запись. Возвращает false, если файл закончился.
     // Бросает исключение при ошибках формата или распаковки.
     bool readNext(FastqRecord& record);
+
+    bool readBatch(std::vector<FastqRecord>& batch,
+               std::size_t batchSize);
 
     // Количество прочитанных записей
     std::size_t getReadCount() const;
@@ -39,8 +39,6 @@ public:
     // Имя файла (для сообщений об ошибках)
     const std::string& getFilename() const;
 
-    // Накопленное время чтения/распаковки и проверки структуры FASTQ.
-    const FastqReaderTiming& getTiming() const;
 
 private:
     // Читает одну строку произвольной длины (без \n и \r)
@@ -50,12 +48,7 @@ private:
     // Удаляет \r и \n в конце строки
     static void trimNewlines(std::string& s);
 
-    // Проверяет, что символ — допустимое основание (A/C/G/T/N, регистр не важен)
-    static bool isValidBase(char c);
-
     gzFile fileHandle = nullptr;
     std::string filename;
     std::uint64_t readCount = 0;
-    bool collectTiming = false;
-    FastqReaderTiming timing;
 };

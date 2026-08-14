@@ -16,6 +16,19 @@ struct DuplicationKey {
     bool operator==(const DuplicationKey&) const = default;
 };
 
+struct DuplicationEntry {
+    DuplicationKey key;
+    uint64_t count;
+};
+
+// Перенесно из fastq_reader.h, чтобы выполнять проверку сразу в QualityAnalyzer::processRecord, а не в FastqReader::readNext и не создавать лишние циклы
+struct BaseValidationError {
+    bool found = false;
+    std::size_t recordNumber = 0;
+    std::size_t position = 0;
+    char base = '\0';
+};
+
 struct DuplicationKeyHash {
     std::size_t operator()(const DuplicationKey& key) const noexcept;
 };
@@ -97,7 +110,7 @@ public:
     explicit QualityAnalyzer(ReadDirection direction = ReadDirection::R1);
 
     // Обработка одной FASTQ-записи
-    void processRecord(const FastqRecord& record);
+    BaseValidationError processRecord(const FastqRecord& record);
 
     // Поиск адаптеров в записи
     void analyzeAdapters(const FastqRecord& record);
@@ -107,6 +120,8 @@ public:
 
     // Получить точную статистику по всем уникальным 50-nt префиксам.
     DuplicationStats getDuplicationStats() const;
+
+    DuplicationStats getDuplicationStats(const std::vector<DuplicationEntry>& entries) const;
 
     uint64_t getTotalReads() const { return totalReads; }
 
@@ -126,6 +141,14 @@ public:
     // Кумулятивные счётчики: после обнаружения adapter на позиции значение
     // увеличивается до конца рида, как в FastQC Adapter Content.
     std::vector<std::vector<uint64_t>> adapterPosCounts;
+
+    // -----------------------------------------------------------------------
+    // Объединение статистики с другим анализатором (для параллельной обработки)
+    // -----------------------------------------------------------------------
+    void merge(const QualityAnalyzer& other);
+
+    std::vector<DuplicationEntry> getDuplicationEntries() const;
+    
 
 private:
     // Базовые счётчики

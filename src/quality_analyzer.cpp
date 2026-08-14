@@ -1,6 +1,8 @@
 #include "../include/quality_analyzer.h"
 #include <algorithm>
 #include <cmath>
+#include <iostream>
+#include <utility>
 
 namespace {
 constexpr size_t kAdapterDetectionKmerLength = 12;
@@ -123,12 +125,12 @@ QualityAnalyzer::QualityAnalyzer(ReadDirection direction) {
     adapterPosCounts.resize(adapters.size());
 }
 
-void QualityAnalyzer::processRecord(const FastqRecord& record) {
+BaseValidationError QualityAnalyzer::processRecord(const FastqRecord& record) {
     const std::string& seq = record.sequence;
     const std::string& qual = record.quality;
     size_t len = seq.length();
 
-    if (len == 0) return;
+    if (len == 0) return {};
 
     totalReads++;
     totalLength += len;
@@ -164,6 +166,7 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
     uint64_t readQualSum = 0;
     uint64_t validQualityBases = 0;
     size_t gc = 0;
+    BaseValidationError validationError;
     for (size_t i = 0; i < len; ++i) {
         readsPerPosition[i]++;
         char c = seq[i];
@@ -175,8 +178,18 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
             case 'T': case 't': countT++; totalBases++; baseCountT[i]++; break;
             case 'N': case 'n': countN++; totalBases++; baseCountN[i]++; break;
             default:
-                // Неизвестный символ — считаем как N
-                countN++; totalBases++;
+                // Перенесно из fastq_reader.h, чтобы выполнять проверку сразу в QualityAnalyzer::processRecord,
+                // а не в FastqReader::readNext и не создавать лишние циклы
+                if (!validationError.found)
+                {
+                    validationError.found = true;
+                    validationError.recordNumber = record.recordNumber;
+                    validationError.position = i;
+                    validationError.base = c;
+                }
+
+                countN++;
+                totalBases++;
                 break;
         }
 
@@ -212,6 +225,7 @@ void QualityAnalyzer::processRecord(const FastqRecord& record) {
         perSequenceQualityDistribution[meanQuality]++;
     }
 
+    return validationError;
 }
 
 void QualityAnalyzer::analyzeAdapters(const FastqRecord& record) {
@@ -360,3 +374,206 @@ DuplicationStats QualityAnalyzer::getDuplicationStats() const {
 
     return stats;
 }
+
+DuplicationStats QualityAnalyzer::getDuplicationStats(
+    const std::vector<DuplicationEntry>& entries) const
+{
+    DuplicationStats stats;
+
+    stats.totalReads = totalReads;
+    stats.uniqueSequences = entries.size();
+
+    std::unordered_map<uint64_t, uint64_t> collatedCounts;
+
+    for (const auto& entry : entries)
+    {
+        collatedCounts[entry.count]++;
+    }
+
+    std::array<double, 16> rawByLevel{};
+    std::array<double, 16> deduplicatedByLevel{};
+
+    double rawTotal = 0.0;
+    double deduplicatedTotal = 0.0;
+
+    for (const auto& [level, observations] : collatedCounts)
+    {
+        const double exactCount =
+            static_cast<double>(observations);
+
+        const std::size_t slot = duplicationSlot(level);
+
+        rawByLevel[slot] +=
+            exactCount * static_cast<double>(level);
+
+        deduplicatedByLevel[slot] += exactCount;
+
+        rawTotal +=
+            exactCount * static_cast<double>(level);
+
+        deduplicatedTotal += exactCount;
+    }
+
+    stats.deduplicatedRemainingPercent =
+        rawTotal > 0.0
+            ? 100.0 * deduplicatedTotal / rawTotal
+            : 100.0;
+
+    stats.levels.reserve(kDuplicationLabels.size());
+
+    for (std::size_t i = 0;
+         i < kDuplicationLabels.size();
+         ++i)
+    {
+        stats.levels.push_back({
+            kDuplicationLabels[i],
+            rawTotal > 0.0
+                ? 100.0 * rawByLevel[i] / rawTotal
+                : 0.0,
+            deduplicatedTotal > 0.0
+                ? 100.0 * deduplicatedByLevel[i]
+                    / deduplicatedTotal
+                : 0.0
+        });
+    }
+
+    for (const auto& entry : entries)
+    {
+        const double percent =
+            totalReads > 0
+                ? 100.0 *
+                    static_cast<double>(entry.count) /
+                    static_cast<double>(totalReads)
+                : 0.0;
+
+        if (percent > OVERREPRESENTED_SEQUENCE_THRESHOLD)
+        {
+            stats.overrepresentedSequences.push_back({
+                decodeDuplicationKey(entry.key),
+                entry.count,
+                percent
+            });
+        }
+    }
+
+    std::sort(
+        stats.overrepresentedSequences.begin(),
+        stats.overrepresentedSequences.end(),
+        [](const auto& left, const auto& right)
+        {
+            return left.count != right.count
+                ? left.count > right.count
+                : left.sequence < right.sequence;
+        });
+
+    return stats;
+}
+
+std::vector<DuplicationEntry> QualityAnalyzer::getDuplicationEntries() const
+{
+    std::vector<DuplicationEntry> entries;
+    entries.reserve(sequenceCounts.size());
+
+    for (const auto& [key, count] : sequenceCounts)
+    {
+        entries.push_back({key, count});
+    }
+
+    return entries;
+}
+
+
+void QualityAnalyzer::merge(const QualityAnalyzer& other)
+{
+    // ---------------------------------------------------------------------
+    // Простые счётчики
+    // ---------------------------------------------------------------------
+
+    totalGC += other.totalGC;
+    totalBases += other.totalBases;
+    totalReads += other.totalReads;
+
+    countA += other.countA;
+    countC += other.countC;
+    countG += other.countG;
+    countT += other.countT;
+    countN += other.countN;
+
+    totalLength += other.totalLength;
+
+    q20Count += other.q20Count;
+    q30Count += other.q30Count;
+
+    readsWithAdapter += other.readsWithAdapter;
+
+    minLength = std::min(minLength, other.minLength);
+    maxLength = std::max(maxLength, other.maxLength);
+
+    // ---------------------------------------------------------------------
+    // Вспомогательные функции
+    // ---------------------------------------------------------------------
+
+    auto mergeVector = [](auto& lhs, const auto& rhs)
+    {
+        if (lhs.size() < rhs.size())
+            lhs.resize(rhs.size(), 0);
+
+        for (size_t i = 0; i < rhs.size(); ++i)
+            lhs[i] += rhs[i];
+    };
+
+    // ---------------------------------------------------------------------
+    // Векторы
+    // ---------------------------------------------------------------------
+
+    mergeVector(baseCountA, other.baseCountA);
+    mergeVector(baseCountC, other.baseCountC);
+    mergeVector(baseCountG, other.baseCountG);
+    mergeVector(baseCountT, other.baseCountT);
+    mergeVector(baseCountN, other.baseCountN);
+
+    mergeVector(readsPerPosition, other.readsPerPosition);
+
+    mergeVector(gcDistribution, other.gcDistribution);
+    mergeVector(lengthDistribution, other.lengthDistribution);
+
+    mergeVector(qualitySum, other.qualitySum);
+    mergeVector(qualityCount, other.qualityCount);
+
+    mergeVector(perSequenceQualityDistribution,
+                other.perSequenceQualityDistribution);
+
+    // ---------------------------------------------------------------------
+    // Quality histogram
+    // ---------------------------------------------------------------------
+
+    if (qualityHistogram.size() < other.qualityHistogram.size())
+    {
+        qualityHistogram.resize(other.qualityHistogram.size());
+    }
+
+    for (size_t pos = 0; pos < other.qualityHistogram.size(); ++pos)
+    {
+        for (size_t q = 0; q < 94; ++q)
+        {
+            qualityHistogram[pos][q] += other.qualityHistogram[pos][q];
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Adapter positions
+    // ---------------------------------------------------------------------
+
+    if (adapterPosCounts.size() < other.adapterPosCounts.size())
+    {
+        adapterPosCounts.resize(other.adapterPosCounts.size());
+    }
+
+    for (size_t adapter = 0; adapter < other.adapterPosCounts.size(); ++adapter)
+    {
+        mergeVector(adapterPosCounts[adapter],
+                    other.adapterPosCounts[adapter]);
+    }
+}
+
+    

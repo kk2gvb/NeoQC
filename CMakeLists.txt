@@ -13,6 +13,7 @@ endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native")
 
 find_package(ZLIB REQUIRED)
+find_package(OpenMP REQUIRED)
 
 add_executable(neoqc
     src/main.cpp
@@ -23,7 +24,10 @@ add_executable(neoqc
 )
 
 target_include_directories(neoqc PRIVATE include)
-target_link_libraries(neoqc PRIVATE ZLIB::ZLIB)
+target_link_libraries(neoqc PRIVATE
+    ZLIB::ZLIB
+    OpenMP::OpenMP_CXX
+)
 target_compile_definitions(neoqc PRIVATE
     NEOQC_PLOT_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/scripts/plot_results.py"
 )
@@ -281,3 +285,8 @@ add_test(NAME test_pair_mismatch
                  --sample-id mismatch
                  --out ${TEST_OUT_DIR})
 set_tests_properties(test_pair_mismatch PROPERTIES WILL_FAIL TRUE)
+
+# Test 36. Некорректные символы в последовательности
+add_test(NAME test_invalid_characters
+         COMMAND neoqc --r1 ${TEST_DATA_DIR}/invalid_base.fq --sample-id invalid_chars --out ${TEST_OUT_DIR})
+set_tests_properties(test_invalid_characters PROPERTIES WILL_FAIL TRUE)
