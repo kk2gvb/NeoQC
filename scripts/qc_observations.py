@@ -108,7 +108,7 @@ def _per_base_quality(path: Path, _read: str) -> dict[str, float]:
 
 
 def _per_sequence_quality(path: Path, _read: str) -> dict[str, float]:
-    rows, _ = _read_numeric(path, ("mean_quality", "read_count"))
+    rows, _ = _read_numeric(path, ("mean_quality", "read_count", "read_count_truncate"))
     total = sum(row["read_count"] for row in rows)
     if total <= 0:
         raise ObservationError("per-sequence quality contains no observations")

@@ -202,11 +202,21 @@ def plot_per_base_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
 def plot_per_sequence_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
     x = _values(rows, "mean_quality")
     counts = _values(rows, "read_count")
+    truncate_counts = _values(rows, "read_count_truncate")
     mean, median, mode = _weighted_summary(x, counts)
     total = sum(counts)
     if total <= 0:
         raise PlotDataError("Per sequence quality scores contains no observations")
+    truncate_total = sum(truncate_counts)
+    if truncate_total <= 0:
+        raise PlotDataError(
+            "Per sequence quality scores truncate distribution contains no observations"
+        )
     shares = [count / total * 100.0 for count in counts]
+    truncate_shares = [
+        count / truncate_total * 100.0
+        for count in truncate_counts
+    ]
     fig, ax = plt.subplots(figsize=FIGURE_SIZE)
     setup_axes(
         ax,
@@ -219,12 +229,14 @@ def plot_per_sequence_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
     ax.axvspan(20, 30, color=WARNING, alpha=0.065, linewidth=0)
     ax.axvspan(30, max(x), color=ACCENT, alpha=0.055, linewidth=0)
     ax.fill_between(x, shares, color=ACCENT, alpha=0.18, linewidth=0)
-    ax.plot(x, shares, color=BRAND_DARK, linewidth=2.2, marker="o", markersize=3.2, zorder=3)
-    ax.set_ylim(0, min(100.0, max(shares) * 1.18 + 1.0))
+    ax.plot(x, shares, color=BRAND_DARK, linewidth=2.2, marker="o", markersize=3.2, zorder=3, label="NeoQC (rounded)")
+    ax.plot(x, truncate_shares, color=WARNING, linewidth=1.8, linestyle="--", label="Truncated distribution")
+    ax.set_ylim(0, min(100.0, max(max(shares), max(truncate_shares)) * 1.18 + 1.0))
     ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}%"))
 
     x_padding = max(0.8, (max(x) - min(x)) * 0.018)
     ax.set_xlim(min(x) - x_padding, max(x) + x_padding)
+    ax.legend()
     ax.text(
         0.02,
         0.96,
@@ -239,8 +251,9 @@ def plot_per_sequence_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
     )
     finish_figure(fig)
     return fig, (
-        f"Per sequence quality scores for {read}, shown as normalized percentages; "
-        f"mean Q{mean:.1f}, median Q{median:.1f}, mode Q{mode:.0f}."
+        f"Per sequence quality scores for {read}, shown as normalized "
+        f"percentages; mean Q{mean:.1f}, median Q{median:.1f}, "
+        f"mode Q{mode:.0f}."
     )
 
 
@@ -542,7 +555,7 @@ METRICS: tuple[MetricSpec, ...] = (
         plot_sequence_duplication_levels,
         text_columns=("duplication_level",),
     ),
-    MetricSpec("per_sequence_quality", "per_sequence_quality", "per_sequence_quality", "Per sequence quality scores", ("mean_quality", "read_count"), plot_per_sequence_quality),
+    MetricSpec("per_sequence_quality", "per_sequence_quality", "per_sequence_quality", "Per sequence quality scores", ("mean_quality", "read_count", "read_count_truncate"), plot_per_sequence_quality),
 )
 
 RETIRED_PLOT_PREFIXES = ("quality_distribution",)
