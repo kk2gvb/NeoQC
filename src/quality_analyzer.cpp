@@ -217,13 +217,26 @@ BaseValidationError QualityAnalyzer::processRecord(const FastqRecord& record) {
     gcDistribution[gcPercent]++;
 
     if (validQualityBases > 0) {
+        // С правильным округлением, без обрезки дробной части.
         const auto meanQuality = static_cast<size_t>(std::lround(
             static_cast<double>(readQualSum) / validQualityBases));
+
         if (meanQuality >= perSequenceQualityDistribution.size()) {
             perSequenceQualityDistribution.resize(meanQuality + 1, 0);
         }
+
         perSequenceQualityDistribution[meanQuality]++;
-    }
+
+        // Legacy с обрезкой дробной части, чтобы соответствовать FastQC.
+        const auto meanQualityTruncate =
+            static_cast<size_t>(readQualSum / validQualityBases);
+
+        if (meanQualityTruncate >= perSequenceQualityDistributionTruncate.size()) {
+            perSequenceQualityDistributionTruncate.resize(meanQualityTruncate + 1, 0);
+        }
+
+        perSequenceQualityDistributionTruncate[meanQualityTruncate]++;
+            }
 
     return validationError;
 }
@@ -310,6 +323,7 @@ QualityStats QualityAnalyzer::getStats() const {
     }
 
     stats.perSequenceQualityDistribution = perSequenceQualityDistribution;
+    stats.perSequenceQualityDistributionTruncate = perSequenceQualityDistributionTruncate;
 
     return stats;
 }
@@ -543,6 +557,8 @@ void QualityAnalyzer::merge(const QualityAnalyzer& other)
     mergeVector(perSequenceQualityDistribution,
                 other.perSequenceQualityDistribution);
 
+    mergeVector(perSequenceQualityDistributionTruncate,
+                other.perSequenceQualityDistributionTruncate);
     // ---------------------------------------------------------------------
     // Quality histogram
     // ---------------------------------------------------------------------
