@@ -469,6 +469,7 @@ void writePerBaseNContentTsv(
 
 void writePerSequenceQualityTsv(
     const std::vector<uint64_t>& distribution,
+    const std::vector<uint64_t>& distributionTruncate,
     const std::string& outDir,
     const std::string& readName)
 {
@@ -476,9 +477,26 @@ void writePerSequenceQualityTsv(
     std::ofstream out(path);
     if (!out) throw std::runtime_error("Cannot write to " + path);
 
-    out << "mean_quality\tread_count\n";
-    for (size_t quality = 0; quality < distribution.size(); ++quality) {
-        out << quality << "\t" << distribution[quality] << "\n";
+    out << "mean_quality\tread_count\tread_count_truncate\n";
+   const size_t maxSize = std::max(distribution.size(), distributionTruncate.size());
+
+    for (size_t quality = 0; quality < maxSize; ++quality) {
+        const uint64_t rounded =
+            quality < distribution.size()
+                ? distribution[quality]
+                : 0;
+
+        const uint64_t truncated =
+            quality < distributionTruncate.size()
+                ? distributionTruncate[quality]
+                : 0;
+
+        out << quality
+            << "\t"
+            << rounded
+            << "\t"
+            << truncated
+            << "\n";
     }
 }
 
@@ -722,6 +740,7 @@ void writeAnalysisReports(
 
     writePerSequenceQualityTsv(
         stats.perSequenceQualityDistribution,
+        stats.perSequenceQualityDistributionTruncate,
         outDir,
         readName);
 

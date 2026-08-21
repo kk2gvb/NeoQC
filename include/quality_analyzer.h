@@ -87,6 +87,8 @@ struct QualityStats {
     // Распределение среднего Phred-качества по прочтениям.
     // Индекс = среднее качество прочтения, округлённое до ближайшего целого.
     std::vector<uint64_t> perSequenceQualityDistribution;
+    std::vector<uint64_t> perSequenceQualityDistributionTruncate;
+
 
     std::vector<uint64_t> baseCountA;
     std::vector<uint64_t> baseCountC;
@@ -191,4 +193,6 @@ private:
     std::vector<std::array<uint64_t, 94>> qualityHistogram;
 
     std::vector<uint64_t> perSequenceQualityDistribution;
+    std::vector<uint64_t> perSequenceQualityDistributionTruncate;
+
 };
