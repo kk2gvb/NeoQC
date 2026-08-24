@@ -16,6 +16,8 @@
 #include <ctime>
 #include <algorithm>
 #include <future>
+#include <random>
+#include <sstream>
 
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
@@ -877,7 +879,6 @@ AnalysisResult processOneFile(const std::string& path,
                             const std::string& sampleId,
                             bool skipAdapters) {
     AnalysisResult result;
-    removeRetiredQualityDistributionArtifacts(outDir, readName);
     beginDuplicationArtifacts(outDir, readName, path);
     QualityAnalyzer analyzer;
 
@@ -981,8 +982,6 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
                                 bool skipAdapters)
 {
     AnalysisResult result;
-    removeRetiredQualityDistributionArtifacts(outDir, "R1");
-    removeRetiredQualityDistributionArtifacts(outDir, "R2");
     beginDuplicationArtifacts(outDir, "R1", r1Path);
     beginDuplicationArtifacts(outDir, "R2", r2Path);
     FastqReader readerR1(r1Path);
@@ -1202,6 +1201,171 @@ std::string currentUtcTimestamp() {
     return output.str();
 }
 
+//================================================================================
+// Run ID generation and staging directory creation
+//================================================================================
+
+std::string generateRunId()
+{
+    std::random_device randomDevice;
+    std::mt19937_64 generator(randomDevice());
+    const uint64_t randomValue = generator();
+
+    std::ostringstream output;
+    output << currentUtcTimestamp()
+           << "-"
+           << std::hex
+           << std::setw(16)
+           << std::setfill('0')
+           << randomValue;
+
+    return output.str();
+}
+
+fs::path createStagingDirectory(
+    const fs::path& outputDir,
+    const std::string& runId)
+{
+    const fs::path parent = outputDir.parent_path();
+
+    if (!parent.empty())
+    {
+        std::error_code ec;
+        fs::create_directories(parent, ec);
+
+        if (ec)
+        {
+            throw std::runtime_error(
+                "Cannot create output parent directory '" +
+                parent.string() + "': " +
+                ec.message());
+        }
+    }
+
+    const std::string outputName = outputDir.filename().string();
+
+    if (outputName.empty())
+    {
+        throw std::runtime_error(
+            "Output directory must have a valid directory name");
+    }
+
+    const fs::path stagingDir =
+        parent / ("." + outputName + ".neoqc-tmp-" + runId);
+
+    std::error_code ec;
+    fs::create_directory(stagingDir, ec);
+
+    if (ec)
+    {
+        throw std::runtime_error(
+            "Cannot create staging directory '" +
+            stagingDir.string() + "': " +
+            ec.message());
+    }
+
+    return stagingDir;
+}
+
+void removeStagingDirectory(const fs::path& stagingDir)
+{
+    std::error_code ec;
+    fs::remove_all(stagingDir, ec);
+
+    if (ec)
+    {
+        throw std::runtime_error(
+            "Cannot remove staging directory '" +
+            stagingDir.string() + "': " +
+            ec.message());
+    }
+}
+
+void publishRun(
+    const fs::path& stagingDir,
+    const fs::path& outputDir)
+{
+    const fs::path parent = outputDir.parent_path();
+
+    if (!fs::exists(stagingDir))
+    {
+        throw std::runtime_error(
+            "Staging directory does not exist: " +
+            stagingDir.string());
+    }
+
+    const std::string runId = generateRunId();
+
+    const fs::path backupDir =
+        parent /
+        ("." + outputDir.filename().string() +
+         ".neoqc-backup-" + runId);
+
+    std::error_code ec;
+
+    bool hadPreviousOutput = fs::exists(outputDir);
+
+    if (hadPreviousOutput)
+    {
+        fs::rename(outputDir, backupDir, ec);
+
+        if (ec)
+        {
+            throw std::runtime_error(
+                "Cannot move previous output directory '" +
+                outputDir.string() +
+                "' to backup '" +
+                backupDir.string() +
+                "': " +
+                ec.message());
+        }
+    }
+
+    fs::rename(stagingDir, outputDir, ec);
+
+    if (ec)
+    {
+        if (hadPreviousOutput)
+        {
+            std::error_code restoreError;
+            fs::rename(backupDir, outputDir, restoreError);
+
+            if (restoreError)
+            {
+                throw std::runtime_error(
+                    "Cannot publish new NeoQC result and cannot restore "
+                    "previous output directory. "
+                    "Original publish error: " +
+                    ec.message() +
+                    "; restore error: " +
+                    restoreError.message());
+            }
+        }
+
+        throw std::runtime_error(
+            "Cannot publish NeoQC result '" +
+            stagingDir.string() +
+            "' to '" +
+            outputDir.string() +
+            "': " +
+            ec.message());
+    }
+
+    if (hadPreviousOutput)
+    {
+        std::error_code cleanupError;
+        fs::remove_all(backupDir, cleanupError);
+
+        if (cleanupError)
+        {
+            throw std::runtime_error(
+                "NeoQC result was published successfully, but previous "
+                "output could not be removed: " +
+                cleanupError.message());
+        }
+    }
+}
+
 void writeCaseSummary(const std::string& patientId,
                       const fs::path& caseOutputDir,
                       const std::vector<BatchSampleResult>& results,
@@ -1384,16 +1548,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Создание выходного каталога
-    {
-        std::error_code ec;
-        fs::create_directories(args.outDir, ec);
-        if (ec) {
-            std::cerr << "Error: cannot create output directory '"
-                      << args.outDir << "': " << ec.message() << "\n";
-            return 1;
-        }
-    }
 
     const bool isPaired = !args.r2.empty();
     std::cout << "Sample ID : " << args.sampleId << "\n"
@@ -1403,14 +1557,25 @@ int main(int argc, char* argv[]) {
     std::cout << "Output    : " << args.outDir << "\n";
     if (args.skipAdapters) std::cout << "Adapters  : skipped\n";
 
+    const std::string runId = generateRunId();
+
+    fs::path stagingDir;
+
     try
     {
+        stagingDir = createStagingDirectory(
+            fs::path(args.outDir),
+            runId);
+
+        std::cout << "Run ID    : " << runId << "\n";
+        std::cout << "Staging   : " << stagingDir << "\n";
+
         if (isPaired)
         {
             processPairedFiles(
                 args.r1,
                 args.r2,
-                args.outDir,
+                stagingDir.string(),
                 args.sampleId,
                 args.skipAdapters);
         }
@@ -1419,7 +1584,7 @@ int main(int argc, char* argv[]) {
             processOneFile(
                 args.r1,
                 "R1",
-                args.outDir,
+                stagingDir.string(),
                 args.sampleId,
                 args.skipAdapters);
         }
@@ -1427,16 +1592,88 @@ int main(int argc, char* argv[]) {
     catch (const std::exception& e)
     {
         std::cerr << e.what() << '\n';
+
+        if (!stagingDir.empty())
+        {
+            try
+            {
+                removeStagingDirectory(stagingDir);
+            }
+            catch (const std::exception& cleanupError)
+            {
+                std::cerr
+                    << "Warning: failed to remove staging directory: "
+                    << cleanupError.what()
+                    << '\n';
+            }
+        }
+
         return 1;
     }
 
     // Построение графиков (опционально, через PlotRunner)
-    if (args.plot) {
-        std::string plotDir = args.outDir + "/plots";
-        PlotOptions plotOptions;
-        plotOptions.includeAdapters = !args.skipAdapters;
-        PlotRunner::runAll(args.outDir, plotDir, plotOptions);
+    if (args.plot)
+    {
+        try
+        {
+            const fs::path plotDir = stagingDir / "plots";
+
+            PlotOptions plotOptions;
+            plotOptions.includeAdapters = !args.skipAdapters;
+
+            PlotRunner::runAll(
+                stagingDir.string(),
+                plotDir.string(),
+                plotOptions);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << e.what() << '\n';
+
+            try
+            {
+                removeStagingDirectory(stagingDir);
+            }
+            catch (const std::exception& cleanupError)
+            {
+                std::cerr
+                    << "Warning: failed to remove staging directory: "
+                    << cleanupError.what()
+                    << '\n';
+            }
+
+            return 1;
+        }
     }
+
+    try
+    {
+        publishRun(
+            stagingDir,
+            fs::path(args.outDir));
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << e.what() << '\n';
+
+        if (fs::exists(stagingDir))
+        {
+            try
+            {
+                removeStagingDirectory(stagingDir);
+            }
+            catch (const std::exception& cleanupError)
+            {
+                std::cerr
+                    << "Warning: failed to remove staging directory: "
+                    << cleanupError.what()
+                    << '\n';
+            }
+        }
+
+        return 1;
+    }
+
 
     const auto end = Clock::now();
 
