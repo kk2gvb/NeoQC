@@ -156,7 +156,9 @@ class QcRulesTest(unittest.TestCase):
             ) as temporary:
                 input_dir = Path(temporary)
                 (input_dir / "per_sequence_quality_R1.tsv").write_text(
-                    f"mean_quality\tread_count\n{mode}\t100\n", encoding="utf-8"
+                    "mean_quality\tread_count\tread_count_truncate\n"
+                    f"{mode}\t100\t100\n",
+                    encoding="utf-8",
                 )
                 result = evaluate_directory(input_dir)
                 quality = next(
@@ -165,6 +167,39 @@ class QcRulesTest(unittest.TestCase):
                     if item["metric_id"] == "per_sequence_quality"
                 )
                 self.assertEqual(quality["qc_status"], status)
+
+    def test_per_sequence_quality_prefers_fastqc_compatible_distribution(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-quality-distributions-") as temporary:
+            input_dir = Path(temporary)
+            (input_dir / "per_sequence_quality_R1.tsv").write_text(
+                "mean_quality\tread_count\tread_count_truncate\n"
+                "26\t10\t100\n"
+                "27\t100\t10\n",
+                encoding="utf-8",
+            )
+            result = evaluate_directory(input_dir)
+            quality = next(
+                item
+                for item in result["evaluations"]
+                if item["metric_id"] == "per_sequence_quality"
+            )
+            self.assertEqual(quality["observations"]["modal_mean_quality"], 26)
+            self.assertEqual(quality["qc_status"], "warning")
+
+    def test_legacy_two_column_per_sequence_quality_remains_readable(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-quality-legacy-") as temporary:
+            input_dir = Path(temporary)
+            (input_dir / "per_sequence_quality_R1.tsv").write_text(
+                "mean_quality\tread_count\n27\t100\n", encoding="utf-8"
+            )
+            result = evaluate_directory(input_dir)
+            quality = next(
+                item
+                for item in result["evaluations"]
+                if item["metric_id"] == "per_sequence_quality"
+            )
+            self.assertEqual(quality["observations"]["modal_mean_quality"], 27)
+            self.assertEqual(quality["qc_status"], "pass")
 
     def test_writer_is_atomic_and_cli_is_standalone(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-evaluation-cli-") as temporary:

@@ -202,21 +202,24 @@ def plot_per_base_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
 def plot_per_sequence_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
     x = _values(rows, "mean_quality")
     counts = _values(rows, "read_count")
-    truncate_counts = _values(rows, "read_count_truncate")
+    truncate_counts = (
+        _values(rows, "read_count_truncate")
+        if "read_count_truncate" in rows[0]
+        else None
+    )
     mean, median, mode = _weighted_summary(x, counts)
     total = sum(counts)
     if total <= 0:
         raise PlotDataError("Per sequence quality scores contains no observations")
-    truncate_total = sum(truncate_counts)
-    if truncate_total <= 0:
-        raise PlotDataError(
-            "Per sequence quality scores truncate distribution contains no observations"
-        )
     shares = [count / total * 100.0 for count in counts]
-    truncate_shares = [
-        count / truncate_total * 100.0
-        for count in truncate_counts
-    ]
+    truncate_shares: list[float] | None = None
+    if truncate_counts is not None:
+        truncate_total = sum(truncate_counts)
+        if truncate_total <= 0:
+            raise PlotDataError(
+                "Per sequence quality scores truncate distribution contains no observations"
+            )
+        truncate_shares = [count / truncate_total * 100.0 for count in truncate_counts]
     fig, ax = plt.subplots(figsize=FIGURE_SIZE)
     setup_axes(
         ax,
@@ -229,9 +232,28 @@ def plot_per_sequence_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
     ax.axvspan(20, 30, color=WARNING, alpha=0.065, linewidth=0)
     ax.axvspan(30, max(x), color=ACCENT, alpha=0.055, linewidth=0)
     ax.fill_between(x, shares, color=ACCENT, alpha=0.18, linewidth=0)
-    ax.plot(x, shares, color=BRAND_DARK, linewidth=2.2, marker="o", markersize=3.2, zorder=3, label="NeoQC (rounded)")
-    ax.plot(x, truncate_shares, color=WARNING, linewidth=1.8, linestyle="--", label="Truncated distribution")
-    ax.set_ylim(0, min(100.0, max(max(shares), max(truncate_shares)) * 1.18 + 1.0))
+    ax.plot(
+        x,
+        shares,
+        color=BRAND_DARK,
+        linewidth=2.2,
+        marker="o",
+        markersize=3.2,
+        zorder=3,
+        label="NeoQC (rounded)" if truncate_shares is not None else "Read distribution",
+    )
+    peak = max(shares)
+    if truncate_shares is not None:
+        ax.plot(
+            x,
+            truncate_shares,
+            color=WARNING,
+            linewidth=1.8,
+            linestyle="--",
+            label="FastQC-compatible (truncated)",
+        )
+        peak = max(peak, max(truncate_shares))
+    ax.set_ylim(0, min(100.0, peak * 1.18 + 1.0))
     ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}%"))
 
     x_padding = max(0.8, (max(x) - min(x)) * 0.018)
@@ -555,7 +577,15 @@ METRICS: tuple[MetricSpec, ...] = (
         plot_sequence_duplication_levels,
         text_columns=("duplication_level",),
     ),
-    MetricSpec("per_sequence_quality", "per_sequence_quality", "per_sequence_quality", "Per sequence quality scores", ("mean_quality", "read_count", "read_count_truncate"), plot_per_sequence_quality),
+    MetricSpec(
+        "per_sequence_quality",
+        "per_sequence_quality",
+        "per_sequence_quality",
+        "Per sequence quality scores",
+        ("mean_quality", "read_count"),
+        plot_per_sequence_quality,
+        optional_columns=("read_count_truncate",),
+    ),
 )
 
 RETIRED_PLOT_PREFIXES = ("quality_distribution",)

@@ -40,6 +40,7 @@ def _read_numeric(
     path: Path,
     required: tuple[str, ...],
     *,
+    optional: tuple[str, ...] = (),
     allow_extra: bool = False,
 ) -> tuple[NumericRows, tuple[str, ...]]:
     try:
@@ -59,7 +60,8 @@ def _read_numeric(
                 f"{path.name}: missing required column(s): {', '.join(missing)}"
             )
         if not allow_extra:
-            unexpected = [column for column in columns if column not in required]
+            allowed = required + optional
+            unexpected = [column for column in columns if column not in allowed]
             if unexpected:
                 raise ObservationError(
                     f"{path.name}: unexpected column(s): {', '.join(unexpected)}"
@@ -108,11 +110,18 @@ def _per_base_quality(path: Path, _read: str) -> dict[str, float]:
 
 
 def _per_sequence_quality(path: Path, _read: str) -> dict[str, float]:
-    rows, _ = _read_numeric(path, ("mean_quality", "read_count", "read_count_truncate"))
-    total = sum(row["read_count"] for row in rows)
+    rows, columns = _read_numeric(
+        path,
+        ("mean_quality", "read_count"),
+        optional=("read_count_truncate",),
+    )
+    count_column = (
+        "read_count_truncate" if "read_count_truncate" in columns else "read_count"
+    )
+    total = sum(row[count_column] for row in rows)
     if total <= 0:
         raise ObservationError("per-sequence quality contains no observations")
-    mode = max(rows, key=lambda row: row["read_count"])["mean_quality"]
+    mode = max(rows, key=lambda row: row[count_column])["mean_quality"]
     return {"modal_mean_quality": mode}
 
 

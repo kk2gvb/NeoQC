@@ -34,7 +34,10 @@ FIXTURES = {
         "1\t13.4\t51.5\n2\t10.2\t20.4\n3\t8.1\t10.7\n"
         "4\t6.0\t6.1\n5\t3.8\t3.0\n>10\t14.0\t2.9\n>50\t5.2\t0.3\n"
     ),
-    "per_sequence_quality": "mean_quality\tread_count\n20\t4\n30\t45\n35\t70\n40\t10\n",
+    "per_sequence_quality": (
+        "mean_quality\tread_count\tread_count_truncate\n"
+        "20\t4\t5\n30\t45\t47\n35\t70\t68\n40\t10\t9\n"
+    ),
 }
 
 
