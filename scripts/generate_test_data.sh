@@ -16,13 +16,18 @@ mkdir -p tests/data
 rm -f tests/data/*
 
 
-# 1. Корректный одиночный
-cat > tests/data/correct_single.fq << 'EOF'
-@READ_001
+# 1. Корректный одиночный FASTQ: 10 reads
+: > tests/data/correct_single.fq
+
+for i in $(seq 1 10); do
+    cat >> tests/data/correct_single.fq << EOF
+@READ_$(printf "%03d" "$i")
 AGCTTAGCCATGGCATAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGC
 +
 AAAAFFFFFJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 EOF
+done
+
 gzip -f tests/data/correct_single.fq
 echo "1. Correct single-end FASTQ file generated: tests/data/correct_single.fq.gz"
 
@@ -39,7 +44,7 @@ TGCAAGCTTAGCCATGGCATAGCTAGCTAGCTAGCTAGCTAGCTAGC
 AAAAFFFFFJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 EOF
 gzip -f tests/data/correct_pair_R1.fq
-echo "2.1Correct pair-end FASTQ file generated: tests/data/correct_pair_R1.fq.gz"
+echo "2.1 Correct pair-end FASTQ file generated: tests/data/correct_pair_R1.fq.gz"
 
 cat > tests/data/correct_pair_R2.fq << 'EOF'
 @READ_001/2
@@ -254,9 +259,79 @@ gzip -f tests/data/pair_mismatch_R2.fq
 echo "17. Mismatching pairs generated."
 
 ########################################
-# 18. Medium dataset
+# 18. Invalid quality ASCII 32
 ########################################
-echo "18. Generating medium paired-end dataset..."
+
+python3 - << 'PY'
+from pathlib import Path
+import gzip
+
+path = Path("tests/data/invalid_quality_ascii_32.fq.gz")
+
+with gzip.open(path, "wb") as f:
+    f.write(b"@READ_001\n")
+    f.write(b"ACGT\n")
+    f.write(b"+\n")
+    f.write(bytes([32, 32, 32, 32]) + b"\n")
+PY
+
+echo "18. Invalid quality ASCII 32 generated."
+
+########################################
+# 19. Invalid quality ASCII 127
+########################################
+
+python3 - << 'PY'
+from pathlib import Path
+import gzip
+
+path = Path("tests/data/invalid_quality_ascii_127.fq.gz")
+
+with gzip.open(path, "wb") as f:
+    f.write(b"@READ_001\n")
+    f.write(b"ACGT\n")
+    f.write(b"+\n")
+    f.write(bytes([127, 127, 127, 127]) + b"\n")
+PY
+
+echo "19. Invalid quality ASCII 127 generated."
+
+########################################
+# 20. Invalid base character
+########################################
+
+cat > tests/data/invalid_base.fq << 'EOF'
+@READ_001
+ACGX
++
+IIII
+EOF
+
+echo "20. Invalid base character generated."
+
+########################################
+# 21. Phred+33 boundary values
+########################################
+
+python3 - << 'PY'
+from pathlib import Path
+import gzip
+
+path = Path("tests/data/quality_phred33_boundaries.fq.gz")
+
+with gzip.open(path, "wb") as f:
+    f.write(b"@READ_001\n")
+    f.write(b"ACGT\n")
+    f.write(b"+\n")
+    f.write(bytes([33, 34, 125, 126]) + b"\n")
+PY
+
+echo "21. Phred+33 boundary dataset generated."
+
+########################################
+# 22. Medium dataset
+########################################
+echo "22. Generating medium paired-end dataset..."
 
 python3 scripts/generate_fastq.py \
     --paired \
@@ -267,9 +342,9 @@ python3 scripts/generate_fastq.py \
     --dir tests/data
 
 ########################################
-# 19. Large dataset
+# 23. Large dataset
 ########################################
-echo "19. Generating large paired-end dataset..."
+echo "23. Generating large paired-end dataset..."
 
 python3 scripts/generate_fastq.py \
     --paired \
@@ -280,7 +355,7 @@ python3 scripts/generate_fastq.py \
     --dir tests/data
 
 ########################################
-# 20. Adapter test datasets
+# 24. Adapter test datasets
 ########################################
 
 echo
