@@ -19,6 +19,8 @@
 #include <random>
 #include <sstream>
 
+constexpr const char* NEOQC_VERSION = "1.0.1";
+
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
 
@@ -1366,62 +1368,130 @@ void publishRun(
     }
 }
 
-void writeCaseSummary(const std::string& patientId,
-                      const fs::path& caseOutputDir,
-                      const std::vector<BatchSampleResult>& results,
-                      const std::vector<std::string>& warnings)
+void writeCaseSummary(
+    const std::string& patientId,
+    const fs::path& caseOutputDir,
+    const std::vector<BatchSampleResult>& results,
+    const std::vector<std::string>& warnings)
 {
     bool casePassed = true;
-    for (const auto& result : results) {
-        if (result.entry.patientId == patientId && !result.passed) casePassed = false;
-    }
 
-    const fs::path path = caseOutputDir / "case_summary.json";
-    std::ofstream output(path);
-    if (!output) throw std::runtime_error("Cannot write case summary: " + path.string());
-
-    output << "{\n"
-           << "  \"patient_id\": \"" << jsonEscape(patientId) << "\",\n"
-           << "  \"status\": \"" << (casePassed ? "passed" : "failed") << "\",\n"
-           << "  \"neoqc_version\": \"0.1\",\n"
-           << "  \"run_date\": \"" << currentUtcTimestamp() << "\",\n"
-           << "  \"warnings\": [";
-
-    bool firstWarning = true;
-    for (const auto& warning : warnings) {
-        if (warning.find("Patient " + patientId + ":") == std::string::npos) continue;
-        if (!firstWarning) output << ", ";
-        output << "\"" << jsonEscape(warning) << "\"";
-        firstWarning = false;
-    }
-    output << "],\n  \"samples\": [\n";
-
-    bool firstSample = true;
-    for (const auto& result : results) {
-        if (result.entry.patientId != patientId) continue;
-        if (!firstSample) output << ",\n";
-        firstSample = false;
-
-        const auto& entry = result.entry;
-        output << "    {\n"
-               << "      \"sample_id\": \"" << jsonEscape(entry.sampleId) << "\",\n"
-               << "      \"role\": \"" << jsonEscape(entry.sampleRole) << "\",\n"
-               << "      \"material\": \"" << jsonEscape(entry.material) << "\",\n"
-               << "      \"r1\": \"" << jsonEscape(entry.r1) << "\",\n"
-               << "      \"r2\": \"" << jsonEscape(entry.r2) << "\",\n"
-               << "      \"qc_status\": \"" << (result.passed ? "passed" : "failed") << "\"";
-
-        if (result.passed && result.analysis) {
-            output << ",\n      \"r1_reads\": " << result.analysis->r1Stats.totalReads;
-            if (result.analysis->r2Stats) {
-                output << ",\n      \"r2_reads\": " << result.analysis->r2Stats->totalReads;
-            }
-        } else {
-            output << ",\n      \"qc_error\": \"" << jsonEscape(result.error) << "\"";
+    for (const auto& result : results)
+    {
+        if (result.entry.patientId == patientId &&
+            !result.passed)
+        {
+            casePassed = false;
         }
-        output << "\n    }";
     }
-    output << "\n  ]\n}\n";
+
+    const fs::path path =
+        caseOutputDir / "case_summary.json";
+
+    writeAtomically(path, [&](std::ostream& output)
+    {
+        output << "{\n"
+               << "  \"patient_id\": \""
+               << jsonEscape(patientId)
+               << "\",\n"
+               << "  \"status\": \""
+               << (casePassed ? "passed" : "failed")
+               << "\",\n"
+               << "  \"neoqc_version\": \""
+               << NEOQC_VERSION
+               << "\",\n"
+               << "  \"run_date\": \""
+               << currentUtcTimestamp()
+               << "\",\n"
+               << "  \"warnings\": [";
+
+        bool firstWarning = true;
+
+        for (const auto& warning : warnings)
+        {
+            if (warning.find(
+                    "Patient " + patientId + ":")
+                == std::string::npos)
+            {
+                continue;
+            }
+
+            if (!firstWarning)
+                output << ", ";
+
+            output << "\""
+                   << jsonEscape(warning)
+                   << "\"";
+
+            firstWarning = false;
+        }
+
+        output << "],\n"
+               << "  \"samples\": [\n";
+
+        bool firstSample = true;
+
+        for (const auto& result : results)
+        {
+            if (result.entry.patientId != patientId)
+                continue;
+
+            if (!firstSample)
+                output << ",\n";
+
+            firstSample = false;
+
+            const auto& entry = result.entry;
+
+            output << "    {\n"
+                   << "      \"sample_id\": \""
+                   << jsonEscape(entry.sampleId)
+                   << "\",\n"
+                   << "      \"role\": \""
+                   << jsonEscape(entry.sampleRole)
+                   << "\",\n"
+                   << "      \"material\": \""
+                   << jsonEscape(entry.material)
+                   << "\",\n"
+                   << "      \"r1\": \""
+                   << jsonEscape(entry.r1)
+                   << "\",\n"
+                   << "      \"r2\": \""
+                   << jsonEscape(entry.r2)
+                   << "\",\n"
+                   << "      \"qc_status\": \""
+                   << (result.passed
+                           ? "passed"
+                           : "failed")
+                   << "\"";
+
+            if (result.passed &&
+                result.analysis)
+            {
+                output
+                    << ",\n      \"r1_reads\": "
+                    << result.analysis->r1Stats.totalReads;
+
+                if (result.analysis->r2Stats)
+                {
+                    output
+                        << ",\n      \"r2_reads\": "
+                        << result.analysis->r2Stats->totalReads;
+                }
+            }
+            else
+            {
+                output
+                    << ",\n      \"qc_error\": \""
+                    << jsonEscape(result.error)
+                    << "\"";
+            }
+
+            output << "\n    }";
+        }
+
+        output << "\n  ]\n}\n";
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1517,12 +1587,21 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            for (const auto& entry : entries) {
-                const fs::path caseOutDir = fs::path(args.outDir) / entry.patientId;
-                if (!fs::exists(caseOutDir / "case_summary.json")) {
-                    writeCaseSummary(entry.patientId, caseOutDir, results, warnings);
-                    std::cout << "Case summary: " << (caseOutDir / "case_summary.json") << "\n";
-                }
+            for (const auto& entry : entries)
+            {
+                const fs::path caseOutDir =
+                    fs::path(args.outDir) / entry.patientId;
+
+                writeCaseSummary(
+                    entry.patientId,
+                    caseOutDir,
+                    results,
+                    warnings);
+
+                std::cout
+                    << "Case summary: "
+                    << (caseOutDir / "case_summary.json")
+                    << "\n";
             }
 
             if (!allPassed) {
