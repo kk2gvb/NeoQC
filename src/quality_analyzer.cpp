@@ -1,4 +1,5 @@
 #include "../include/quality_analyzer.h"
+#include "gc_model.h"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -216,6 +217,22 @@ BaseValidationError QualityAnalyzer::processRecord(const FastqRecord& record) {
 
     gcDistribution[gcPercent]++;
 
+    auto it = gcModels.find(len);
+
+    if (it == gcModels.end())
+    {
+        auto model = std::make_unique<GCModel>(len);
+
+        it = gcModels.emplace(len, std::move(model)).first;
+    }
+
+    const auto& modelValues = it->second->getModelValues(gc);
+
+    for (const auto& value : modelValues)
+    {
+        gcDistributionFastQC[value.percentage] += value.weight;
+    }
+    
     if (validQualityBases > 0) {
         // С правильным округлением, без обрезки дробной части.
         const auto meanQuality = static_cast<size_t>(std::lround(
@@ -295,6 +312,7 @@ QualityStats QualityAnalyzer::getStats() const {
     stats.readsPerPosition = readsPerPosition;
 
     stats.gcDistribution = gcDistribution;
+    stats.gcDistributionFastQC = gcDistributionFastQC;
 
     stats.lengthDistribution = lengthDistribution;
 
@@ -549,6 +567,7 @@ void QualityAnalyzer::merge(const QualityAnalyzer& other)
     mergeVector(readsPerPosition, other.readsPerPosition);
 
     mergeVector(gcDistribution, other.gcDistribution);
+    mergeVector(gcDistributionFastQC, other.gcDistributionFastQC);
     mergeVector(lengthDistribution, other.lengthDistribution);
 
     mergeVector(qualitySum, other.qualitySum);

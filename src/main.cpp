@@ -412,6 +412,7 @@ void writePerBaseSequenceContentTsv(const std::vector<uint64_t>& baseCountA,
 
 void writePerSequenceGCContentTsv(
     const std::vector<uint64_t>& gcDistribution,
+    const std::vector<double>& gcDistributionFastQC,
     const std::string& outDir,
     const std::string& readName)
 {
@@ -423,13 +424,23 @@ void writePerSequenceGCContentTsv(
     if (!out)
         throw std::runtime_error("Cannot write to " + path);
 
-    out << "gc_percent\treads\n";
+    out << "gc_percent\traw_read_count\tfastqc_observed_count\n";
 
-    for (size_t i = 0; i < gcDistribution.size(); ++i)
+    for (size_t i = 0; i < 101; ++i)
     {
+        const uint64_t rawCount =
+            i < gcDistribution.size() ? gcDistribution[i] : 0;
+
+        const double fastqcCount =
+            i < gcDistributionFastQC.size()
+                ? gcDistributionFastQC[i]
+                : 0.0;
+
         out << i
             << "\t"
-            << gcDistribution[i]
+            << rawCount
+            << "\t"
+            << fastqcCount
             << "\n";
     }
 }
@@ -759,6 +770,7 @@ void writeAnalysisReports(
 
     writePerSequenceGCContentTsv(
         stats.gcDistribution,
+        stats.gcDistributionFastQC,
         outDir,
         readName);
 

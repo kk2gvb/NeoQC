@@ -21,6 +21,7 @@ add_executable(neoqc
     src/quality_analyzer.cpp
     src/plot_runner.cpp
     src/sample_sheet.cpp
+    src/gc_model.cpp
 )
 
 target_include_directories(neoqc PRIVATE include)
@@ -35,6 +36,7 @@ target_compile_definitions(neoqc PRIVATE
 add_executable(neoqc_duplication_test
     tests/test_quality_analyzer_duplication.cpp
     src/quality_analyzer.cpp
+    src/gc_model.cpp
 )
 target_include_directories(neoqc_duplication_test PRIVATE include)
 

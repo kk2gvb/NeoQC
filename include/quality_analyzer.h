@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <array>
 #include <unordered_map>
+#include <memory>
+#include "gc_model.h"
 #include "fastq_reader.h"
 
 constexpr std::size_t DUPLICATION_PREFIX_LENGTH = 50;
@@ -69,7 +71,13 @@ struct QualityStats {
     uint64_t countT = 0;
     uint64_t countN = 0;
 
+    // Реальное распределение NeoQC:
+    // один read -> один GC bin
     std::vector<uint64_t> gcDistribution;
+
+    // FastQC-compatible observed distribution:
+    // один read может быть распределён между несколькими bins
+    std::vector<double> gcDistributionFastQC;
 
     std::vector<uint64_t> lengthDistribution;
 
@@ -177,7 +185,10 @@ private:
     std::vector<uint64_t> readsPerPosition;
 
     std::vector<uint64_t> gcDistribution = std::vector<uint64_t>(101, 0);
+    std::vector<double> gcDistributionFastQC = std::vector<double>(101, 0.0);
     std::vector<uint64_t> lengthDistribution;
+
+    std::unordered_map<size_t, std::unique_ptr<GCModel>> gcModels;
 
     uint64_t minLength = UINT64_MAX;
     uint64_t maxLength = 0;
