@@ -352,17 +352,41 @@ def plot_base_content(rows: Rows, read: str) -> tuple[plt.Figure, str]:
 def plot_gc_content(rows: Rows, read: str) -> tuple[plt.Figure, str]:
     x = _values(rows, "gc_percent")
     _ensure_range(x, "GC percentage", 0, 100)
-    counts = _values(rows, "reads")
-    mean, median, mode = _weighted_summary(x, counts)
-    theoretical_x, theoretical, theoretical_centre, deviation = fastqc_theoretical_gc(x, counts)
+
+    observed_counts = _values(rows, "raw_read_count")
+    fastqc_counts = _values(rows, "fastqc_observed_count")
+
+    mean, median, mode = _weighted_summary(x, observed_counts)
+
+    theoretical_x, theoretical, theoretical_centre, deviation = fastqc_theoretical_gc(
+        x,
+        fastqc_counts,
+    )
     fig, ax = plt.subplots(figsize=FIGURE_SIZE)
     setup_axes(ax, "Per sequence GC content", "GC content (%)", "Reads", read)
-    ax.fill_between(x, counts, color=ACCENT, alpha=0.20, linewidth=0)
-    ax.plot(x, counts, color=BRAND_DARK, linewidth=2.2, label="Observed")
+    # FastQC-compatible observed distribution
+    ax.plot(
+        x,
+        fastqc_counts,
+        color='red',
+        linewidth=2.2,
+        label="Observed (FastQC-compatible)",
+    )
+
+    # Raw observed distribution
+    ax.scatter(
+        x,
+        observed_counts,
+        marker='x',
+        color='green',
+        s=18,
+        label="Raw observed",
+        zorder=3,
+    )
     ax.plot(
         theoretical_x,
         theoretical,
-        color=WARNING,
+        color='dodgerblue',
         linewidth=2.0,
         linestyle="--",
         label="Theoretical distribution",
@@ -565,7 +589,14 @@ METRICS: tuple[MetricSpec, ...] = (
     ),
     MetricSpec("adapter_content", "adapter_content", "adapter_content", "Adapter content", ("pos",), plot_adapter_content, adapters_only=True, variable_series=True),
     MetricSpec("per_base_sequence_content", "per_base_sequence_content", "per_base_sequence_content", "Per base sequence content", ("position", "A", "C", "G", "T", "N"), plot_base_content),
-    MetricSpec("per_sequence_gc_content", "per_sequence_gc_content", "per_sequence_gc_content", "Per sequence GC content", ("gc_percent", "reads"), plot_gc_content),
+    MetricSpec(
+        "per_sequence_gc_content",
+        "per_sequence_gc_content",
+        "per_sequence_gc_content",
+        "Per sequence GC content",
+        ("gc_percent", "raw_read_count", "fastqc_observed_count"),
+        plot_gc_content,
+    ),
     MetricSpec("per_base_n_content", "per_base_n_content", "per_base_n_content", "Per base N content", ("position", "N_percent"), plot_n_content),
     MetricSpec("sequence_length_distribution", "sequence_length_distribution", "sequence_length_distribution", "Sequence length distribution", ("length", "reads"), plot_length_distribution),
     MetricSpec(

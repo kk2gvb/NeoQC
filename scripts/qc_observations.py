@@ -186,11 +186,16 @@ def modeled_gc_deviation(x: list[float], counts: list[float]) -> float:
 
 
 def _gc_content(path: Path, _read: str) -> dict[str, float]:
-    rows, _ = _read_numeric(path, ("gc_percent", "reads"))
+    rows, _ = _read_numeric(
+        path,
+        ("gc_percent", "raw_read_count", "fastqc_observed_count"),
+    )
+
     deviation = modeled_gc_deviation(
         [row["gc_percent"] for row in rows],
-        [row["reads"] for row in rows],
+        [row["fastqc_observed_count"] for row in rows],
     )
+
     return {"modeled_deviation_percent": deviation}
 
 
