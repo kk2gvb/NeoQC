@@ -318,38 +318,50 @@ void writeSummaryTxt(const QualityStats& stats,
 
 }
 
-void writePerCycleQualityTsv(const std::vector<double>& meanQuality,
-                             const std::vector<double>& lowerQuartile,
-                             const std::vector<double>& median,
-                             const std::string& outDir,
-                             const std::string& readName)
+void writePerCycleQualityTsv(
+    const std::string& outDir,
+    const std::vector<PerBaseQualityGroup>& groups,
+    const std::string& filename)
 {
-    std::string path = outDir + "/per_cycle_" + readName + ".tsv";
-
+    std::string path = outDir + "/per_cycle_" + filename + ".tsv";
     std::ofstream out(path);
 
-    if (!out)
-        throw std::runtime_error("Cannot write to " + path);
-
-    if (lowerQuartile.size() != meanQuality.size() ||
-        median.size() != meanQuality.size()) {
-        throw std::runtime_error("Per-cycle quality vectors have different sizes");
+    if (!out) {
+        throw std::runtime_error(
+            "Failed to open per-cycle quality output: " + path);
     }
 
     out << "cycle\tmean_quality\tlower_quartile\tmedian\n";
 
-    for (size_t i = 0; i < meanQuality.size(); ++i)
-    {
-        out << (i + 1)
-            << "\t"
-            << std::fixed
-            << std::setprecision(4)
-            << meanQuality[i]
-            << "\t"
-            << lowerQuartile[i]
-            << "\t"
-            << median[i]
-            << "\n";
+    for (const auto& group : groups) {
+
+        if (group.start == group.end) {
+            out << group.start;
+        }
+        else {
+            out << group.start
+                << '-'
+                << group.end;
+        }
+
+        out << '\t';
+
+        if (group.evaluated) {
+            out << group.mean << '\t'
+                << group.lowerQuartile << '\t'
+                << group.median;
+        }
+        else {
+            /*
+             * Mean может существовать, но percentile
+             * недостаточно надёжны для оценки.
+             */
+            out << group.mean << '\t'
+                << "nan\t"
+                << "nan";
+        }
+
+        out << '\n';
     }
 }
 
@@ -747,10 +759,8 @@ void writeAnalysisReports(
         skipAdapters);
 
     writePerCycleQualityTsv(
-        stats.meanQualityPerPosition,
-        stats.lowerQuartileQualityPerPosition,
-        stats.medianQualityPerPosition,
         outDir,
+        stats.perBaseQualityGroups,
         readName);
 
     writePerSequenceQualityTsv(

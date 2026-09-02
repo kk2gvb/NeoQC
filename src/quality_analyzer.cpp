@@ -86,6 +86,109 @@ double qualityQuantile(const std::array<uint64_t, 94>& histogram,
     }
     return static_cast<double>(histogram.size() - 1);
 }
+
+struct BaseGroup {
+    std::size_t start;
+    std::size_t end;
+};
+
+std::size_t getLinearInterval(std::size_t length)
+{
+    constexpr std::array<std::size_t, 3> baseValues = {
+        2, 5, 10
+    };
+
+    std::size_t multiplier = 1;
+
+    while (true) {
+        for (const auto base : baseValues) {
+            const std::size_t interval = base * multiplier;
+
+            std::size_t groupCount =
+                9 + ((length - 9) / interval);
+
+            if ((length - 9) % interval != 0) {
+                ++groupCount;
+            }
+
+            if (groupCount < 75) {
+                return interval;
+            }
+        }
+
+        multiplier *= 10;
+    }
+}
+
+std::vector<BaseGroup> makeBaseGroups(std::size_t maxLength)
+{
+    std::vector<BaseGroup> groups;
+
+    if (maxLength == 0) {
+        return groups;
+    }
+
+    if (maxLength <= 75) {
+        groups.reserve(maxLength);
+
+        for (std::size_t position = 1;
+             position <= maxLength;
+             ++position)
+        {
+            groups.push_back({
+                position,
+                position
+            });
+        }
+
+        return groups;
+    }
+
+    const std::size_t interval =
+        getLinearInterval(maxLength);
+
+    std::size_t startingBase = 1;
+
+    while (startingBase <= maxLength) {
+
+        std::size_t endBase =
+            startingBase + interval - 1;
+
+        if (startingBase < 10) {
+            endBase = startingBase;
+        }
+
+        if (startingBase == 10 &&
+            interval > 10)
+        {
+            endBase = interval - 1;
+        }
+
+        if (endBase > maxLength) {
+            endBase = maxLength;
+        }
+
+        groups.push_back({
+            startingBase,
+            endBase
+        });
+
+        if (startingBase < 10) {
+            ++startingBase;
+        }
+        else if (startingBase == 10 &&
+                 interval > 10)
+        {
+            startingBase = interval;
+        }
+        else {
+            startingBase += interval;
+        }
+    }
+
+    return groups;
+}
+
 }
 
 std::size_t DuplicationKeyHash::operator()(const DuplicationKey& key) const noexcept {
@@ -322,22 +425,82 @@ QualityStats QualityAnalyzer::getStats() const {
     stats.percentQ30 = (totalBases > 0) ? static_cast<double>(q30Count) / totalBases * 100.0 : 0.0;
     stats.percentWithAdapter = (totalReads > 0) ? static_cast<double>(readsWithAdapter) / totalReads * 100.0 : 0.0;
 
-    // Качество по позициям
-    stats.meanQualityPerPosition.resize(maxLength);
-    stats.lowerQuartileQualityPerPosition.resize(maxLength);
-    stats.medianQualityPerPosition.resize(maxLength);
-    for (size_t i = 0; i < maxLength; ++i) {
-        if (i < qualityCount.size() && qualityCount[i] > 0) {
-            stats.meanQualityPerPosition[i] = static_cast<double>(qualitySum[i]) / qualityCount[i];
-            stats.lowerQuartileQualityPerPosition[i] = qualityQuantile(
-                qualityHistogram[i], qualityCount[i], 0.25);
-            stats.medianQualityPerPosition[i] = qualityQuantile(
-                qualityHistogram[i], qualityCount[i], 0.50);
-        } else {
-            stats.meanQualityPerPosition[i] = 0.0;
-            stats.lowerQuartileQualityPerPosition[i] = 0.0;
-            stats.medianQualityPerPosition[i] = 0.0;
+    const auto groups = makeBaseGroups(maxLength);
+
+    stats.perBaseQualityGroups.reserve(groups.size());
+
+    for (const auto& group : groups) {
+        PerBaseQualityGroup result;
+
+        result.start = group.start;
+        result.end = group.end;
+
+        double meanTotal = 0.0;
+        std::size_t meanCount = 0;
+
+        double lowerQuartileTotal = 0.0;
+        double medianTotal = 0.0;
+        std::size_t percentileCount = 0;
+
+        for (std::size_t position = group.start;
+            position <= group.end;
+            ++position)
+        {
+            const std::size_t index = position - 1;
+
+            if (index >= qualityCount.size()) {
+                continue;
+            }
+
+            /*
+            * Mean quality FastQC считает при наличии
+            * хотя бы одного наблюдения.
+            */
+            if (qualityCount[index] > 0) {
+                meanTotal +=
+                    static_cast<double>(qualitySum[index]) /
+                    static_cast<double>(qualityCount[index]);
+
+                ++meanCount;
+            }
+
+            /*
+            * Quartile и median FastQC считает только
+            * при количестве наблюдений > 100.
+            */
+            if (qualityCount[index] > 100) {
+                lowerQuartileTotal += qualityQuantile(
+                    qualityHistogram[index],
+                    qualityCount[index],
+                    0.25);
+
+                medianTotal += qualityQuantile(
+                    qualityHistogram[index],
+                    qualityCount[index],
+                    0.50);
+
+                ++percentileCount;
+            }
         }
+
+        if (meanCount > 0) {
+            result.mean =
+                meanTotal / static_cast<double>(meanCount);
+        }
+
+        if (percentileCount > 0) {
+            result.lowerQuartile =
+                lowerQuartileTotal /
+                static_cast<double>(percentileCount);
+
+            result.median =
+                medianTotal /
+                static_cast<double>(percentileCount);
+
+            result.evaluated = true;
+        }
+
+        stats.perBaseQualityGroups.push_back(result);
     }
 
     stats.perSequenceQualityDistribution = perSequenceQualityDistribution;

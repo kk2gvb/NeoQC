@@ -55,6 +55,17 @@ struct DuplicationStats {
     double deduplicatedRemainingPercent = 100.0;
 };
 
+struct PerBaseQualityGroup {
+    std::size_t start = 0;
+    std::size_t end = 0;
+
+    double mean = 0.0;
+    double lowerQuartile = 0.0;
+    double median = 0.0;
+
+    bool evaluated = false;
+};
+
 // ---------------------------------------------------------------------------
 // Структура результатов анализа
 // ---------------------------------------------------------------------------
@@ -87,11 +98,9 @@ struct QualityStats {
     double percentQ30 = 0.0;
     double percentWithAdapter = 0.0;
 
-    // Качество по позициям (среднее Phred-значение на каждой позиции)
-    std::vector<double> meanQualityPerPosition;
-    std::vector<double> lowerQuartileQualityPerPosition;
-    std::vector<double> medianQualityPerPosition;
-
+    // Качество по группам позиций по семантике FastQC BaseGroup.
+    std::vector<PerBaseQualityGroup> perBaseQualityGroups;
+    
     // Распределение среднего Phred-качества по прочтениям.
     // Индекс = среднее качество прочтения, округлённое до ближайшего целого.
     std::vector<uint64_t> perSequenceQualityDistribution;
