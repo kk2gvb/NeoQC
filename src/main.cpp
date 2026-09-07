@@ -49,6 +49,22 @@ struct Args {
     bool        skipAdapters = false;
 };
 
+struct RunManifest
+{
+    std::string runId;
+    std::string createdAt;
+    std::string sampleId;
+
+    bool paired = false;
+    bool plot = false;
+    bool skipAdapters = false;
+
+    std::string r1Path;
+    std::optional<std::string> r2Path;
+
+    std::vector<std::string> artifacts;
+};
+
 Args parseArgs(int argc, char* argv[]) {
     Args args;
     for (int i = 1; i < argc; ++i) {
@@ -1212,6 +1228,150 @@ std::string jsonEscape(const std::string& value) {
     return escaped;
 }
 
+std::vector<std::string> collectArtifacts(
+    const fs::path& directory)
+{
+    std::vector<std::string> artifacts;
+
+    if (!fs::exists(directory))
+    {
+        return artifacts;
+    }
+
+    for (const auto& entry :
+         fs::recursive_directory_iterator(directory))
+    {
+        if (!entry.is_regular_file())
+        {
+            continue;
+        }
+        if (entry.path().filename() == "run_manifest.json")
+        {
+            continue;
+        }
+        artifacts.push_back(
+            fs::relative(
+                entry.path(),
+                directory
+            ).generic_string());
+    }
+
+    std::sort(
+        artifacts.begin(),
+        artifacts.end());
+
+    return artifacts;
+}
+
+void writeRunManifest(
+    const fs::path& outputDir,
+    const RunManifest& manifest)
+{
+    const fs::path manifestPath =
+        outputDir / "run_manifest.json";
+
+    const std::vector<std::string> artifacts =
+        collectArtifacts(outputDir);
+
+    std::ofstream output(manifestPath);
+
+    if (!output)
+    {
+        throw std::runtime_error(
+            "Cannot write run manifest: " +
+            manifestPath.string());
+    }
+
+    output << "{\n";
+    output << "  \"schema_version\": 1,\n";
+
+    output << "  \"run_id\": \""
+           << jsonEscape(manifest.runId)
+           << "\",\n";
+
+    output << "  \"created_at\": \""
+           << jsonEscape(manifest.createdAt)
+           << "\",\n";
+
+    output << "  \"neoqc_version\": \""
+           << NEOQC_VERSION
+           << "\",\n";
+
+    output << "  \"run\": {\n";
+
+    output << "    \"sample_id\": \""
+           << jsonEscape(manifest.sampleId)
+           << "\",\n";
+
+    output << "    \"mode\": \""
+           << (manifest.paired
+               ? "paired-end"
+               : "single-end")
+           << "\",\n";
+
+    output << "    \"plot\": "
+           << (manifest.plot ? "true" : "false")
+           << ",\n";
+
+    output << "    \"skip_adapters\": "
+           << (manifest.skipAdapters
+               ? "true"
+               : "false")
+           << "\n";
+
+    output << "  },\n";
+
+    output << "  \"reads\": [";
+
+    output << "\"R1\"";
+
+    if (manifest.paired)
+    {
+        output << ", \"R2\"";
+    }
+
+    output << "],\n";
+
+    output << "  \"inputs\": {\n";
+
+    output << "    \"R1\": \""
+           << jsonEscape(manifest.r1Path)
+           << "\"";
+
+    if (manifest.r2Path)
+    {
+        output << ",\n";
+
+        output << "    \"R2\": \""
+               << jsonEscape(*manifest.r2Path)
+               << "\"";
+    }
+
+    output << "\n";
+    output << "  },\n";
+
+    output << "  \"artifacts\": [\n";
+
+    for (std::size_t i = 0;
+         i < artifacts.size();
+         ++i)
+    {
+        output << "    \""
+               << jsonEscape(artifacts[i])
+               << "\"";
+
+        if (i + 1 < artifacts.size())
+        {
+            output << ",";
+        }
+
+        output << "\n";
+    }
+
+    output << "  ]\n";
+    output << "}\n";
+}
+
 std::string currentUtcTimestamp() {
     const std::time_t now = std::time(nullptr);
     std::tm timeInfo{};
@@ -1661,6 +1821,7 @@ int main(int argc, char* argv[]) {
     const std::string runId = generateRunId();
 
     fs::path stagingDir;
+    RunManifest manifest;
 
     try
     {
@@ -1689,6 +1850,23 @@ int main(int argc, char* argv[]) {
                 args.sampleId,
                 args.skipAdapters);
         }
+
+        manifest = RunManifest{
+            .runId = runId,
+            .createdAt = currentUtcTimestamp(),
+            .sampleId = args.sampleId,
+            .paired = isPaired,
+            .plot = args.plot,
+            .skipAdapters = args.skipAdapters,
+            .r1Path = args.r1,
+            .r2Path = args.r2.empty()
+                ? std::nullopt
+                : std::optional<std::string>(args.r2)
+        };
+
+        writeRunManifest(
+            stagingDir,
+            manifest);
     }
     catch (const std::exception& e)
     {
@@ -1746,6 +1924,10 @@ int main(int argc, char* argv[]) {
             return 1;
         }
     }
+
+    writeRunManifest(
+        stagingDir,
+        manifest);
 
     try
     {

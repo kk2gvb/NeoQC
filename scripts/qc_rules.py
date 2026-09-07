@@ -229,12 +229,76 @@ def _checks(rule: MetricRule) -> list[dict[str, object]]:
     return result
 
 
-def _active_reads(input_dir: Path, ruleset: Ruleset) -> tuple[str, ...]:
-    return tuple(
-        read
-        for read in ("R1", "R2")
-        if any(source_path(input_dir, rule.metric_id, read).is_file() for rule in ruleset.rules)
-    )
+def _manifest_active_reads(input_dir: Path) -> list[str]:
+    manifest_path = input_dir / "run_manifest.json"
+
+    if not manifest_path.is_file():
+        raise ObservationError(
+            f"Run manifest is missing: {manifest_path}"
+        )
+
+    try:
+        with manifest_path.open(
+            "r",
+            encoding="utf-8",
+        ) as handle:
+            manifest = json.load(handle)
+    except json.JSONDecodeError as exc:
+        raise ObservationError(
+            f"Invalid run manifest: {manifest_path}: {exc}"
+        ) from exc
+
+    reads = manifest.get("reads")
+
+    if not isinstance(reads, list):
+        raise ObservationError(
+            f"Run manifest field 'reads' must be a list: "
+            f"{manifest_path}"
+        )
+
+    valid_reads = {"R1", "R2"}
+
+    if not reads:
+        raise ObservationError(
+            f"Run manifest contains no active reads: "
+            f"{manifest_path}"
+        )
+
+    if any(
+        not isinstance(read, str) or read not in valid_reads
+        for read in reads
+    ):
+        raise ObservationError(
+            f"Run manifest contains invalid reads: "
+            f"{manifest_path}"
+        )
+
+    if len(set(reads)) != len(reads):
+        raise ObservationError(
+            f"Run manifest contains duplicate reads: "
+            f"{manifest_path}"
+        )
+
+    if reads[0] != "R1":
+        raise ObservationError(
+            f"Run manifest must start with R1: "
+            f"{manifest_path}"
+        )
+
+    if reads not in (["R1"], ["R1", "R2"]):
+        raise ObservationError(
+            f"Unsupported read configuration in run manifest: "
+            f"{reads}"
+        )
+
+    return reads
+
+
+def _active_reads(
+    input_dir: Path,
+    ruleset: dict,
+) -> list[str]:
+    return _manifest_active_reads(input_dir)
 
 
 def evaluate_directory(input_dir: Path, ruleset_path: Path = DEFAULT_RULESET) -> dict[str, object]:
