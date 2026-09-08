@@ -13,6 +13,7 @@ from typing import Mapping
 
 from qc_observations import EXTRACTORS, ObservationError, extract_observations, source_path
 
+MANIFEST_FILENAME = "run_manifest.json"
 
 DEFAULT_RULESET = (
     Path(__file__).resolve().parents[1]
@@ -229,75 +230,46 @@ def _checks(rule: MetricRule) -> list[dict[str, object]]:
     return result
 
 
-def _manifest_active_reads(input_dir: Path) -> list[str]:
+def _manifest_active_reads(input_dir: Path) -> tuple[str, ...]:
     manifest_path = input_dir / "run_manifest.json"
 
     if not manifest_path.is_file():
-        raise ObservationError(
+        raise QcRuleError(
             f"Run manifest is missing: {manifest_path}"
         )
 
     try:
-        with manifest_path.open(
-            "r",
-            encoding="utf-8",
-        ) as handle:
+        with manifest_path.open("r", encoding="utf-8") as handle:
             manifest = json.load(handle)
     except json.JSONDecodeError as exc:
-        raise ObservationError(
+        raise QcRuleError(
             f"Invalid run manifest: {manifest_path}: {exc}"
+        ) from exc
+    except OSError as exc:
+        raise QcRuleError(
+            f"Cannot read run manifest: {manifest_path}: {exc}"
         ) from exc
 
     reads = manifest.get("reads")
 
     if not isinstance(reads, list):
-        raise ObservationError(
-            f"Run manifest field 'reads' must be a list: "
-            f"{manifest_path}"
-        )
-
-    valid_reads = {"R1", "R2"}
-
-    if not reads:
-        raise ObservationError(
-            f"Run manifest contains no active reads: "
-            f"{manifest_path}"
-        )
-
-    if any(
-        not isinstance(read, str) or read not in valid_reads
-        for read in reads
-    ):
-        raise ObservationError(
-            f"Run manifest contains invalid reads: "
-            f"{manifest_path}"
-        )
-
-    if len(set(reads)) != len(reads):
-        raise ObservationError(
-            f"Run manifest contains duplicate reads: "
-            f"{manifest_path}"
-        )
-
-    if reads[0] != "R1":
-        raise ObservationError(
-            f"Run manifest must start with R1: "
-            f"{manifest_path}"
+        raise QcRuleError(
+            f"Run manifest field 'reads' must be a list: {manifest_path}"
         )
 
     if reads not in (["R1"], ["R1", "R2"]):
-        raise ObservationError(
-            f"Unsupported read configuration in run manifest: "
-            f"{reads}"
+        raise QcRuleError(
+            f"Unsupported read configuration in run manifest: {reads}"
         )
 
-    return reads
+    return tuple(reads)
 
 
 def _active_reads(
     input_dir: Path,
-    ruleset: dict,
-) -> list[str]:
+    ruleset: Ruleset,
+) -> tuple[str, ...]:
+    del ruleset
     return _manifest_active_reads(input_dir)
 
 
@@ -305,8 +277,7 @@ def evaluate_directory(input_dir: Path, ruleset_path: Path = DEFAULT_RULESET) ->
     input_dir = input_dir.resolve()
     ruleset = load_ruleset(ruleset_path.resolve())
     reads = _active_reads(input_dir, ruleset)
-    if not reads:
-        raise QcRuleError(f"no recognized NeoQC TSV files found in {input_dir}")
+    
     evaluations: list[dict[str, object]] = []
     for read in reads:
         for rule in ruleset.rules:

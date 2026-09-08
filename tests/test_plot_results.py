@@ -43,6 +43,11 @@ FIXTURES = {
 
 def write_fixture_set(directory: Path, reads: tuple[str, ...] = ("R1", "R2")) -> None:
     directory.mkdir(parents=True, exist_ok=True)
+
+    (directory / "run_manifest.json").write_text(
+        json.dumps({"reads": list(reads)}),
+        encoding="utf-8",
+    )
     for read in reads:
         for prefix, content in FIXTURES.items():
             (directory / f"{prefix}_{read}.tsv").write_text(content, encoding="utf-8")

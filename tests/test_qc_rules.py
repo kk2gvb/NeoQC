@@ -37,6 +37,16 @@ class QcRulesTest(unittest.TestCase):
             encoding="utf-8",
         )
 
+    @staticmethod
+    def write_manifest(
+        directory: Path,
+        reads: tuple[str, ...] = ("R1",),
+    ) -> None:
+        (directory / "run_manifest.json").write_text(
+            json.dumps({"reads": list(reads)}),
+            encoding="utf-8",
+        )
+
     def test_complete_fixture_produces_explainable_statuses(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-rules-") as temporary:
             input_dir = Path(temporary)
@@ -60,9 +70,49 @@ class QcRulesTest(unittest.TestCase):
             self.assertIn("threshold", duplication["reasons"][0])
             self.assertEqual(result["summary"]["overall_status"], "fail")
 
+    def test_manifest_ignores_stale_r2_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-stale-r2-") as temporary:
+            input_dir = Path(temporary)
+
+            (input_dir / "run_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "reads": ["R1"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            # Current R1 artifact.
+            (input_dir / "per_sequence_quality_R1.tsv").write_text(
+                "mean_quality\tread_count\n"
+                "35\t100\n",
+                encoding="utf-8",
+            )
+
+            # Stale artifact left from a previous paired-end run.
+            (input_dir / "per_sequence_quality_R2.tsv").write_text(
+                "mean_quality\tread_count\n"
+                "35\t100\n",
+                encoding="utf-8",
+            )
+
+            result = evaluate_directory(input_dir)
+
+            self.assertEqual(result["reads"], ["R1"])
+
+            evaluated_reads = {
+                evaluation["read"]
+                for evaluation in result["evaluations"]
+            }
+
+            self.assertEqual(evaluated_reads, {"R1"})
+
     def test_old_mean_only_quality_tsv_is_not_evaluated(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-old-quality-") as temporary:
             input_dir = Path(temporary)
+            self.write_manifest(input_dir)
+
             (input_dir / "per_cycle_R1.tsv").write_text(
                 "cycle\tmean_quality\n1\t35\n2\t34\n", encoding="utf-8"
             )
@@ -78,6 +128,8 @@ class QcRulesTest(unittest.TestCase):
     def test_native_duplication_summary_supports_profiles_without_level_one(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-native-duplication-") as temporary:
             input_dir = Path(temporary)
+            self.write_manifest(input_dir)
+
             (input_dir / "sequence_duplication_levels_R1.tsv").write_text(
                 "duplication_level\ttotal_sequences_percent\t"
                 "deduplicated_sequences_percent\n"
@@ -100,6 +152,8 @@ class QcRulesTest(unittest.TestCase):
     def test_incomplete_native_duplication_transaction_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-incomplete-duplication-") as temporary:
             input_dir = Path(temporary)
+            self.write_manifest(input_dir)
+
             (input_dir / "sequence_duplication_levels_R1.tsv").write_text(
                 "duplication_level\ttotal_sequences_percent\t"
                 "deduplicated_sequences_percent\n1\t100\t100\n",
@@ -122,6 +176,8 @@ class QcRulesTest(unittest.TestCase):
     def test_bounded_prototype_summary_remains_readable(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-bounded-compatibility-") as temporary:
             input_dir = Path(temporary)
+            self.write_manifest(input_dir)
+
             (input_dir / "sequence_duplication_levels_R1.tsv").write_text(
                 "duplication_level\ttotal_sequences_percent\t"
                 "deduplicated_sequences_percent\n1\t50\t100\n2\t50\t0\n",
@@ -155,6 +211,8 @@ class QcRulesTest(unittest.TestCase):
                 prefix="neoqc-boundary-"
             ) as temporary:
                 input_dir = Path(temporary)
+                self.write_manifest(input_dir)
+
                 (input_dir / "per_sequence_quality_R1.tsv").write_text(
                     "mean_quality\tread_count\tread_count_truncate\n"
                     f"{mode}\t100\t100\n",
@@ -171,6 +229,8 @@ class QcRulesTest(unittest.TestCase):
     def test_per_sequence_quality_prefers_fastqc_compatible_distribution(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-quality-distributions-") as temporary:
             input_dir = Path(temporary)
+            self.write_manifest(input_dir)
+
             (input_dir / "per_sequence_quality_R1.tsv").write_text(
                 "mean_quality\tread_count\tread_count_truncate\n"
                 "26\t10\t100\n"
@@ -189,6 +249,8 @@ class QcRulesTest(unittest.TestCase):
     def test_legacy_two_column_per_sequence_quality_remains_readable(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-quality-legacy-") as temporary:
             input_dir = Path(temporary)
+            self.write_manifest(input_dir)
+            
             (input_dir / "per_sequence_quality_R1.tsv").write_text(
                 "mean_quality\tread_count\n27\t100\n", encoding="utf-8"
             )
@@ -204,6 +266,8 @@ class QcRulesTest(unittest.TestCase):
     def test_writer_is_atomic_and_cli_is_standalone(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-evaluation-cli-") as temporary:
             input_dir = Path(temporary)
+            self.write_manifest(input_dir)
+
             write_fixture_set(input_dir, ("R1",))
             output = input_dir / "custom evaluation.json"
             output.write_text("old", encoding="utf-8")
