@@ -209,15 +209,19 @@ QualityAnalyzer::QualityAnalyzer(ReadDirection direction) {
         adapters = {
             {"TruSeq_R1", "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA", ""},
             {"SmallRNA3'", "TGGAATTCTCGGGTGCCAAGG", ""},
-            {"SmallRNA5'", "GTTCAGAGTTCTACAGTCCGACGATC", ""},
-            {"Nextera", "CTGTCTCTTATACACATCT", ""}
+            {"SmallRNA5'", "GATCGTCGGACTGTAGAACTCTGAAC", ""},
+            {"Nextera", "CTGTCTCTTATACACATCT", ""},
+            {"PolyA", "AAAAAAAAAAAA", ""},
+            {"PolyG", "GGGGGGGGGGGG", ""}
         };
     } else {
         adapters = {
             {"TruSeq_R2", "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT", ""},
             {"SmallRNA3'", "TGGAATTCTCGGGTGCCAAGG", ""},
-            {"SmallRNA5'", "GTTCAGAGTTCTACAGTCCGACGATC", ""},
-            {"Nextera", "CTGTCTCTTATACACATCT", ""}
+            {"SmallRNA5'", "GATCGTCGGACTGTAGAACTCTGAAC", ""},
+            {"Nextera", "CTGTCTCTTATACACATCT", ""},
+            {"PolyA", "AAAAAAAAAAAA", ""},
+            {"PolyG", "GGGGGGGGGGGG", ""}
         };
     }
 
@@ -552,7 +556,7 @@ DuplicationStats QualityAnalyzer::getDuplicationStats() const {
         const double percent = totalReads > 0
             ? 100.0 * static_cast<double>(count) / static_cast<double>(totalReads)
             : 0.0;
-        if (percent > OVERREPRESENTED_SEQUENCE_THRESHOLD) {
+        if (percent >= OVERREPRESENTED_SEQUENCE_THRESHOLD) {
             stats.overrepresentedSequences.push_back({
                 decodeDuplicationKey(sequence), count, percent
             });
@@ -641,7 +645,7 @@ DuplicationStats QualityAnalyzer::getDuplicationStats(
                     static_cast<double>(totalReads)
                 : 0.0;
 
-        if (percent > OVERREPRESENTED_SEQUENCE_THRESHOLD)
+        if (percent >= OVERREPRESENTED_SEQUENCE_THRESHOLD)
         {
             stats.overrepresentedSequences.push_back({
                 decodeDuplicationKey(entry.key),

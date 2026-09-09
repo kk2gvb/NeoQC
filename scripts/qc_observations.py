@@ -42,6 +42,7 @@ def _read_numeric(
     *,
     optional: tuple[str, ...] = (),
     allow_extra: bool = False,
+    allow_nan: tuple[str, ...] = (),
 ) -> tuple[NumericRows, tuple[str, ...]]:
     try:
         handle = path.open("r", encoding="utf-8", newline="")
@@ -79,11 +80,11 @@ def _read_numeric(
                     raise ObservationError(
                         f"{path.name}:{line_number}: {column} is not numeric"
                     ) from error
-                if not math.isfinite(number):
+                if not math.isfinite(number) and column not in allow_nan:
                     raise ObservationError(
                         f"{path.name}:{line_number}: {column} is not finite"
                     )
-                if number < 0:
+                if math.isfinite(number) and number < 0:
                     raise ObservationError(
                         f"{path.name}:{line_number}: {column} must not be negative"
                     )
@@ -101,12 +102,31 @@ def _range(values: list[float], label: str, lower: float, upper: float) -> None:
 
 def _per_base_quality(path: Path, _read: str) -> dict[str, float]:
     rows, _ = _read_numeric(
-        path, ("cycle", "mean_quality", "lower_quartile", "median")
+        path,
+        ("cycle", "mean_quality", "lower_quartile", "median"),
+        allow_nan=("lower_quartile", "median"),
     )
+    _strictly_increasing_integer_column(rows, "cycle", path.name)
+    evaluated = [
+        row for row in rows
+        if math.isfinite(row["lower_quartile"]) and math.isfinite(row["median"])
+    ]
+    if not evaluated:
+        raise ObservationError("per-base quality has no groups with sufficient observations")
     return {
-        "minimum_lower_quartile": min(row["lower_quartile"] for row in rows),
-        "minimum_median": min(row["median"] for row in rows),
+        "minimum_lower_quartile": min(row["lower_quartile"] for row in evaluated),
+        "minimum_median": min(row["median"] for row in evaluated),
     }
+
+
+def _strictly_increasing_integer_column(
+    rows: NumericRows, column: str, filename: str
+) -> None:
+    values = [row[column] for row in rows]
+    if any(not value.is_integer() or value < 0 for value in values):
+        raise ObservationError(f"{filename}: {column} must contain non-negative integers")
+    if any(right <= left for left, right in zip(values, values[1:])):
+        raise ObservationError(f"{filename}: {column} values must be unique and ordered")
 
 
 def _per_sequence_quality(path: Path, _read: str) -> dict[str, float]:
@@ -118,6 +138,9 @@ def _per_sequence_quality(path: Path, _read: str) -> dict[str, float]:
     count_column = (
         "read_count_truncate" if "read_count_truncate" in columns else "read_count"
     )
+    _strictly_increasing_integer_column(rows, "mean_quality", path.name)
+    if any(not row[count_column].is_integer() for row in rows):
+        raise ObservationError("per-sequence quality read counts must be integers")
     total = sum(row[count_column] for row in rows)
     if total <= 0:
         raise ObservationError("per-sequence quality contains no observations")
@@ -127,8 +150,17 @@ def _per_sequence_quality(path: Path, _read: str) -> dict[str, float]:
 
 def _base_content(path: Path, _read: str) -> dict[str, float]:
     rows, _ = _read_numeric(path, ("position", "A", "C", "G", "T", "N"))
+    _strictly_increasing_integer_column(rows, "position", path.name)
     percentages = [row[base] for row in rows for base in ("A", "C", "G", "T", "N")]
     _range(percentages, "base content", 0, 100)
+    for row in rows:
+        canonical = row["A"] + row["C"] + row["G"] + row["T"]
+        # A/C/G/T are serialized with 4 decimal places, so the
+        # canonical sum may differ from 100 by rounding error.
+        if not math.isclose(canonical, 0.0, abs_tol=1.1e-4) and not math.isclose(
+            canonical, 100.0, abs_tol=1.1e-4
+        ):
+            raise ObservationError("base content canonical percentages must sum to 100")
     difference = max(
         max(abs(row["A"] - row["T"]), abs(row["G"] - row["C"]))
         for row in rows
@@ -190,6 +222,7 @@ def _gc_content(path: Path, _read: str) -> dict[str, float]:
         path,
         ("gc_percent", "raw_read_count", "fastqc_observed_count"),
     )
+    _strictly_increasing_integer_column(rows, "gc_percent", path.name)
 
     deviation = modeled_gc_deviation(
         [row["gc_percent"] for row in rows],
@@ -201,6 +234,7 @@ def _gc_content(path: Path, _read: str) -> dict[str, float]:
 
 def _n_content(path: Path, _read: str) -> dict[str, float]:
     rows, _ = _read_numeric(path, ("position", "N_percent"))
+    _strictly_increasing_integer_column(rows, "position", path.name)
     values = [row["N_percent"] for row in rows]
     _range(values, "N percentage", 0, 100)
     return {"maximum_n_percent": max(values)}
@@ -208,6 +242,9 @@ def _n_content(path: Path, _read: str) -> dict[str, float]:
 
 def _length_distribution(path: Path, _read: str) -> dict[str, float]:
     rows, _ = _read_numeric(path, ("length", "reads"))
+    _strictly_increasing_integer_column(rows, "length", path.name)
+    if any(not row["reads"].is_integer() for row in rows):
+        raise ObservationError("length-distribution read counts must be integers")
     observed = sorted({row["length"] for row in rows if row["reads"] > 0})
     if not observed:
         raise ObservationError("length distribution contains no observations")

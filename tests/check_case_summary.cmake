@@ -9,12 +9,12 @@ foreach(expected
         "\"status\": \"passed\""
 
         "\"sample_id\": \"TUMOR_DNA\""
-        "\"r1_reads\": 10"
-        "\"r2_reads\": 10"
+        "\"r1_reads\": 2"
+        "\"r2_reads\": 2"
 
         "\"sample_id\": \"NORMAL_DNA\""
-        "\"r1_reads\": 1000"
-        "\"r2_reads\": 1000")
+        "\"r1_reads\": 100000"
+        "\"r2_reads\": 100000")
     string(FIND "${SUMMARY}" "${expected}" POSITION)
 
     if(POSITION EQUAL -1)

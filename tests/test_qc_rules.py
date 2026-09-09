@@ -42,8 +42,18 @@ class QcRulesTest(unittest.TestCase):
         directory: Path,
         reads: tuple[str, ...] = ("R1",),
     ) -> None:
+        artifacts = [
+            f"{prefix}_{read}.tsv"
+            for read in reads
+            for prefix in (
+                "per_cycle", "per_sequence_quality", "per_base_sequence_content",
+                "per_sequence_gc_content", "per_base_n_content",
+                "sequence_length_distribution", "sequence_duplication_levels",
+                "adapter_content",
+            )
+        ]
         (directory / "run_manifest.json").write_text(
-            json.dumps({"reads": list(reads)}),
+            json.dumps({"schema_version": 1, "run_id": "test-run", "reads": list(reads), "artifacts": artifacts}),
             encoding="utf-8",
         )
 
@@ -74,14 +84,7 @@ class QcRulesTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="neoqc-stale-r2-") as temporary:
             input_dir = Path(temporary)
 
-            (input_dir / "run_manifest.json").write_text(
-                json.dumps(
-                    {
-                        "reads": ["R1"],
-                    }
-                ),
-                encoding="utf-8",
-            )
+            self.write_manifest(input_dir, ("R1",))
 
             # Current R1 artifact.
             (input_dir / "per_sequence_quality_R1.tsv").write_text(

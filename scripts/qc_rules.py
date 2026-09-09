@@ -250,6 +250,11 @@ def _manifest_active_reads(input_dir: Path) -> tuple[str, ...]:
             f"Cannot read run manifest: {manifest_path}: {exc}"
         ) from exc
 
+    if not isinstance(manifest, Mapping) or manifest.get("schema_version") != 1:
+        raise QcRuleError(f"Unsupported run manifest schema: {manifest_path}")
+    if not isinstance(manifest.get("run_id"), str) or not manifest["run_id"].strip():
+        raise QcRuleError(f"Run manifest has no run_id: {manifest_path}")
+
     reads = manifest.get("reads")
 
     if not isinstance(reads, list):
@@ -262,7 +267,31 @@ def _manifest_active_reads(input_dir: Path) -> tuple[str, ...]:
             f"Unsupported read configuration in run manifest: {reads}"
         )
 
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, list) or not all(
+        isinstance(artifact, str) and artifact and not Path(artifact).is_absolute()
+        for artifact in artifacts
+    ):
+        raise QcRuleError(
+            f"Run manifest field 'artifacts' must be a list of relative paths: {manifest_path}"
+        )
+    if len(set(artifacts)) != len(artifacts):
+        raise QcRuleError(f"Run manifest contains duplicate artifact paths: {manifest_path}")
+
     return tuple(reads)
+
+
+def _manifest_artifacts(input_dir: Path) -> frozenset[str]:
+    """Return validated publication inventory from the current run manifest."""
+    manifest_path = input_dir / MANIFEST_FILENAME
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:  # validated above; defensive here
+        raise QcRuleError(f"Cannot read run manifest: {manifest_path}: {exc}") from exc
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, list):
+        raise QcRuleError(f"Run manifest field 'artifacts' must be a list: {manifest_path}")
+    return frozenset(artifacts)
 
 
 def _active_reads(
@@ -277,11 +306,22 @@ def evaluate_directory(input_dir: Path, ruleset_path: Path = DEFAULT_RULESET) ->
     input_dir = input_dir.resolve()
     ruleset = load_ruleset(ruleset_path.resolve())
     reads = _active_reads(input_dir, ruleset)
+    artifacts = _manifest_artifacts(input_dir)
     
     evaluations: list[dict[str, object]] = []
     for read in reads:
         for rule in ruleset.rules:
             path = source_path(input_dir, rule.metric_id, read)
+            if path.is_file() and path.name not in artifacts:
+                evaluations.append(
+                    _not_evaluated(
+                        rule,
+                        read,
+                        "evaluation.source_not_published",
+                        f"Source data is not declared by run_manifest.json: {path.name}.",
+                    )
+                )
+                continue
             if not path.is_file():
                 evaluations.append(
                     _not_evaluated(

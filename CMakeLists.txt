@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(neoqc LANGUAGES CXX)
+project(neoqc VERSION 1.0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -30,6 +30,7 @@ target_link_libraries(neoqc PRIVATE
     OpenMP::OpenMP_CXX
 )
 target_compile_definitions(neoqc PRIVATE
+    NEOQC_VERSION="${PROJECT_VERSION}"
     NEOQC_PLOT_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/scripts/plot_results.py"
 )
 

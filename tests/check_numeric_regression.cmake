@@ -79,10 +79,10 @@ if(NOT PER_CYCLE_HEADER STREQUAL
 endif()
 
 set(EXPECTED_PER_CYCLE_ROWS
-    "1\t15.5000\t0.0000\t2.0000"
-    "2\t15.5000\t0.0000\t2.0000"
-    "3\t15.5000\t0.0000\t2.0000"
-    "4\t15.5000\t0.0000\t2.0000"
+    "1\t15.5\tnan\tnan"
+    "2\t15.5\tnan\tnan"
+    "3\t15.5\tnan\tnan"
+    "4\t15.5\tnan\tnan"
 )
 
 foreach(expected_row IN LISTS EXPECTED_PER_CYCLE_ROWS)
@@ -189,7 +189,7 @@ file(STRINGS "${PER_SEQUENCE_GC}" GC_ROWS)
 
 list(GET GC_ROWS 0 GC_HEADER)
 
-if(NOT GC_HEADER STREQUAL "gc_percent\treads")
+if(NOT GC_HEADER STREQUAL "gc_percent\traw_read_count\tfastqc_observed_count")
 
     message(FATAL_ERROR
         "Unexpected per-sequence GC header: ${GC_HEADER}")
@@ -197,9 +197,9 @@ if(NOT GC_HEADER STREQUAL "gc_percent\treads")
 endif()
 
 set(EXPECTED_GC_ROWS
-    "0\t1"
-    "50\t2"
-    "100\t1"
+    "0\t1\t1"
+    "50\t2\t2"
+    "100\t1\t1"
 )
 
 foreach(expected_row IN LISTS EXPECTED_GC_ROWS)
@@ -222,10 +222,10 @@ set(TOTAL_GC_READS 0)
 
 foreach(row IN LISTS GC_ROWS)
 
-    if(row MATCHES "^[0-9]+\t[0-9]+$")
+    if(row MATCHES "^[0-9]+\t([0-9]+)\t")
 
         string(REGEX REPLACE
-               "^[0-9]+\t([0-9]+)$"
+               "^[0-9]+\t([0-9]+)\t.*$"
                "\\1"
                COUNT
                "${row}")

@@ -336,7 +336,7 @@ echo "22. Generating medium paired-end dataset..."
 python3 scripts/generate_fastq.py \
     --paired \
     --gzip \
-    --reads 10 \
+    --reads 100000 \
     --length 150 \
     --name medium \
     --dir tests/data
@@ -349,7 +349,7 @@ echo "23. Generating large paired-end dataset..."
 python3 scripts/generate_fastq.py \
     --paired \
     --gzip \
-    --reads 10 \
+    --reads 1000000 \
     --length 150 \
     --name large \
     --dir tests/data

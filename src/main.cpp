@@ -19,7 +19,9 @@
 #include <random>
 #include <sstream>
 
-constexpr const char* NEOQC_VERSION = "1.0.1";
+#ifndef NEOQC_VERSION
+#error "NEOQC_VERSION must be supplied by the build system"
+#endif
 
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
@@ -400,12 +402,17 @@ void writePerBaseSequenceContentTsv(const std::vector<uint64_t>& baseCountA,
 
     for (size_t i = 0; i < baseCountA.size(); ++i)
     {
-        const double total =
+        const double covered =
             baseCountA[i] +
             baseCountC[i] +
             baseCountG[i] +
             baseCountT[i] +
             baseCountN[i];
+        const double canonical =
+            baseCountA[i] +
+            baseCountC[i] +
+            baseCountG[i] +
+            baseCountT[i];
 
         double a = 0;
         double c = 0;
@@ -413,13 +420,19 @@ void writePerBaseSequenceContentTsv(const std::vector<uint64_t>& baseCountA,
         double t = 0;
         double n = 0;
 
-        if (total > 0)
+        // A/C/G/T are normalized among canonical calls. N remains relative
+        // to every read covering the position (also written separately in
+        // per_base_n_content_R*.tsv).
+        if (canonical > 0)
         {
-            a = baseCountA[i] * 100.0 / total;
-            c = baseCountC[i] * 100.0 / total;
-            g = baseCountG[i] * 100.0 / total;
-            t = baseCountT[i] * 100.0 / total;
-            n = baseCountN[i] * 100.0 / total;
+            a = baseCountA[i] * 100.0 / canonical;
+            c = baseCountC[i] * 100.0 / canonical;
+            g = baseCountG[i] * 100.0 / canonical;
+            t = baseCountT[i] * 100.0 / canonical;
+        }
+        if (covered > 0)
+        {
+            n = baseCountN[i] * 100.0 / covered;
         }
 
         out
@@ -1550,11 +1563,64 @@ void publishRun(
     }
 }
 
+AnalysisResult runSampleTransaction(
+    const std::string& r1,
+    const std::string& r2,
+    const std::string& sampleId,
+    const fs::path& outputDir,
+    bool plot,
+    bool skipAdapters)
+{
+    const bool paired = !r2.empty();
+    const std::string runId = generateRunId();
+    fs::path stagingDir = createStagingDirectory(outputDir, runId);
+    try
+    {
+        AnalysisResult analysis = paired
+            ? processPairedFiles(r1, r2, stagingDir.string(), sampleId, skipAdapters)
+            : processOneFile(r1, "R1", stagingDir.string(), sampleId, skipAdapters);
+
+        const RunManifest manifest{
+            .runId = runId,
+            .createdAt = currentUtcTimestamp(),
+            .sampleId = sampleId,
+            .paired = paired,
+            .plot = plot,
+            .skipAdapters = skipAdapters,
+            .r1Path = r1,
+            .r2Path = paired ? std::optional<std::string>(r2) : std::nullopt,
+        };
+        // Plot generation uses the evaluation engine, which is manifest-only.
+        writeRunManifest(stagingDir, manifest);
+        if (plot)
+        {
+            PlotOptions options;
+            options.includeAdapters = !skipAdapters;
+            PlotRunner::runAll(stagingDir.string(), (stagingDir / "plots").string(), options);
+        }
+        writeRunManifest(stagingDir, manifest);
+        publishRun(stagingDir, outputDir);
+        return analysis;
+    }
+    catch (...)
+    {
+        if (fs::exists(stagingDir))
+        {
+            std::error_code ignored;
+            fs::remove_all(stagingDir, ignored);
+        }
+        throw;
+    }
+}
+
 void writeCaseSummary(
     const std::string& patientId,
     const fs::path& caseOutputDir,
     const std::vector<BatchSampleResult>& results,
-    const std::vector<std::string>& warnings)
+    const std::vector<std::string>& warnings,
+    const std::string& batchRunId,
+    bool plot,
+    bool skipAdapters)
 {
     bool casePassed = true;
 
@@ -1582,6 +1648,15 @@ void writeCaseSummary(
                << "  \"neoqc_version\": \""
                << NEOQC_VERSION
                << "\",\n"
+               << "  \"run_id\": \""
+               << jsonEscape(batchRunId)
+               << "\",\n"
+               << "  \"parameters\": {\"plot\": "
+               << (plot ? "true" : "false")
+               << ", \"skip_adapters\": "
+               << (skipAdapters ? "true" : "false")
+               << "},\n"
+               << "  \"ruleset\": {\"id\": \"fastqc-compatible-v1\", \"version\": \"1.0.0\"},\n"
                << "  \"run_date\": \""
                << currentUtcTimestamp()
                << "\",\n"
@@ -1721,45 +1796,20 @@ int main(int argc, char* argv[]) {
                                          + "': " + ec.message());
             }
 
+            const std::string batchRunId = generateRunId();
             std::vector<BatchSampleResult> results;
             bool allPassed = true;
             for (const auto& entry : entries) {
                 const fs::path sampleOutDir = fs::path(args.outDir)
                                               / entry.patientId / entry.sampleId;
-                fs::create_directories(sampleOutDir, ec);
-                if (ec) {
-                    throw std::runtime_error("Cannot create output directory '"
-                                             + sampleOutDir.string() + "': " + ec.message());
-                }
-
                 std::cout << "\nCase " << entry.patientId << " — checking " << entry.sampleId
                           << "\nR1: " << entry.r1 << "\n";
                 if (!entry.r2.empty()) std::cout << "R2: " << entry.r2 << "\n";
 
                 try {
-                    AnalysisResult analysis;
-                    if (entry.r2.empty()) {
-                        analysis = processOneFile(
-                            entry.r1,
-                            "R1",
-                            sampleOutDir.string(),
-                            entry.sampleId,
-                            args.skipAdapters);
-                    } else {
-                        analysis = processPairedFiles(
-                            entry.r1,
-                            entry.r2,
-                            sampleOutDir.string(),
-                            entry.sampleId,
-                            args.skipAdapters);
-                    }
-
-                    if (args.plot) {
-                        const std::string plotDir = (sampleOutDir / "plots").string();
-                        PlotOptions plotOptions;
-                        plotOptions.includeAdapters = !args.skipAdapters;
-                        PlotRunner::runAll(sampleOutDir.string(), plotDir, plotOptions);
-                    }
+                    AnalysisResult analysis = runSampleTransaction(
+                        entry.r1, entry.r2, entry.sampleId, sampleOutDir,
+                        args.plot, args.skipAdapters);
                     std::cout << "Result: passed\n";
                     results.push_back({entry, true, std::move(analysis), ""});
                 } catch (const std::exception& e) {
@@ -1769,21 +1819,21 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            for (const auto& entry : entries)
+            if (allPassed)
             {
-                const fs::path caseOutDir =
-                    fs::path(args.outDir) / entry.patientId;
-
-                writeCaseSummary(
-                    entry.patientId,
-                    caseOutDir,
-                    results,
-                    warnings);
-
-                std::cout
-                    << "Case summary: "
-                    << (caseOutDir / "case_summary.json")
-                    << "\n";
+                std::vector<std::string> patientIds;
+                for (const auto& entry : entries)
+                {
+                    if (std::find(patientIds.begin(), patientIds.end(), entry.patientId) == patientIds.end())
+                        patientIds.push_back(entry.patientId);
+                }
+                for (const auto& patientId : patientIds)
+                {
+                    const fs::path caseOutDir = fs::path(args.outDir) / patientId;
+                    writeCaseSummary(patientId, caseOutDir, results, warnings,
+                                     batchRunId, args.plot, args.skipAdapters);
+                    std::cout << "Case summary: " << (caseOutDir / "case_summary.json") << "\n";
+                }
             }
 
             if (!allPassed) {
