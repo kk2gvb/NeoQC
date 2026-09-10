@@ -1656,7 +1656,10 @@ void writeCaseSummary(
                << ", \"skip_adapters\": "
                << (skipAdapters ? "true" : "false")
                << "},\n"
-               << "  \"ruleset\": {\"id\": \"fastqc-compatible-v1\", \"version\": \"1.0.0\"},\n"
+               << "  \"ruleset\": {"
+                  "\"id\": \"fastqc-compatible-v1\", "
+                  "\"version\": \"1.0.0\", "
+                  "\"sha256\": \"" NEOQC_RULESET_SHA256 "\"},\n"
                << "  \"run_date\": \""
                << currentUtcTimestamp()
                << "\",\n"
@@ -1818,8 +1821,7 @@ int main(int argc, char* argv[]) {
                     results.push_back({entry, false, std::nullopt, e.what()});
                 }
             }
-
-            if (allPassed)
+            
             {
                 std::vector<std::string> patientIds;
                 for (const auto& entry : entries)

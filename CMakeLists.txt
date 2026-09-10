@@ -1,6 +1,18 @@
 cmake_minimum_required(VERSION 3.22)
 project(neoqc VERSION 1.0.1 LANGUAGES CXX)
 
+set(NEOQC_RULESET_FILE
+    "${CMAKE_SOURCE_DIR}/config/qc_rules/fastqc-compatible-v1.json"
+)
+
+if(NOT EXISTS "${NEOQC_RULESET_FILE}")
+    message(FATAL_ERROR "QC ruleset not found: ${NEOQC_RULESET_FILE}")
+endif()
+
+file(SHA256 "${NEOQC_RULESET_FILE}" NEOQC_RULESET_SHA256)
+
+message(STATUS "QC ruleset SHA-256: ${NEOQC_RULESET_SHA256}")
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -31,6 +43,7 @@ target_link_libraries(neoqc PRIVATE
 )
 target_compile_definitions(neoqc PRIVATE
     NEOQC_VERSION="${PROJECT_VERSION}"
+    NEOQC_RULESET_SHA256="${NEOQC_RULESET_SHA256}"
     NEOQC_PLOT_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/scripts/plot_results.py"
 )
 
@@ -158,11 +171,23 @@ set_tests_properties(test_sample_sheet_batch_run PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 # Проверка итогового отчёта пакетного запуска
-add_test(NAME test_case_summary
-         COMMAND ${CMAKE_COMMAND}
-                 -DCASE_SUMMARY=${TEST_OUT_DIR}/batch_case/P001/case_summary.json
-                 -P ${CMAKE_SOURCE_DIR}/tests/check_case_summary.cmake)
-set_tests_properties(test_case_summary PROPERTIES DEPENDS test_sample_sheet_batch_run)
+add_test(
+    NAME test_case_summary
+    COMMAND ${CMAKE_COMMAND}
+        -DCASE_SUMMARY=${TEST_OUT_DIR}/batch_case/P001/case_summary.json
+        -DNEOQC=$<TARGET_FILE:neoqc>
+        -DSAMPLE_SHEET=${TEST_SAMPLE_SHEETS_DIR}/batch_run.csv
+        -DOUT_DIR=${TEST_OUT_DIR}/batch_case
+        -DEXPECTED_RULESET_SHA256=${NEOQC_RULESET_SHA256}
+        -DVALID_R1=${TEST_DATA_DIR}/correct_pair_R1.fq.gz
+        -DINVALID_R1=${TEST_DATA_DIR}/invalid_quality_ascii_127.fq.gz
+        -P ${CMAKE_SOURCE_DIR}/tests/check_case_summary.cmake
+)
+set_tests_properties(
+    test_case_summary
+    PROPERTIES
+        DEPENDS test_sample_sheet_batch_run
+)
 
 # Корректная пара R1/R2
 add_test(NAME test_correct_paired
