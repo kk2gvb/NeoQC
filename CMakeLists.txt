@@ -260,6 +260,25 @@ add_test(NAME test_partial_adapter_profiles_report
                  -P ${CMAKE_SOURCE_DIR}/tests/check_adapter_profiles.cmake)
 set_tests_properties(test_partial_adapter_profiles_report PROPERTIES DEPENDS test_partial_adapter_profiles)
 
+# Полный набор встроенных адаптеров
+add_test(NAME test_all_adapter_profiles
+         COMMAND neoqc
+                 --r1 ${TEST_DATA_DIR}/adapter_all_R1.fq
+                 --r2 ${TEST_DATA_DIR}/adapter_all_R2.fq
+                 --sample-id all_adapters
+                 --out ${TEST_OUT_DIR}/all_adapters)
+
+add_test(NAME test_all_adapter_profiles_report
+         COMMAND ${CMAKE_COMMAND}
+                 -DR1_REPORT=${TEST_OUT_DIR}/all_adapters/adapter_content_R1.tsv
+                 -DR2_REPORT=${TEST_OUT_DIR}/all_adapters/adapter_content_R2.tsv
+                 -P ${CMAKE_SOURCE_DIR}/tests/check_all_adapter_profiles.cmake)
+
+set_tests_properties(
+    test_all_adapter_profiles_report
+    PROPERTIES DEPENDS test_all_adapter_profiles
+)
+
 # Строка длиннее 4096 символов
 add_test(NAME test_long_line_4096
          COMMAND neoqc --r1 ${TEST_DATA_DIR}/long_line_4096.fq.gz --sample-id test_long_line --out ${TEST_OUT_DIR})
@@ -389,6 +408,7 @@ add_test(NAME test_invalid_characters
          COMMAND neoqc --r1 ${TEST_DATA_DIR}/invalid_base.fq --sample-id invalid_chars --out ${TEST_OUT_DIR})
 set_tests_properties(test_invalid_characters PROPERTIES WILL_FAIL TRUE)
 
+# Тесты для проверки обработки последовательностей с большим количеством символов N (N-деноминатор)
 add_test(NAME test_n_denominator
          COMMAND neoqc
                  --r1 ${CMAKE_SOURCE_DIR}/tests/fixtures/n_denominator.fq
@@ -406,6 +426,7 @@ add_test(NAME test_n_denominator_contract
 set_tests_properties(test_n_denominator_contract PROPERTIES
                      DEPENDS test_n_denominator)
 
+# Тесты для проверки обработки последовательностей с учетом длины и GC-содержания
 add_test(NAME test_gc_length_aware
          COMMAND neoqc
                  --r1 ${CMAKE_SOURCE_DIR}/tests/fixtures/gc_length_aware.fq
