@@ -405,3 +405,20 @@ add_test(NAME test_n_denominator_contract
 
 set_tests_properties(test_n_denominator_contract PROPERTIES
                      DEPENDS test_n_denominator)
+
+add_test(NAME test_gc_length_aware
+         COMMAND neoqc
+                 --r1 ${CMAKE_SOURCE_DIR}/tests/fixtures/gc_length_aware.fq
+                 --sample-id gc_length_aware
+                 --out ${TEST_OUT_DIR})
+
+set_tests_properties(test_gc_length_aware PROPERTIES
+                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+add_test(NAME test_gc_length_aware_contract
+         COMMAND ${CMAKE_COMMAND}
+                 -DREPORT=${TEST_OUT_DIR}/per_sequence_gc_content_R1.tsv
+                 -P ${CMAKE_SOURCE_DIR}/tests/check_gc_length_aware.cmake)
+
+set_tests_properties(test_gc_length_aware_contract PROPERTIES
+                     DEPENDS test_gc_length_aware)
