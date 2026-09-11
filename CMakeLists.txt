@@ -388,3 +388,20 @@ set_tests_properties(test_pair_mismatch PROPERTIES WILL_FAIL TRUE)
 add_test(NAME test_invalid_characters
          COMMAND neoqc --r1 ${TEST_DATA_DIR}/invalid_base.fq --sample-id invalid_chars --out ${TEST_OUT_DIR})
 set_tests_properties(test_invalid_characters PROPERTIES WILL_FAIL TRUE)
+
+add_test(NAME test_n_denominator
+         COMMAND neoqc
+                 --r1 ${CMAKE_SOURCE_DIR}/tests/fixtures/n_denominator.fq
+                 --sample-id n_denominator
+                 --out ${TEST_OUT_DIR})
+
+set_tests_properties(test_n_denominator PROPERTIES
+                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+add_test(NAME test_n_denominator_contract
+         COMMAND ${CMAKE_COMMAND}
+                 -DREPORT=${TEST_OUT_DIR}/per_base_n_content_R1.tsv
+                 -P ${CMAKE_SOURCE_DIR}/tests/check_n_denominator.cmake)
+
+set_tests_properties(test_n_denominator_contract PROPERTIES
+                     DEPENDS test_n_denominator)
