@@ -257,6 +257,11 @@ TODO:
 3. Переименовать `possible_source` в нейтральное поле/удалить его до появления
    реального matching либо реализовать versioned contaminant database.
 
+Исправлено: 
+- граница 0.1% — исправлена и покрыта regression test;
+- possible_source — удалён, поскольку source matching не реализован;
+- отдельного QC status для overrepresented пока нет и мы не выдаём ложный стату
+
 ### 10. Length rule содержит недостижимую FAIL-ветку
 
 Reader отклоняет пустую sequence, поэтому native NeoQC не может сформировать

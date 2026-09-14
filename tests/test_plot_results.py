@@ -67,9 +67,9 @@ def write_fixture_set(directory: Path, reads: tuple[str, ...] = ("R1", "R2")) ->
     for read in reads:
         for prefix, content in FIXTURES.items():
             (directory / f"{prefix}_{read}.tsv").write_text(content, encoding="utf-8")
-        overrepresented = "sequence\tcount\tpercentage\tpossible_source\n"
+        overrepresented = "sequence\tcount\tpercentage\n"
         if read == "R2":
-            overrepresented += f"{'T' * 50}\t269055\t0.4065003125\tNo Hit\n"
+            overrepresented += f"{'T' * 50}\t269055\t0.4065003125\n"
         (directory / f"overrepresented_sequences_{read}.tsv").write_text(
             overrepresented, encoding="utf-8"
         )

@@ -226,8 +226,8 @@ class QcReportTest(unittest.TestCase):
             add_duplication_plot(result_dir)
             sequence = "T" * 50
             (result_dir / "overrepresented_sequences_R1.tsv").write_text(
-                "sequence\tcount\tpercentage\tpossible_source\n"
-                f"{sequence}\t269055\t0.4065003125\tNo Hit <script>alert(1)</script>\n",
+                "sequence\tcount\tpercentage\n"
+                f"{sequence}\t269055\t0.4065003125\n",
                 encoding="utf-8",
             )
 
@@ -236,8 +236,6 @@ class QcReportTest(unittest.TestCase):
             self.assertIn(sequence, document)
             self.assertIn("269,055", document)
             self.assertIn("0.4065%", document)
-            self.assertIn("No Hit &lt;script&gt;alert(1)&lt;/script&gt;", document)
-            self.assertNotIn("No Hit <script>alert(1)</script>", document)
 
     def test_empty_overrepresented_sequences_table_has_explicit_state(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-report-overrepresented-empty-") as temporary:
@@ -246,7 +244,7 @@ class QcReportTest(unittest.TestCase):
             write_manifest(result_dir / "plots")
             add_duplication_plot(result_dir)
             (result_dir / "overrepresented_sequences_R1.tsv").write_text(
-                "sequence\tcount\tpercentage\tpossible_source\n", encoding="utf-8"
+                "sequence\tcount\tpercentage\n", encoding="utf-8"
             )
 
             document = generate_qc_report(result_dir).read_text(encoding="utf-8")
@@ -260,8 +258,8 @@ class QcReportTest(unittest.TestCase):
             write_manifest(result_dir / "plots")
             add_duplication_plot(result_dir)
             (result_dir / "overrepresented_sequences_R1.tsv").write_text(
-                "sequence\tcount\tpercentage\tpossible_source\n"
-                "ACGT\t12\t101\tNo Hit\n",
+                "sequence\tcount\tpercentage\n"
+                "ACGT\t12\t101\n",
                 encoding="utf-8",
             )
 

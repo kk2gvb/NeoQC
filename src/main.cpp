@@ -738,12 +738,12 @@ void writeDuplicationArtifacts(const DuplicationStats& stats,
 
     writeAtomically(root / ("overrepresented_sequences_" + readName + ".tsv"),
         [&](std::ostream& out) {
-            out << "sequence\tcount\tpercentage\tpossible_source\n";
+            out << "sequence\tcount\tpercentage\n";
             out << std::fixed << std::setprecision(10);
             for (const auto& sequence : stats.overrepresentedSequences) {
                 out << sequence.sequence << '\t'
                     << sequence.count << '\t'
-                    << sequence.percent << "\tNo Hit\n";
+                    << sequence.percent << '\n';
             }
         });
 

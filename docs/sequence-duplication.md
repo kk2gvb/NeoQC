@@ -32,7 +32,7 @@ Native runs additionally produce:
 
 - `sequence_duplication_summary_R*.tsv` — source filename, algorithm ID,
   total/unique counts and the headline deduplicated percentage;
-- `overrepresented_sequences_R*.tsv` — tracked sequences above 0.1% of all
+- `overrepresented_sequences_R*.tsv` — tracked sequences at or above 0.1% of all
   reads, sorted deterministically;
 - `sequence_duplication_R*.incomplete` — a temporary transaction marker which
 remains only when calculation or publication did not finish.
