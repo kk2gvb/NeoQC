@@ -8,6 +8,7 @@
 #include <memory>
 #include "gc_model.h"
 #include "fastq_reader.h"
+#include "adapter_config.h"
 
 constexpr std::size_t DUPLICATION_PREFIX_LENGTH = 50;
 constexpr double OVERREPRESENTED_SEQUENCE_THRESHOLD = 0.1;
@@ -126,7 +127,12 @@ enum class ReadDirection {
 // ---------------------------------------------------------------------------
 class QualityAnalyzer {
 public:
-    explicit QualityAnalyzer(ReadDirection direction = ReadDirection::R1);
+    explicit QualityAnalyzer(
+        ReadDirection direction = ReadDirection::R1);
+
+    QualityAnalyzer(
+        ReadDirection direction,
+        const std::vector<AdapterConfigEntry>& adapterConfig);
 
     // Обработка одной FASTQ-записи
     BaseValidationError processRecord(const FastqRecord& record);

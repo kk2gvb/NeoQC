@@ -34,6 +34,7 @@ add_executable(neoqc
     src/plot_runner.cpp
     src/sample_sheet.cpp
     src/gc_model.cpp
+    src/adapter_config.cpp
 )
 
 target_include_directories(neoqc PRIVATE include)
@@ -51,6 +52,7 @@ add_executable(neoqc_duplication_test
     tests/test_quality_analyzer_duplication.cpp
     src/quality_analyzer.cpp
     src/gc_model.cpp
+    src/adapter_config.cpp
 )
 target_include_directories(neoqc_duplication_test PRIVATE include)
 
@@ -443,3 +445,21 @@ add_test(NAME test_gc_length_aware_contract
 
 set_tests_properties(test_gc_length_aware_contract PROPERTIES
                      DEPENDS test_gc_length_aware)
+
+set_tests_properties(
+    test_unlimited_sequence_duplication
+    test_correct_single
+    test_skip_adapters
+    test_case_summary
+    test_correct_paired
+    test_sequence_duplication
+    test_sequence_duplication_artifacts
+    test_adapter_profiles
+    test_partial_adapter_profiles
+    test_all_adapter_profiles
+    test_long_line_4096
+    test_windows_clrf
+    test_quality_phred33_boundaries
+    PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)

@@ -204,30 +204,45 @@ std::size_t DuplicationKeyHash::operator()(const DuplicationKey& key) const noex
     return static_cast<std::size_t>(hash);
 }
 
-QualityAnalyzer::QualityAnalyzer(ReadDirection direction) {
-    if (direction == ReadDirection::R1) {
-        adapters = {
-            {"TruSeq_R1", "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA", ""},
-            {"SmallRNA3'", "TGGAATTCTCGGGTGCCAAGG", ""},
-            {"SmallRNA5'", "GATCGTCGGACTGTAGAACTCTGAAC", ""},
-            {"Nextera", "CTGTCTCTTATACACATCT", ""},
-            {"PolyA", "AAAAAAAAAAAA", ""},
-            {"PolyG", "GGGGGGGGGGGG", ""}
-        };
-    } else {
-        adapters = {
-            {"TruSeq_R2", "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT", ""},
-            {"SmallRNA3'", "TGGAATTCTCGGGTGCCAAGG", ""},
-            {"SmallRNA5'", "GATCGTCGGACTGTAGAACTCTGAAC", ""},
-            {"Nextera", "CTGTCTCTTATACACATCT", ""},
-            {"PolyA", "AAAAAAAAAAAA", ""},
-            {"PolyG", "GGGGGGGGGGGG", ""}
-        };
+QualityAnalyzer::QualityAnalyzer(ReadDirection direction)
+    : QualityAnalyzer(direction, loadAdapterConfig(
+          "config/adapters/neoqc-standard-v1.tsv"))
+{
+}
+
+QualityAnalyzer::QualityAnalyzer(
+    ReadDirection direction,
+    const std::vector<AdapterConfigEntry>& adapterConfig)
+{
+    adapters.clear();
+
+    for (const auto& entry : adapterConfig) {
+        if (direction == ReadDirection::R1 &&
+            entry.name == "TruSeq_R2") {
+            continue;
+        }
+
+        if (direction == ReadDirection::R2 &&
+            entry.name == "TruSeq_R1") {
+            continue;
+        }
+
+        Adapter adapter;
+        adapter.name = entry.name;
+        adapter.sequence = entry.sequence;
+
+        adapter.detectionSequence = adapter.sequence.substr(
+            0,
+            std::min(
+                kAdapterDetectionKmerLength,
+                adapter.sequence.size()));
+
+        adapters.push_back(std::move(adapter));
     }
 
-    for (auto& adapter : adapters) {
-        adapter.detectionSequence = adapter.sequence.substr(
-            0, std::min(kAdapterDetectionKmerLength, adapter.sequence.size()));
+    if (adapters.empty()) {
+        throw std::runtime_error(
+            "Adapter configuration contains no adapters");
     }
 
     adapterPosCounts.resize(adapters.size());
