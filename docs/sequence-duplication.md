@@ -54,5 +54,14 @@ archive without a NeoQC summary, or a summary created by the earlier bounded
 NeoQC prototype. Both remain readable for report compatibility, but new native
 runs use `neoqc-exact-prefix-v1` and contain no sampling-limit fields.
 
+### QC threshold semantics
+
+The `fastqc-compatible-v1` ruleset applies FastQC-like QC thresholds
+to NeoQC's native exact duplication metric. It does not claim numerical
+identity with FastQC's historical duplication sampling algorithm.
+
+For native NeoQC runs, the duplication algorithm is explicitly identified
+as `neoqc-exact-prefix-v1`.
+
 Reference implementation: [FastQC `DuplicationLevel.java`](https://github.com/s-andrews/FastQC/blob/master/uk/ac/babraham/FastQC/Modules/DuplicationLevel.java)
 and [`OverRepresentedSeqs.java`](https://github.com/s-andrews/FastQC/blob/master/uk/ac/babraham/FastQC/Modules/OverRepresentedSeqs.java).
