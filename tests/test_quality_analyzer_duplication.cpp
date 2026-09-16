@@ -63,5 +63,72 @@ int main() {
         return 1;
     }
 
+        // Exactly 0.1%: 1 occurrence out of 1000 reads.
+    {
+        QualityAnalyzer thresholdAnalyzer;
+        FastqRecord thresholdRecord;
+        thresholdRecord.quality.assign(DUPLICATION_PREFIX_LENGTH, 'I');
+
+        for (int i = 0; i < 999; ++i) {
+            thresholdRecord.sequence = "TTTTTTTTTTTT";
+            thresholdAnalyzer.processRecord(thresholdRecord);
+        }
+
+        thresholdRecord.sequence = "ACGTACGTACGT";
+        thresholdAnalyzer.processRecord(thresholdRecord);
+
+        const DuplicationStats thresholdStats =
+            thresholdAnalyzer.getDuplicationStats();
+
+        bool found = false;
+        for (const auto& sequence :
+             thresholdStats.overrepresentedSequences) {
+            if (sequence.sequence == "ACGTACGTACGT") {
+                found = true;
+
+                if (!closeEnough(sequence.percent, 0.1)) {
+                    std::cerr << "Incorrect 0.1% boundary percentage\n";
+                    return 1;
+                }
+
+                if (sequence.count != 1) {
+                    std::cerr << "Incorrect 0.1% boundary count\n";
+                    return 1;
+                }
+            }
+        }
+
+        if (!found) {
+            std::cerr << "Sequence at exactly 0.1% must be reported\n";
+            return 1;
+        }
+    }
+
+    // Just below 0.1%: 1 occurrence out of 1001 reads.
+    {
+        QualityAnalyzer belowThresholdAnalyzer;
+        FastqRecord belowThresholdRecord;
+        belowThresholdRecord.quality.assign(DUPLICATION_PREFIX_LENGTH, 'I');
+
+        for (int i = 0; i < 1000; ++i) {
+            belowThresholdRecord.sequence = "TTTTTTTTTTTT";
+            belowThresholdAnalyzer.processRecord(belowThresholdRecord);
+        }
+
+        belowThresholdRecord.sequence = "ACGTACGTACGT";
+        belowThresholdAnalyzer.processRecord(belowThresholdRecord);
+
+        const DuplicationStats belowThresholdStats =
+            belowThresholdAnalyzer.getDuplicationStats();
+
+        for (const auto& sequence :
+             belowThresholdStats.overrepresentedSequences) {
+            if (sequence.sequence == "ACGTACGTACGT") {
+                std::cerr << "Sequence below 0.1% must not be reported\n";
+                return 1;
+            }
+        }
+    }
+
     return 0;
 }
