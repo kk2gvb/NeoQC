@@ -28,8 +28,7 @@ NeoQC TSV / summary data
         |
         +--> plot renderer -------------> plots_manifest.json + SVG / PNG
                                                |
-qc_evaluation.json + plots_manifest.json ------+--> compact NeoQC HTML
-                                               +--> full report assembler
+qc_evaluation.json + plots_manifest.json ------+--> NeoQC HTML report
 ```
 
 `plot_results.py` orchestrates evaluation and plotting, while the evaluator
@@ -111,7 +110,7 @@ automatically define acceptance criteria for an RNA-seq or clinical workflow.
 | NeoQC metric | Baseline decision input | Current data readiness |
 | --- | --- | --- |
 | `per_base_quality` | minimum lower quartile and minimum median by position | Ready; C++ writes both values with the mean |
-| `per_sequence_quality` | mode of mean read quality | Ready |
+| `per_sequence_quality` | mode of truncated mean read quality | Ready; legacy two-column TSV files fall back to the rounded distribution |
 | `per_base_sequence_content` | maximum `abs(A-T)` or `abs(G-C)` by position | Ready |
 | `per_sequence_gc_content` | total deviation from modeled normal distribution | Ready |
 | `per_base_n_content` | maximum N percentage at any position | Ready |
@@ -161,8 +160,7 @@ pass and is excluded from the evaluated denominator.
 
 ## Report presentation
 
-The compact NeoQC report and the full report will use the same evaluation
-model:
+The NeoQC report uses the evaluation model as follows:
 
 1. A summary strip shows PASS / WARNING / FAIL / NOT EVALUATED counts and a
    proportional segmented bar.
@@ -196,7 +194,7 @@ version 1 because QC decisions are kept in a separate contract.
 - ruleset version/hash reproducibility tests;
 - JSON contract and escaping tests;
 - HTML tests for summary counts, matrix, badges and reason text;
-- screenshot/print regression for the compact and full reports;
+- screenshot/print regression for the NeoQC report;
 - comparison fixtures against known FastQC examples before calling the profile
   FastQC-compatible.
 
@@ -211,11 +209,8 @@ Implemented now:
 - automatic evaluation from `plot_results.py` and standalone evaluation CLI;
 - backward-compatible `NOT EVALUATED` behaviour;
 - summary strip, R1/R2 matrix, accessible badges, observations and reasons in
-  the compact NeoQC report;
-- an adapter and CLI option which insert the same evaluation into the complete
-  neo-mRNA-vax report without recalculating decisions;
+  the NeoQC report;
 - boundary, malformed-data, integration, HTML and C++ output contract tests.
 
-The same `qc_evaluation.json` is now consumed by both report types. The
-RNA-specific profile remains intentionally pending domain approval and must not
-silently replace the baseline ruleset.
+The RNA-specific profile remains intentionally pending domain approval and must
+not silently replace the baseline ruleset.

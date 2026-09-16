@@ -5,7 +5,10 @@
 #include <cstdint>
 #include <array>
 #include <unordered_map>
+#include <memory>
+#include "gc_model.h"
 #include "fastq_reader.h"
+#include "adapter_config.h"
 
 constexpr std::size_t DUPLICATION_PREFIX_LENGTH = 50;
 constexpr double OVERREPRESENTED_SEQUENCE_THRESHOLD = 0.1;
@@ -53,6 +56,17 @@ struct DuplicationStats {
     double deduplicatedRemainingPercent = 100.0;
 };
 
+struct PerBaseQualityGroup {
+    std::size_t start = 0;
+    std::size_t end = 0;
+
+    double mean = 0.0;
+    double lowerQuartile = 0.0;
+    double median = 0.0;
+
+    bool evaluated = false;
+};
+
 // ---------------------------------------------------------------------------
 // Структура результатов анализа
 // ---------------------------------------------------------------------------
@@ -69,7 +83,13 @@ struct QualityStats {
     uint64_t countT = 0;
     uint64_t countN = 0;
 
+    // Реальное распределение NeoQC:
+    // один read -> один GC bin
     std::vector<uint64_t> gcDistribution;
+
+    // FastQC-compatible observed distribution:
+    // один read может быть распределён между несколькими bins
+    std::vector<double> gcDistributionFastQC;
 
     std::vector<uint64_t> lengthDistribution;
 
@@ -79,11 +99,9 @@ struct QualityStats {
     double percentQ30 = 0.0;
     double percentWithAdapter = 0.0;
 
-    // Качество по позициям (среднее Phred-значение на каждой позиции)
-    std::vector<double> meanQualityPerPosition;
-    std::vector<double> lowerQuartileQualityPerPosition;
-    std::vector<double> medianQualityPerPosition;
-
+    // Качество по группам позиций по семантике FastQC BaseGroup.
+    std::vector<PerBaseQualityGroup> perBaseQualityGroups;
+    
     // Распределение среднего Phred-качества по прочтениям.
     // Индекс = среднее качество прочтения, округлённое до ближайшего целого.
     std::vector<uint64_t> perSequenceQualityDistribution;
@@ -109,7 +127,12 @@ enum class ReadDirection {
 // ---------------------------------------------------------------------------
 class QualityAnalyzer {
 public:
-    explicit QualityAnalyzer(ReadDirection direction = ReadDirection::R1);
+    explicit QualityAnalyzer(
+        ReadDirection direction = ReadDirection::R1);
+
+    QualityAnalyzer(
+        ReadDirection direction,
+        const std::vector<AdapterConfigEntry>& adapterConfig);
 
     // Обработка одной FASTQ-записи
     BaseValidationError processRecord(const FastqRecord& record);
@@ -177,7 +200,10 @@ private:
     std::vector<uint64_t> readsPerPosition;
 
     std::vector<uint64_t> gcDistribution = std::vector<uint64_t>(101, 0);
+    std::vector<double> gcDistributionFastQC = std::vector<double>(101, 0.0);
     std::vector<uint64_t> lengthDistribution;
+
+    std::unordered_map<size_t, std::unique_ptr<GCModel>> gcModels;
 
     uint64_t minLength = UINT64_MAX;
     uint64_t maxLength = 0;

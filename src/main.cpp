@@ -16,6 +16,12 @@
 #include <ctime>
 #include <algorithm>
 #include <future>
+#include <random>
+#include <sstream>
+
+#ifndef NEOQC_VERSION
+#error "NEOQC_VERSION must be supplied by the build system"
+#endif
 
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
@@ -43,6 +49,22 @@ struct Args {
     std::string samples;
     bool        plot = false;
     bool        skipAdapters = false;
+};
+
+struct RunManifest
+{
+    std::string runId;
+    std::string createdAt;
+    std::string sampleId;
+
+    bool paired = false;
+    bool plot = false;
+    bool skipAdapters = false;
+
+    std::string r1Path;
+    std::optional<std::string> r2Path;
+
+    std::vector<std::string> artifacts;
 };
 
 Args parseArgs(int argc, char* argv[]) {
@@ -314,38 +336,50 @@ void writeSummaryTxt(const QualityStats& stats,
 
 }
 
-void writePerCycleQualityTsv(const std::vector<double>& meanQuality,
-                             const std::vector<double>& lowerQuartile,
-                             const std::vector<double>& median,
-                             const std::string& outDir,
-                             const std::string& readName)
+void writePerCycleQualityTsv(
+    const std::string& outDir,
+    const std::vector<PerBaseQualityGroup>& groups,
+    const std::string& filename)
 {
-    std::string path = outDir + "/per_cycle_" + readName + ".tsv";
-
+    std::string path = outDir + "/per_cycle_" + filename + ".tsv";
     std::ofstream out(path);
 
-    if (!out)
-        throw std::runtime_error("Cannot write to " + path);
-
-    if (lowerQuartile.size() != meanQuality.size() ||
-        median.size() != meanQuality.size()) {
-        throw std::runtime_error("Per-cycle quality vectors have different sizes");
+    if (!out) {
+        throw std::runtime_error(
+            "Failed to open per-cycle quality output: " + path);
     }
 
     out << "cycle\tmean_quality\tlower_quartile\tmedian\n";
 
-    for (size_t i = 0; i < meanQuality.size(); ++i)
-    {
-        out << (i + 1)
-            << "\t"
-            << std::fixed
-            << std::setprecision(4)
-            << meanQuality[i]
-            << "\t"
-            << lowerQuartile[i]
-            << "\t"
-            << median[i]
-            << "\n";
+    for (const auto& group : groups) {
+
+        if (group.start == group.end) {
+            out << group.start;
+        }
+        else {
+            out << group.start
+                << '-'
+                << group.end;
+        }
+
+        out << '\t';
+
+        if (group.evaluated) {
+            out << group.mean << '\t'
+                << group.lowerQuartile << '\t'
+                << group.median;
+        }
+        else {
+            /*
+             * Mean может существовать, но percentile
+             * недостаточно надёжны для оценки.
+             */
+            out << group.mean << '\t'
+                << "nan\t"
+                << "nan";
+        }
+
+        out << '\n';
     }
 }
 
@@ -368,12 +402,17 @@ void writePerBaseSequenceContentTsv(const std::vector<uint64_t>& baseCountA,
 
     for (size_t i = 0; i < baseCountA.size(); ++i)
     {
-        const double total =
+        const double covered =
             baseCountA[i] +
             baseCountC[i] +
             baseCountG[i] +
             baseCountT[i] +
             baseCountN[i];
+        const double canonical =
+            baseCountA[i] +
+            baseCountC[i] +
+            baseCountG[i] +
+            baseCountT[i];
 
         double a = 0;
         double c = 0;
@@ -381,13 +420,19 @@ void writePerBaseSequenceContentTsv(const std::vector<uint64_t>& baseCountA,
         double t = 0;
         double n = 0;
 
-        if (total > 0)
+        // A/C/G/T are normalized among canonical calls. N remains relative
+        // to every read covering the position (also written separately in
+        // per_base_n_content_R*.tsv).
+        if (canonical > 0)
         {
-            a = baseCountA[i] * 100.0 / total;
-            c = baseCountC[i] * 100.0 / total;
-            g = baseCountG[i] * 100.0 / total;
-            t = baseCountT[i] * 100.0 / total;
-            n = baseCountN[i] * 100.0 / total;
+            a = baseCountA[i] * 100.0 / canonical;
+            c = baseCountC[i] * 100.0 / canonical;
+            g = baseCountG[i] * 100.0 / canonical;
+            t = baseCountT[i] * 100.0 / canonical;
+        }
+        if (covered > 0)
+        {
+            n = baseCountN[i] * 100.0 / covered;
         }
 
         out
@@ -408,6 +453,7 @@ void writePerBaseSequenceContentTsv(const std::vector<uint64_t>& baseCountA,
 
 void writePerSequenceGCContentTsv(
     const std::vector<uint64_t>& gcDistribution,
+    const std::vector<double>& gcDistributionFastQC,
     const std::string& outDir,
     const std::string& readName)
 {
@@ -419,13 +465,23 @@ void writePerSequenceGCContentTsv(
     if (!out)
         throw std::runtime_error("Cannot write to " + path);
 
-    out << "gc_percent\treads\n";
+    out << "gc_percent\traw_read_count\tfastqc_observed_count\n";
 
-    for (size_t i = 0; i < gcDistribution.size(); ++i)
+    for (size_t i = 0; i < 101; ++i)
     {
+        const uint64_t rawCount =
+            i < gcDistribution.size() ? gcDistribution[i] : 0;
+
+        const double fastqcCount =
+            i < gcDistributionFastQC.size()
+                ? gcDistributionFastQC[i]
+                : 0.0;
+
         out << i
             << "\t"
-            << gcDistribution[i]
+            << rawCount
+            << "\t"
+            << fastqcCount
             << "\n";
     }
 }
@@ -682,12 +738,12 @@ void writeDuplicationArtifacts(const DuplicationStats& stats,
 
     writeAtomically(root / ("overrepresented_sequences_" + readName + ".tsv"),
         [&](std::ostream& out) {
-            out << "sequence\tcount\tpercentage\tpossible_source\n";
+            out << "sequence\tcount\tpercentage\n";
             out << std::fixed << std::setprecision(10);
             for (const auto& sequence : stats.overrepresentedSequences) {
                 out << sequence.sequence << '\t'
                     << sequence.count << '\t'
-                    << sequence.percent << "\tNo Hit\n";
+                    << sequence.percent << '\n';
             }
         });
 
@@ -732,10 +788,8 @@ void writeAnalysisReports(
         skipAdapters);
 
     writePerCycleQualityTsv(
-        stats.meanQualityPerPosition,
-        stats.lowerQuartileQualityPerPosition,
-        stats.medianQualityPerPosition,
         outDir,
+        stats.perBaseQualityGroups,
         readName);
 
     writePerSequenceQualityTsv(
@@ -755,6 +809,7 @@ void writeAnalysisReports(
 
     writePerSequenceGCContentTsv(
         stats.gcDistribution,
+        stats.gcDistributionFastQC,
         outDir,
         readName);
 
@@ -877,7 +932,6 @@ AnalysisResult processOneFile(const std::string& path,
                             const std::string& sampleId,
                             bool skipAdapters) {
     AnalysisResult result;
-    removeRetiredQualityDistributionArtifacts(outDir, readName);
     beginDuplicationArtifacts(outDir, readName, path);
     QualityAnalyzer analyzer;
 
@@ -981,8 +1035,6 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
                                 bool skipAdapters)
 {
     AnalysisResult result;
-    removeRetiredQualityDistributionArtifacts(outDir, "R1");
-    removeRetiredQualityDistributionArtifacts(outDir, "R2");
     beginDuplicationArtifacts(outDir, "R1", r1Path);
     beginDuplicationArtifacts(outDir, "R2", r2Path);
     FastqReader readerR1(r1Path);
@@ -1189,6 +1241,150 @@ std::string jsonEscape(const std::string& value) {
     return escaped;
 }
 
+std::vector<std::string> collectArtifacts(
+    const fs::path& directory)
+{
+    std::vector<std::string> artifacts;
+
+    if (!fs::exists(directory))
+    {
+        return artifacts;
+    }
+
+    for (const auto& entry :
+         fs::recursive_directory_iterator(directory))
+    {
+        if (!entry.is_regular_file())
+        {
+            continue;
+        }
+        if (entry.path().filename() == "run_manifest.json")
+        {
+            continue;
+        }
+        artifacts.push_back(
+            fs::relative(
+                entry.path(),
+                directory
+            ).generic_string());
+    }
+
+    std::sort(
+        artifacts.begin(),
+        artifacts.end());
+
+    return artifacts;
+}
+
+void writeRunManifest(
+    const fs::path& outputDir,
+    const RunManifest& manifest)
+{
+    const fs::path manifestPath =
+        outputDir / "run_manifest.json";
+
+    const std::vector<std::string> artifacts =
+        collectArtifacts(outputDir);
+
+    std::ofstream output(manifestPath);
+
+    if (!output)
+    {
+        throw std::runtime_error(
+            "Cannot write run manifest: " +
+            manifestPath.string());
+    }
+
+    output << "{\n";
+    output << "  \"schema_version\": 1,\n";
+
+    output << "  \"run_id\": \""
+           << jsonEscape(manifest.runId)
+           << "\",\n";
+
+    output << "  \"created_at\": \""
+           << jsonEscape(manifest.createdAt)
+           << "\",\n";
+
+    output << "  \"neoqc_version\": \""
+           << NEOQC_VERSION
+           << "\",\n";
+
+    output << "  \"run\": {\n";
+
+    output << "    \"sample_id\": \""
+           << jsonEscape(manifest.sampleId)
+           << "\",\n";
+
+    output << "    \"mode\": \""
+           << (manifest.paired
+               ? "paired-end"
+               : "single-end")
+           << "\",\n";
+
+    output << "    \"plot\": "
+           << (manifest.plot ? "true" : "false")
+           << ",\n";
+
+    output << "    \"skip_adapters\": "
+           << (manifest.skipAdapters
+               ? "true"
+               : "false")
+           << "\n";
+
+    output << "  },\n";
+
+    output << "  \"reads\": [";
+
+    output << "\"R1\"";
+
+    if (manifest.paired)
+    {
+        output << ", \"R2\"";
+    }
+
+    output << "],\n";
+
+    output << "  \"inputs\": {\n";
+
+    output << "    \"R1\": \""
+           << jsonEscape(manifest.r1Path)
+           << "\"";
+
+    if (manifest.r2Path)
+    {
+        output << ",\n";
+
+        output << "    \"R2\": \""
+               << jsonEscape(*manifest.r2Path)
+               << "\"";
+    }
+
+    output << "\n";
+    output << "  },\n";
+
+    output << "  \"artifacts\": [\n";
+
+    for (std::size_t i = 0;
+         i < artifacts.size();
+         ++i)
+    {
+        output << "    \""
+               << jsonEscape(artifacts[i])
+               << "\"";
+
+        if (i + 1 < artifacts.size())
+        {
+            output << ",";
+        }
+
+        output << "\n";
+    }
+
+    output << "  ]\n";
+    output << "}\n";
+}
+
 std::string currentUtcTimestamp() {
     const std::time_t now = std::time(nullptr);
     std::tm timeInfo{};
@@ -1202,62 +1398,360 @@ std::string currentUtcTimestamp() {
     return output.str();
 }
 
-void writeCaseSummary(const std::string& patientId,
-                      const fs::path& caseOutputDir,
-                      const std::vector<BatchSampleResult>& results,
-                      const std::vector<std::string>& warnings)
+//================================================================================
+// Run ID generation and staging directory creation
+//================================================================================
+
+std::string generateRunId()
+{
+    std::random_device randomDevice;
+    std::mt19937_64 generator(randomDevice());
+    const uint64_t randomValue = generator();
+
+    std::ostringstream output;
+    output << currentUtcTimestamp()
+           << "-"
+           << std::hex
+           << std::setw(16)
+           << std::setfill('0')
+           << randomValue;
+
+    return output.str();
+}
+
+fs::path createStagingDirectory(
+    const fs::path& outputDir,
+    const std::string& runId)
+{
+    const fs::path parent = outputDir.parent_path();
+
+    if (!parent.empty())
+    {
+        std::error_code ec;
+        fs::create_directories(parent, ec);
+
+        if (ec)
+        {
+            throw std::runtime_error(
+                "Cannot create output parent directory '" +
+                parent.string() + "': " +
+                ec.message());
+        }
+    }
+
+    const std::string outputName = outputDir.filename().string();
+
+    if (outputName.empty())
+    {
+        throw std::runtime_error(
+            "Output directory must have a valid directory name");
+    }
+
+    const fs::path stagingDir =
+        parent / ("." + outputName + ".neoqc-tmp-" + runId);
+
+    std::error_code ec;
+    fs::create_directory(stagingDir, ec);
+
+    if (ec)
+    {
+        throw std::runtime_error(
+            "Cannot create staging directory '" +
+            stagingDir.string() + "': " +
+            ec.message());
+    }
+
+    return stagingDir;
+}
+
+void removeStagingDirectory(const fs::path& stagingDir)
+{
+    std::error_code ec;
+    fs::remove_all(stagingDir, ec);
+
+    if (ec)
+    {
+        throw std::runtime_error(
+            "Cannot remove staging directory '" +
+            stagingDir.string() + "': " +
+            ec.message());
+    }
+}
+
+void publishRun(
+    const fs::path& stagingDir,
+    const fs::path& outputDir)
+{
+    const fs::path parent = outputDir.parent_path();
+
+    if (!fs::exists(stagingDir))
+    {
+        throw std::runtime_error(
+            "Staging directory does not exist: " +
+            stagingDir.string());
+    }
+
+    const std::string runId = generateRunId();
+
+    const fs::path backupDir =
+        parent /
+        ("." + outputDir.filename().string() +
+         ".neoqc-backup-" + runId);
+
+    std::error_code ec;
+
+    bool hadPreviousOutput = fs::exists(outputDir);
+
+    if (hadPreviousOutput)
+    {
+        fs::rename(outputDir, backupDir, ec);
+
+        if (ec)
+        {
+            throw std::runtime_error(
+                "Cannot move previous output directory '" +
+                outputDir.string() +
+                "' to backup '" +
+                backupDir.string() +
+                "': " +
+                ec.message());
+        }
+    }
+
+    fs::rename(stagingDir, outputDir, ec);
+
+    if (ec)
+    {
+        if (hadPreviousOutput)
+        {
+            std::error_code restoreError;
+            fs::rename(backupDir, outputDir, restoreError);
+
+            if (restoreError)
+            {
+                throw std::runtime_error(
+                    "Cannot publish new NeoQC result and cannot restore "
+                    "previous output directory. "
+                    "Original publish error: " +
+                    ec.message() +
+                    "; restore error: " +
+                    restoreError.message());
+            }
+        }
+
+        throw std::runtime_error(
+            "Cannot publish NeoQC result '" +
+            stagingDir.string() +
+            "' to '" +
+            outputDir.string() +
+            "': " +
+            ec.message());
+    }
+
+    if (hadPreviousOutput)
+    {
+        std::error_code cleanupError;
+        fs::remove_all(backupDir, cleanupError);
+
+        if (cleanupError)
+        {
+            throw std::runtime_error(
+                "NeoQC result was published successfully, but previous "
+                "output could not be removed: " +
+                cleanupError.message());
+        }
+    }
+}
+
+AnalysisResult runSampleTransaction(
+    const std::string& r1,
+    const std::string& r2,
+    const std::string& sampleId,
+    const fs::path& outputDir,
+    bool plot,
+    bool skipAdapters)
+{
+    const bool paired = !r2.empty();
+    const std::string runId = generateRunId();
+    fs::path stagingDir = createStagingDirectory(outputDir, runId);
+    try
+    {
+        AnalysisResult analysis = paired
+            ? processPairedFiles(r1, r2, stagingDir.string(), sampleId, skipAdapters)
+            : processOneFile(r1, "R1", stagingDir.string(), sampleId, skipAdapters);
+
+        const RunManifest manifest{
+            .runId = runId,
+            .createdAt = currentUtcTimestamp(),
+            .sampleId = sampleId,
+            .paired = paired,
+            .plot = plot,
+            .skipAdapters = skipAdapters,
+            .r1Path = r1,
+            .r2Path = paired ? std::optional<std::string>(r2) : std::nullopt,
+        };
+        // Plot generation uses the evaluation engine, which is manifest-only.
+        writeRunManifest(stagingDir, manifest);
+        if (plot)
+        {
+            PlotOptions options;
+            options.includeAdapters = !skipAdapters;
+            PlotRunner::runAll(stagingDir.string(), (stagingDir / "plots").string(), options);
+        }
+        writeRunManifest(stagingDir, manifest);
+        publishRun(stagingDir, outputDir);
+        return analysis;
+    }
+    catch (...)
+    {
+        if (fs::exists(stagingDir))
+        {
+            std::error_code ignored;
+            fs::remove_all(stagingDir, ignored);
+        }
+        throw;
+    }
+}
+
+void writeCaseSummary(
+    const std::string& patientId,
+    const fs::path& caseOutputDir,
+    const std::vector<BatchSampleResult>& results,
+    const std::vector<std::string>& warnings,
+    const std::string& batchRunId,
+    bool plot,
+    bool skipAdapters)
 {
     bool casePassed = true;
-    for (const auto& result : results) {
-        if (result.entry.patientId == patientId && !result.passed) casePassed = false;
-    }
 
-    const fs::path path = caseOutputDir / "case_summary.json";
-    std::ofstream output(path);
-    if (!output) throw std::runtime_error("Cannot write case summary: " + path.string());
-
-    output << "{\n"
-           << "  \"patient_id\": \"" << jsonEscape(patientId) << "\",\n"
-           << "  \"status\": \"" << (casePassed ? "passed" : "failed") << "\",\n"
-           << "  \"neoqc_version\": \"0.1\",\n"
-           << "  \"run_date\": \"" << currentUtcTimestamp() << "\",\n"
-           << "  \"warnings\": [";
-
-    bool firstWarning = true;
-    for (const auto& warning : warnings) {
-        if (warning.find("Patient " + patientId + ":") == std::string::npos) continue;
-        if (!firstWarning) output << ", ";
-        output << "\"" << jsonEscape(warning) << "\"";
-        firstWarning = false;
-    }
-    output << "],\n  \"samples\": [\n";
-
-    bool firstSample = true;
-    for (const auto& result : results) {
-        if (result.entry.patientId != patientId) continue;
-        if (!firstSample) output << ",\n";
-        firstSample = false;
-
-        const auto& entry = result.entry;
-        output << "    {\n"
-               << "      \"sample_id\": \"" << jsonEscape(entry.sampleId) << "\",\n"
-               << "      \"role\": \"" << jsonEscape(entry.sampleRole) << "\",\n"
-               << "      \"material\": \"" << jsonEscape(entry.material) << "\",\n"
-               << "      \"r1\": \"" << jsonEscape(entry.r1) << "\",\n"
-               << "      \"r2\": \"" << jsonEscape(entry.r2) << "\",\n"
-               << "      \"qc_status\": \"" << (result.passed ? "passed" : "failed") << "\"";
-
-        if (result.passed && result.analysis) {
-            output << ",\n      \"r1_reads\": " << result.analysis->r1Stats.totalReads;
-            if (result.analysis->r2Stats) {
-                output << ",\n      \"r2_reads\": " << result.analysis->r2Stats->totalReads;
-            }
-        } else {
-            output << ",\n      \"qc_error\": \"" << jsonEscape(result.error) << "\"";
+    for (const auto& result : results)
+    {
+        if (result.entry.patientId == patientId &&
+            !result.passed)
+        {
+            casePassed = false;
         }
-        output << "\n    }";
     }
-    output << "\n  ]\n}\n";
+
+    const fs::path path =
+        caseOutputDir / "case_summary.json";
+
+    writeAtomically(path, [&](std::ostream& output)
+    {
+        output << "{\n"
+               << "  \"patient_id\": \""
+               << jsonEscape(patientId)
+               << "\",\n"
+               << "  \"status\": \""
+               << (casePassed ? "passed" : "failed")
+               << "\",\n"
+               << "  \"neoqc_version\": \""
+               << NEOQC_VERSION
+               << "\",\n"
+               << "  \"run_id\": \""
+               << jsonEscape(batchRunId)
+               << "\",\n"
+               << "  \"parameters\": {\"plot\": "
+               << (plot ? "true" : "false")
+               << ", \"skip_adapters\": "
+               << (skipAdapters ? "true" : "false")
+               << "},\n"
+               << "  \"ruleset\": {"
+                  "\"id\": \"fastqc-compatible-v1\", "
+                  "\"version\": \"1.0.0\", "
+                  "\"sha256\": \"" NEOQC_RULESET_SHA256 "\"},\n"
+               << "  \"run_date\": \""
+               << currentUtcTimestamp()
+               << "\",\n"
+               << "  \"warnings\": [";
+
+        bool firstWarning = true;
+
+        for (const auto& warning : warnings)
+        {
+            if (warning.find(
+                    "Patient " + patientId + ":")
+                == std::string::npos)
+            {
+                continue;
+            }
+
+            if (!firstWarning)
+                output << ", ";
+
+            output << "\""
+                   << jsonEscape(warning)
+                   << "\"";
+
+            firstWarning = false;
+        }
+
+        output << "],\n"
+               << "  \"samples\": [\n";
+
+        bool firstSample = true;
+
+        for (const auto& result : results)
+        {
+            if (result.entry.patientId != patientId)
+                continue;
+
+            if (!firstSample)
+                output << ",\n";
+
+            firstSample = false;
+
+            const auto& entry = result.entry;
+
+            output << "    {\n"
+                   << "      \"sample_id\": \""
+                   << jsonEscape(entry.sampleId)
+                   << "\",\n"
+                   << "      \"role\": \""
+                   << jsonEscape(entry.sampleRole)
+                   << "\",\n"
+                   << "      \"material\": \""
+                   << jsonEscape(entry.material)
+                   << "\",\n"
+                   << "      \"r1\": \""
+                   << jsonEscape(entry.r1)
+                   << "\",\n"
+                   << "      \"r2\": \""
+                   << jsonEscape(entry.r2)
+                   << "\",\n"
+                   << "      \"qc_status\": \""
+                   << (result.passed
+                           ? "passed"
+                           : "failed")
+                   << "\"";
+
+            if (result.passed &&
+                result.analysis)
+            {
+                output
+                    << ",\n      \"r1_reads\": "
+                    << result.analysis->r1Stats.totalReads;
+
+                if (result.analysis->r2Stats)
+                {
+                    output
+                        << ",\n      \"r2_reads\": "
+                        << result.analysis->r2Stats->totalReads;
+                }
+            }
+            else
+            {
+                output
+                    << ",\n      \"qc_error\": \""
+                    << jsonEscape(result.error)
+                    << "\"";
+            }
+
+            output << "\n    }";
+        }
+
+        output << "\n  ]\n}\n";
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1305,45 +1799,20 @@ int main(int argc, char* argv[]) {
                                          + "': " + ec.message());
             }
 
+            const std::string batchRunId = generateRunId();
             std::vector<BatchSampleResult> results;
             bool allPassed = true;
             for (const auto& entry : entries) {
                 const fs::path sampleOutDir = fs::path(args.outDir)
                                               / entry.patientId / entry.sampleId;
-                fs::create_directories(sampleOutDir, ec);
-                if (ec) {
-                    throw std::runtime_error("Cannot create output directory '"
-                                             + sampleOutDir.string() + "': " + ec.message());
-                }
-
                 std::cout << "\nCase " << entry.patientId << " — checking " << entry.sampleId
                           << "\nR1: " << entry.r1 << "\n";
                 if (!entry.r2.empty()) std::cout << "R2: " << entry.r2 << "\n";
 
                 try {
-                    AnalysisResult analysis;
-                    if (entry.r2.empty()) {
-                        analysis = processOneFile(
-                            entry.r1,
-                            "R1",
-                            sampleOutDir.string(),
-                            entry.sampleId,
-                            args.skipAdapters);
-                    } else {
-                        analysis = processPairedFiles(
-                            entry.r1,
-                            entry.r2,
-                            sampleOutDir.string(),
-                            entry.sampleId,
-                            args.skipAdapters);
-                    }
-
-                    if (args.plot) {
-                        const std::string plotDir = (sampleOutDir / "plots").string();
-                        PlotOptions plotOptions;
-                        plotOptions.includeAdapters = !args.skipAdapters;
-                        PlotRunner::runAll(sampleOutDir.string(), plotDir, plotOptions);
-                    }
+                    AnalysisResult analysis = runSampleTransaction(
+                        entry.r1, entry.r2, entry.sampleId, sampleOutDir,
+                        args.plot, args.skipAdapters);
                     std::cout << "Result: passed\n";
                     results.push_back({entry, true, std::move(analysis), ""});
                 } catch (const std::exception& e) {
@@ -1352,11 +1821,19 @@ int main(int argc, char* argv[]) {
                     results.push_back({entry, false, std::nullopt, e.what()});
                 }
             }
-
-            for (const auto& entry : entries) {
-                const fs::path caseOutDir = fs::path(args.outDir) / entry.patientId;
-                if (!fs::exists(caseOutDir / "case_summary.json")) {
-                    writeCaseSummary(entry.patientId, caseOutDir, results, warnings);
+            
+            {
+                std::vector<std::string> patientIds;
+                for (const auto& entry : entries)
+                {
+                    if (std::find(patientIds.begin(), patientIds.end(), entry.patientId) == patientIds.end())
+                        patientIds.push_back(entry.patientId);
+                }
+                for (const auto& patientId : patientIds)
+                {
+                    const fs::path caseOutDir = fs::path(args.outDir) / patientId;
+                    writeCaseSummary(patientId, caseOutDir, results, warnings,
+                                     batchRunId, args.plot, args.skipAdapters);
                     std::cout << "Case summary: " << (caseOutDir / "case_summary.json") << "\n";
                 }
             }
@@ -1384,16 +1861,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Создание выходного каталога
-    {
-        std::error_code ec;
-        fs::create_directories(args.outDir, ec);
-        if (ec) {
-            std::cerr << "Error: cannot create output directory '"
-                      << args.outDir << "': " << ec.message() << "\n";
-            return 1;
-        }
-    }
 
     const bool isPaired = !args.r2.empty();
     std::cout << "Sample ID : " << args.sampleId << "\n"
@@ -1403,14 +1870,26 @@ int main(int argc, char* argv[]) {
     std::cout << "Output    : " << args.outDir << "\n";
     if (args.skipAdapters) std::cout << "Adapters  : skipped\n";
 
+    const std::string runId = generateRunId();
+
+    fs::path stagingDir;
+    RunManifest manifest;
+
     try
     {
+        stagingDir = createStagingDirectory(
+            fs::path(args.outDir),
+            runId);
+
+        std::cout << "Run ID    : " << runId << "\n";
+        std::cout << "Staging   : " << stagingDir << "\n";
+
         if (isPaired)
         {
             processPairedFiles(
                 args.r1,
                 args.r2,
-                args.outDir,
+                stagingDir.string(),
                 args.sampleId,
                 args.skipAdapters);
         }
@@ -1419,24 +1898,117 @@ int main(int argc, char* argv[]) {
             processOneFile(
                 args.r1,
                 "R1",
-                args.outDir,
+                stagingDir.string(),
                 args.sampleId,
                 args.skipAdapters);
         }
+
+        manifest = RunManifest{
+            .runId = runId,
+            .createdAt = currentUtcTimestamp(),
+            .sampleId = args.sampleId,
+            .paired = isPaired,
+            .plot = args.plot,
+            .skipAdapters = args.skipAdapters,
+            .r1Path = args.r1,
+            .r2Path = args.r2.empty()
+                ? std::nullopt
+                : std::optional<std::string>(args.r2)
+        };
+
+        writeRunManifest(
+            stagingDir,
+            manifest);
     }
     catch (const std::exception& e)
     {
         std::cerr << e.what() << '\n';
+
+        if (!stagingDir.empty())
+        {
+            try
+            {
+                removeStagingDirectory(stagingDir);
+            }
+            catch (const std::exception& cleanupError)
+            {
+                std::cerr
+                    << "Warning: failed to remove staging directory: "
+                    << cleanupError.what()
+                    << '\n';
+            }
+        }
+
         return 1;
     }
 
     // Построение графиков (опционально, через PlotRunner)
-    if (args.plot) {
-        std::string plotDir = args.outDir + "/plots";
-        PlotOptions plotOptions;
-        plotOptions.includeAdapters = !args.skipAdapters;
-        PlotRunner::runAll(args.outDir, plotDir, plotOptions);
+    if (args.plot)
+    {
+        try
+        {
+            const fs::path plotDir = stagingDir / "plots";
+
+            PlotOptions plotOptions;
+            plotOptions.includeAdapters = !args.skipAdapters;
+
+            PlotRunner::runAll(
+                stagingDir.string(),
+                plotDir.string(),
+                plotOptions);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << e.what() << '\n';
+
+            try
+            {
+                removeStagingDirectory(stagingDir);
+            }
+            catch (const std::exception& cleanupError)
+            {
+                std::cerr
+                    << "Warning: failed to remove staging directory: "
+                    << cleanupError.what()
+                    << '\n';
+            }
+
+            return 1;
+        }
     }
+
+    writeRunManifest(
+        stagingDir,
+        manifest);
+
+    try
+    {
+        publishRun(
+            stagingDir,
+            fs::path(args.outDir));
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << e.what() << '\n';
+
+        if (fs::exists(stagingDir))
+        {
+            try
+            {
+                removeStagingDirectory(stagingDir);
+            }
+            catch (const std::exception& cleanupError)
+            {
+                std::cerr
+                    << "Warning: failed to remove staging directory: "
+                    << cleanupError.what()
+                    << '\n';
+            }
+        }
+
+        return 1;
+    }
+
 
     const auto end = Clock::now();
 

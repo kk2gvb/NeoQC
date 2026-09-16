@@ -177,6 +177,30 @@ bool FastqReader::readNext(FastqRecord& record) {
         throw std::runtime_error(oss.str());
     }
 
+    // Проверяем допустимый диапазон Phred+33
+    for (std::size_t position = 0;
+        position < record.quality.size();
+        ++position)
+    {
+        const unsigned char qualityChar =
+            static_cast<unsigned char>(record.quality[position]);
+
+        if (qualityChar < 33 || qualityChar > 126)
+        {
+            std::ostringstream oss;
+
+            oss << "FASTQ validation error:\n"
+                << "file: " << filename << "\n"
+                << "record: " << (readCount + 1) << "\n"
+                << "position: " << (position + 1) << "\n"
+                << "reason: invalid Phred+33 quality character "
+                << "(ASCII " << static_cast<unsigned int>(qualityChar)
+                << ")";
+
+            throw std::runtime_error(oss.str());
+        }
+    }
+
     // Нумеруем запись
     readCount++;
     record.recordNumber = readCount;

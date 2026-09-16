@@ -13,6 +13,7 @@ from typing import Mapping
 
 from qc_observations import EXTRACTORS, ObservationError, extract_observations, source_path
 
+MANIFEST_FILENAME = "run_manifest.json"
 
 DEFAULT_RULESET = (
     Path(__file__).resolve().parents[1]
@@ -229,24 +230,98 @@ def _checks(rule: MetricRule) -> list[dict[str, object]]:
     return result
 
 
-def _active_reads(input_dir: Path, ruleset: Ruleset) -> tuple[str, ...]:
-    return tuple(
-        read
-        for read in ("R1", "R2")
-        if any(source_path(input_dir, rule.metric_id, read).is_file() for rule in ruleset.rules)
-    )
+def _manifest_active_reads(input_dir: Path) -> tuple[str, ...]:
+    manifest_path = input_dir / "run_manifest.json"
+
+    if not manifest_path.is_file():
+        raise QcRuleError(
+            f"Run manifest is missing: {manifest_path}"
+        )
+
+    try:
+        with manifest_path.open("r", encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except json.JSONDecodeError as exc:
+        raise QcRuleError(
+            f"Invalid run manifest: {manifest_path}: {exc}"
+        ) from exc
+    except OSError as exc:
+        raise QcRuleError(
+            f"Cannot read run manifest: {manifest_path}: {exc}"
+        ) from exc
+
+    if not isinstance(manifest, Mapping) or manifest.get("schema_version") != 1:
+        raise QcRuleError(f"Unsupported run manifest schema: {manifest_path}")
+    if not isinstance(manifest.get("run_id"), str) or not manifest["run_id"].strip():
+        raise QcRuleError(f"Run manifest has no run_id: {manifest_path}")
+
+    reads = manifest.get("reads")
+
+    if not isinstance(reads, list):
+        raise QcRuleError(
+            f"Run manifest field 'reads' must be a list: {manifest_path}"
+        )
+
+    if reads not in (["R1"], ["R1", "R2"]):
+        raise QcRuleError(
+            f"Unsupported read configuration in run manifest: {reads}"
+        )
+
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, list) or not all(
+        isinstance(artifact, str) and artifact and not Path(artifact).is_absolute()
+        for artifact in artifacts
+    ):
+        raise QcRuleError(
+            f"Run manifest field 'artifacts' must be a list of relative paths: {manifest_path}"
+        )
+    if len(set(artifacts)) != len(artifacts):
+        raise QcRuleError(f"Run manifest contains duplicate artifact paths: {manifest_path}")
+
+    return tuple(reads)
+
+
+def _manifest_artifacts(input_dir: Path) -> frozenset[str]:
+    """Return validated publication inventory from the current run manifest."""
+    manifest_path = input_dir / MANIFEST_FILENAME
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:  # validated above; defensive here
+        raise QcRuleError(f"Cannot read run manifest: {manifest_path}: {exc}") from exc
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, list):
+        raise QcRuleError(f"Run manifest field 'artifacts' must be a list: {manifest_path}")
+    return frozenset(artifacts)
+
+
+def _active_reads(
+    input_dir: Path,
+    ruleset: Ruleset,
+) -> tuple[str, ...]:
+    del ruleset
+    return _manifest_active_reads(input_dir)
 
 
 def evaluate_directory(input_dir: Path, ruleset_path: Path = DEFAULT_RULESET) -> dict[str, object]:
     input_dir = input_dir.resolve()
     ruleset = load_ruleset(ruleset_path.resolve())
     reads = _active_reads(input_dir, ruleset)
-    if not reads:
-        raise QcRuleError(f"no recognized NeoQC TSV files found in {input_dir}")
+    artifacts = _manifest_artifacts(input_dir)
+    
     evaluations: list[dict[str, object]] = []
     for read in reads:
         for rule in ruleset.rules:
             path = source_path(input_dir, rule.metric_id, read)
+            if path.is_file() and path.name not in artifacts:
+                evaluations.append(
+                    _not_evaluated(
+                        rule,
+                        read,
+                        "evaluation.source_not_published",
+                        f"Source data is not declared by run_manifest.json: {path.name}.",
+                    )
+                )
+                continue
             if not path.is_file():
                 evaluations.append(
                     _not_evaluated(

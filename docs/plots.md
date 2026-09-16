@@ -16,10 +16,10 @@ It contains one entry for every supported metric and read direction, including
 generated, skipped and failed plots. File paths in the manifest are relative to
 the plot directory.
 
-NeoQC also writes `<result>/neoqc_qc_report.html`. This is a compact,
-self-contained sequencing QC report, separate from the complete clinical HTML
-report. It groups R1 and R2 by metric, embeds chart assets as data URIs, includes
-basic statistics, provides print/PDF styling and can open charts at full size.
+NeoQC also writes `<result>/neoqc_qc_report.html`. This is a self-contained
+sequencing QC report. It groups R1 and R2 by metric, embeds chart assets as data
+URIs, includes basic statistics, provides print/PDF styling and can open charts
+at full size.
 
 NeoQC also writes `<result>/qc_evaluation.json`. It contains explainable,
 versioned technical QC decisions for every metric/read pair. Plot artifact
@@ -62,6 +62,12 @@ and file semantics are documented in
 `lower_quartile` and `median`. The latter two columns are required for the
 FastQC-compatible per-base quality decision. Older mean-only files still plot,
 but are reported as `NOT EVALUATED` rather than receiving an inferred PASS.
+
+`per_sequence_quality_R1.tsv` and `per_sequence_quality_R2.tsv` use
+`mean_quality`, `read_count` and `read_count_truncate`. The rounded distribution
+is the native NeoQC view; the truncated distribution matches FastQC binning and
+is used by the FastQC-compatible decision profile. Legacy two-column files
+without `read_count_truncate` remain readable and fall back to `read_count`.
 
 Missing R2 inputs are recorded as `source_not_found`. When adapter analysis is
 disabled, adapter entries are recorded as `adapter_analysis_disabled`; all

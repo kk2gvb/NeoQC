@@ -41,6 +41,6 @@ if(NOT summary_content MATCHES "\nnative_fastq\tneoqc-exact-prefix-v1\tsequence_
 endif()
 
 file(READ "${OVERREPRESENTED}" overrepresented_content)
-if(NOT overrepresented_content MATCHES "^sequence\tcount\tpercentage\tpossible_source\n")
+if(NOT overrepresented_content MATCHES "^sequence\tcount\tpercentage\n")
     message(FATAL_ERROR "Unexpected overrepresented-sequence schema")
 endif()

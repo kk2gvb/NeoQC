@@ -202,21 +202,24 @@ def plot_per_base_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
 def plot_per_sequence_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
     x = _values(rows, "mean_quality")
     counts = _values(rows, "read_count")
-    truncate_counts = _values(rows, "read_count_truncate")
+    truncate_counts = (
+        _values(rows, "read_count_truncate")
+        if "read_count_truncate" in rows[0]
+        else None
+    )
     mean, median, mode = _weighted_summary(x, counts)
     total = sum(counts)
     if total <= 0:
         raise PlotDataError("Per sequence quality scores contains no observations")
-    truncate_total = sum(truncate_counts)
-    if truncate_total <= 0:
-        raise PlotDataError(
-            "Per sequence quality scores truncate distribution contains no observations"
-        )
     shares = [count / total * 100.0 for count in counts]
-    truncate_shares = [
-        count / truncate_total * 100.0
-        for count in truncate_counts
-    ]
+    truncate_shares: list[float] | None = None
+    if truncate_counts is not None:
+        truncate_total = sum(truncate_counts)
+        if truncate_total <= 0:
+            raise PlotDataError(
+                "Per sequence quality scores truncate distribution contains no observations"
+            )
+        truncate_shares = [count / truncate_total * 100.0 for count in truncate_counts]
     fig, ax = plt.subplots(figsize=FIGURE_SIZE)
     setup_axes(
         ax,
@@ -229,9 +232,28 @@ def plot_per_sequence_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
     ax.axvspan(20, 30, color=WARNING, alpha=0.065, linewidth=0)
     ax.axvspan(30, max(x), color=ACCENT, alpha=0.055, linewidth=0)
     ax.fill_between(x, shares, color=ACCENT, alpha=0.18, linewidth=0)
-    ax.plot(x, shares, color=BRAND_DARK, linewidth=2.2, marker="o", markersize=3.2, zorder=3, label="NeoQC (rounded)")
-    ax.plot(x, truncate_shares, color=WARNING, linewidth=1.8, linestyle="--", label="Truncated distribution")
-    ax.set_ylim(0, min(100.0, max(max(shares), max(truncate_shares)) * 1.18 + 1.0))
+    ax.plot(
+        x,
+        shares,
+        color=BRAND_DARK,
+        linewidth=2.2,
+        marker="o",
+        markersize=3.2,
+        zorder=3,
+        label="NeoQC (rounded)" if truncate_shares is not None else "Read distribution",
+    )
+    peak = max(shares)
+    if truncate_shares is not None:
+        ax.plot(
+            x,
+            truncate_shares,
+            color=WARNING,
+            linewidth=1.8,
+            linestyle="--",
+            label="FastQC-compatible (truncated)",
+        )
+        peak = max(peak, max(truncate_shares))
+    ax.set_ylim(0, min(100.0, peak * 1.18 + 1.0))
     ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}%"))
 
     x_padding = max(0.8, (max(x) - min(x)) * 0.018)
@@ -330,17 +352,41 @@ def plot_base_content(rows: Rows, read: str) -> tuple[plt.Figure, str]:
 def plot_gc_content(rows: Rows, read: str) -> tuple[plt.Figure, str]:
     x = _values(rows, "gc_percent")
     _ensure_range(x, "GC percentage", 0, 100)
-    counts = _values(rows, "reads")
-    mean, median, mode = _weighted_summary(x, counts)
-    theoretical_x, theoretical, theoretical_centre, deviation = fastqc_theoretical_gc(x, counts)
+
+    observed_counts = _values(rows, "raw_read_count")
+    fastqc_counts = _values(rows, "fastqc_observed_count")
+
+    mean, median, mode = _weighted_summary(x, observed_counts)
+
+    theoretical_x, theoretical, theoretical_centre, deviation = fastqc_theoretical_gc(
+        x,
+        fastqc_counts,
+    )
     fig, ax = plt.subplots(figsize=FIGURE_SIZE)
     setup_axes(ax, "Per sequence GC content", "GC content (%)", "Reads", read)
-    ax.fill_between(x, counts, color=ACCENT, alpha=0.20, linewidth=0)
-    ax.plot(x, counts, color=BRAND_DARK, linewidth=2.2, label="Observed")
+    # FastQC-compatible observed distribution
+    ax.plot(
+        x,
+        fastqc_counts,
+        color='red',
+        linewidth=2.2,
+        label="Observed (FastQC-compatible)",
+    )
+
+    # Raw observed distribution
+    ax.scatter(
+        x,
+        observed_counts,
+        marker='x',
+        color='green',
+        s=18,
+        label="Raw observed",
+        zorder=3,
+    )
     ax.plot(
         theoretical_x,
         theoretical,
-        color=WARNING,
+        color='dodgerblue',
         linewidth=2.0,
         linestyle="--",
         label="Theoretical distribution",
@@ -543,7 +589,14 @@ METRICS: tuple[MetricSpec, ...] = (
     ),
     MetricSpec("adapter_content", "adapter_content", "adapter_content", "Adapter content", ("pos",), plot_adapter_content, adapters_only=True, variable_series=True),
     MetricSpec("per_base_sequence_content", "per_base_sequence_content", "per_base_sequence_content", "Per base sequence content", ("position", "A", "C", "G", "T", "N"), plot_base_content),
-    MetricSpec("per_sequence_gc_content", "per_sequence_gc_content", "per_sequence_gc_content", "Per sequence GC content", ("gc_percent", "reads"), plot_gc_content),
+    MetricSpec(
+        "per_sequence_gc_content",
+        "per_sequence_gc_content",
+        "per_sequence_gc_content",
+        "Per sequence GC content",
+        ("gc_percent", "raw_read_count", "fastqc_observed_count"),
+        plot_gc_content,
+    ),
     MetricSpec("per_base_n_content", "per_base_n_content", "per_base_n_content", "Per base N content", ("position", "N_percent"), plot_n_content),
     MetricSpec("sequence_length_distribution", "sequence_length_distribution", "sequence_length_distribution", "Sequence length distribution", ("length", "reads"), plot_length_distribution),
     MetricSpec(
@@ -555,7 +608,15 @@ METRICS: tuple[MetricSpec, ...] = (
         plot_sequence_duplication_levels,
         text_columns=("duplication_level",),
     ),
-    MetricSpec("per_sequence_quality", "per_sequence_quality", "per_sequence_quality", "Per sequence quality scores", ("mean_quality", "read_count", "read_count_truncate"), plot_per_sequence_quality),
+    MetricSpec(
+        "per_sequence_quality",
+        "per_sequence_quality",
+        "per_sequence_quality",
+        "Per sequence quality scores",
+        ("mean_quality", "read_count"),
+        plot_per_sequence_quality,
+        optional_columns=("read_count_truncate",),
+    ),
 )
 
 RETIRED_PLOT_PREFIXES = ("quality_distribution",)

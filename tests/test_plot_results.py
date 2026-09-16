@@ -26,7 +26,14 @@ FIXTURES = {
         "position\tA\tC\tG\tT\tN\n"
         "1\t25\t25\t25\t25\t0\n2\t27\t24\t24\t24\t1\n3\t29\t23\t23\t23\t2\n"
     ),
-    "per_sequence_gc_content": "gc_percent\treads\n30\t5\n40\t30\n50\t80\n60\t25\n70\t4\n",
+    "per_sequence_gc_content": (
+        "gc_percent\traw_read_count\tfastqc_observed_count\n"
+        "30\t5\t5\n"
+        "40\t30\t30\n"
+        "50\t80\t80\n"
+        "60\t25\t25\n"
+        "70\t4\t4\n"
+    ),
     "per_base_n_content": "position\tN_percent\n1\t0\n2\t0.2\n3\t1.5\n4\t0.4\n",
     "sequence_length_distribution": "length\treads\n75\t5\n100\t15\n150\t80\n",
     "sequence_duplication_levels": (
@@ -34,21 +41,39 @@ FIXTURES = {
         "1\t13.4\t51.5\n2\t10.2\t20.4\n3\t8.1\t10.7\n"
         "4\t6.0\t6.1\n5\t3.8\t3.0\n>10\t14.0\t2.9\n>50\t5.2\t0.3\n"
     ),
-    "per_sequence_quality": "mean_quality\tread_count\n20\t4\n30\t45\n35\t70\n40\t10\n",
+    "per_sequence_quality": (
+        "mean_quality\tread_count\tread_count_truncate\n"
+        "20\t4\t5\n30\t45\t47\n35\t70\t68\n40\t10\t9\n"
+    ),
 }
+
+
+def write_manifest(directory: Path, reads: tuple[str, ...] = ("R1",)) -> None:
+    artifacts = [
+        f"{prefix}_{read}.tsv"
+        for read in reads
+        for prefix in FIXTURES
+    ]
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "run_manifest.json").write_text(
+        json.dumps({"schema_version": 1, "run_id": "test-run", "reads": list(reads), "artifacts": artifacts}),
+        encoding="utf-8",
+    )
 
 
 def write_fixture_set(directory: Path, reads: tuple[str, ...] = ("R1", "R2")) -> None:
     directory.mkdir(parents=True, exist_ok=True)
+
     for read in reads:
         for prefix, content in FIXTURES.items():
             (directory / f"{prefix}_{read}.tsv").write_text(content, encoding="utf-8")
-        overrepresented = "sequence\tcount\tpercentage\tpossible_source\n"
+        overrepresented = "sequence\tcount\tpercentage\n"
         if read == "R2":
-            overrepresented += f"{'T' * 50}\t269055\t0.4065003125\tNo Hit\n"
+            overrepresented += f"{'T' * 50}\t269055\t0.4065003125\n"
         (directory / f"overrepresented_sequences_{read}.tsv").write_text(
             overrepresented, encoding="utf-8"
         )
+    write_manifest(directory, reads)
 
 
 def run_plotter(input_dir: Path, output_dir: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -148,6 +173,7 @@ class PlotResultsTest(unittest.TestCase):
             input_dir = root / "input"
             output_dir = root / "output"
             input_dir.mkdir()
+            write_manifest(input_dir)
             (input_dir / "sequence_duplication_levels_R1.tsv").write_text(
                 "duplication_level\ttotal_sequences_percent\tdeduplicated_sequences_percent\n"
                 "1\t101\t50\n",
@@ -171,6 +197,7 @@ class PlotResultsTest(unittest.TestCase):
             input_dir = root / "input"
             output_dir = root / "output"
             input_dir.mkdir()
+            write_manifest(input_dir)
             (input_dir / "sequence_length_distribution_R1.tsv").write_text(
                 "length\treads\n100\t66188141\n", encoding="utf-8"
             )
@@ -194,6 +221,7 @@ class PlotResultsTest(unittest.TestCase):
             input_dir = root / "input"
             output_dir = root / "output"
             input_dir.mkdir()
+            write_manifest(input_dir)
             (input_dir / "per_cycle_R1.tsv").write_text(FIXTURES["per_cycle"], encoding="utf-8")
 
             result = run_plotter(input_dir, output_dir, "--formats", "png", "--strict")
@@ -209,6 +237,7 @@ class PlotResultsTest(unittest.TestCase):
             input_dir = root / "input"
             output_dir = root / "output"
             input_dir.mkdir()
+            write_manifest(input_dir)
             (input_dir / "per_cycle_R1.tsv").write_text(FIXTURES["per_cycle"], encoding="utf-8")
             (input_dir / "adapter_content_R1.tsv").write_text(FIXTURES["adapter_content"], encoding="utf-8")
             output_dir.mkdir()
@@ -232,6 +261,7 @@ class PlotResultsTest(unittest.TestCase):
             input_dir = root / "input"
             output_dir = root / "output"
             input_dir.mkdir()
+            write_manifest(input_dir)
             (input_dir / "per_cycle_R1.tsv").write_text("cycle\twrong\n1\t30\n", encoding="utf-8")
 
             result = run_plotter(input_dir, output_dir, "--formats", "svg", "--strict")

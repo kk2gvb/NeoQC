@@ -156,12 +156,11 @@ R1 и R2.
 ctest --test-dir build --output-on-failure
 ```
 
-Подробности интеграции: [расчёт дупликации](docs/sequence-duplication.md),
-[контракт графиков](docs/plots.md),
-[движок QC-статусов](docs/qc-status-engine.md) и
-[полный отчёт neo-mRNA-vax](docs/html-report.md).
+Подробности реализации: [расчёт дупликации](docs/sequence-duplication.md),
+[контракт графиков](docs/plots.md) и
+[движок QC-статусов](docs/qc-status-engine.md).
 
 NeoQC — самостоятельный инструмент первичного контроля данных NGS,
 используемый в составе платформы **neo-mRNA-vax**.
 
-Текущая стабильная версия: **`v1.0.0`**.
+Текущая стабильная версия: **`v1.0.1`**.
