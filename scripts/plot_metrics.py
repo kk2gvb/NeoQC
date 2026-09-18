@@ -62,6 +62,7 @@ class MetricSpec:
     variable_series: bool = False
     text_columns: tuple[str, ...] = ()
     optional_columns: tuple[str, ...] = ()
+    allow_nan_columns: tuple[str, ...] = ()
 
     def source_name(self, read: str) -> str:
         return f"{self.source_prefix}_{read}.tsv"
@@ -118,14 +119,26 @@ def _read_numeric_tsv(path: Path, spec: MetricSpec) -> Rows:
                     raise PlotDataError(
                         f"{path.name}:{line_number}: {column} is not numeric"
                     ) from error
+
+                if math.isnan(number):
+                    if column in spec.allow_nan_columns:
+                        converted[column] = number
+                        continue
+
+                    raise PlotDataError(
+                        f"{path.name}:{line_number}: {column} is not finite"
+                    )
+
                 if not math.isfinite(number):
                     raise PlotDataError(
                         f"{path.name}:{line_number}: {column} is not finite"
                     )
+
                 if number < 0:
                     raise PlotDataError(
                         f"{path.name}:{line_number}: {column} must not be negative"
                     )
+
                 converted[column] = number
             rows.append(converted)
 
@@ -178,25 +191,252 @@ def _line_marker_stride(values: Sequence[float]) -> int:
     return max(1, len(values) // 16)
 
 
+def _parse_cycle_label(label: str) -> tuple[int, int]:
+    label = label.strip()
+
+    if "-" in label:
+        parts = label.split("-", 1)
+        if len(parts) != 2:
+            raise PlotDataError(f"invalid cycle range: {label}")
+
+        try:
+            start = int(parts[0])
+            end = int(parts[1])
+        except ValueError as error:
+            raise PlotDataError(f"invalid cycle range: {label}") from error
+
+        if start <= 0 or end < start:
+            raise PlotDataError(f"invalid cycle range: {label}")
+
+        return start, end
+
+    try:
+        position = int(label)
+    except ValueError as error:
+        raise PlotDataError(f"invalid cycle value: {label}") from error
+
+    if position <= 0:
+        raise PlotDataError(f"invalid cycle value: {label}")
+
+    return position, position
+
+
 def plot_per_base_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
-    x = _values(rows, "cycle")
-    y = _values(rows, "mean_quality")
+    labels = _labels(rows, "cycle")
+
+    groups = [_parse_cycle_label(label) for label in labels]
+
+    means = _values(rows, "mean_quality")
+
+    if len(labels) != len(means):
+        raise PlotDataError("cycle and mean_quality have different lengths")
+
+    lower_quartiles = [
+        row["lower_quartile"]
+        for row in rows
+        if isinstance(row["lower_quartile"], float)
+        and math.isfinite(row["lower_quartile"])
+    ]
+
+    medians = [
+        row["median"]
+        for row in rows
+        if isinstance(row["median"], float)
+        and math.isfinite(row["median"])
+    ]
+
+    if lower_quartiles:
+        _ensure_range(
+            lower_quartiles,
+            "lower quartile quality",
+            0,
+            100,
+        )
+
+    if medians:
+        _ensure_range(
+            medians,
+            "median quality",
+            0,
+            100,
+        )
+
+    _ensure_range(means, "mean quality", 0, 100)
+
+    centers = [(start + end) / 2.0 for start, end in groups]
+
     fig, ax = plt.subplots(figsize=FIGURE_SIZE)
-    setup_axes(ax, "Per base sequence quality", "Position in read (bp)", "Mean Phred quality", read)
-    upper = max(42.0, max(y) + 3.0)
-    ax.axhspan(0, 20, color=DANGER, alpha=0.09, linewidth=0)
-    ax.axhspan(20, 30, color=WARNING, alpha=0.10, linewidth=0)
-    ax.axhspan(30, upper, color=ACCENT, alpha=0.09, linewidth=0)
-    ax.axhline(20, color=DANGER, linewidth=0.9, linestyle="--", alpha=0.8)
-    ax.axhline(30, color=ACCENT, linewidth=0.9, linestyle="--", alpha=0.8)
-    ax.plot(x, y, color=BRAND, marker="o", markevery=_line_marker_stride(x), markersize=3.2, zorder=3)
-    ax.set_xlim(min(x), max(x) if len(x) > 1 else min(x) + 1)
+
+    setup_axes(
+        ax,
+        "Per base sequence quality",
+        "Position in read (bp)",
+        "Phred quality",
+        read,
+    )
+
+    upper = max(
+        42.0,
+        max(means) + 3.0,
+        max(lower_quartiles, default=0.0) + 3.0,
+        max(medians, default=0.0) + 3.0,
+    )
+
+    # FastQC-like quality zones.
+    ax.axhspan(
+        0,
+        20,
+        color=DANGER,
+        alpha=0.09,
+        linewidth=0,
+    )
+
+    ax.axhspan(
+        20,
+        30,
+        color=WARNING,
+        alpha=0.10,
+        linewidth=0,
+    )
+
+    ax.axhspan(
+        30,
+        upper,
+        color=ACCENT,
+        alpha=0.09,
+        linewidth=0,
+    )
+
+    # Quality thresholds.
+    ax.axhline(
+        20,
+        color=DANGER,
+        linewidth=0.9,
+        linestyle="--",
+        alpha=0.8,
+    )
+
+    ax.axhline(
+        30,
+        color=ACCENT,
+        linewidth=0.9,
+        linestyle="--",
+        alpha=0.8,
+    )
+
+    # Mean quality.
+    ax.plot(
+        centers,
+        means,
+        color=BRAND,
+        marker="o",
+        markevery=_line_marker_stride(centers),
+        markersize=3.2,
+        linewidth=2.0,
+        label="Mean",
+        zorder=4,
+    )
+
+    # Lower quartile and median.
+    valid_q1_x: list[float] = []
+    valid_q1_y: list[float] = []
+
+    valid_median_x: list[float] = []
+    valid_median_y: list[float] = []
+
+    for center, row in zip(centers, rows):
+        lower_quartile = row["lower_quartile"]
+        median = row["median"]
+
+        if (
+            isinstance(lower_quartile, float)
+            and math.isfinite(lower_quartile)
+        ):
+            valid_q1_x.append(center)
+            valid_q1_y.append(lower_quartile)
+
+        if isinstance(median, float) and math.isfinite(median):
+            valid_median_x.append(center)
+            valid_median_y.append(median)
+
+    if valid_q1_x:
+        ax.plot(
+            valid_q1_x,
+            valid_q1_y,
+            color=DANGER,
+            linewidth=1.5,
+            linestyle="--",
+            label="Lower quartile (Q1)",
+            zorder=3,
+        )
+
+    if valid_median_x:
+        ax.plot(
+            valid_median_x,
+            valid_median_y,
+            color=BRAND_DARK,
+            linewidth=1.8,
+            label="Median",
+            zorder=3,
+        )
+
+    # X-axis labels.
+    if len(labels) <= 40:
+        ax.set_xticks(centers)
+        ax.set_xticklabels(labels, rotation=45, ha="right")
+    else:
+        stride = max(1, len(labels) // 12)
+        indices = list(range(0, len(labels), stride))
+
+        if indices[-1] != len(labels) - 1:
+            indices.append(len(labels) - 1)
+
+        ax.set_xticks([centers[index] for index in indices])
+        ax.set_xticklabels(
+            [labels[index] for index in indices],
+            rotation=45,
+            ha="right",
+        )
+
+    left = min(start for start, _ in groups)
+    right = max(end for _, end in groups)
+
+    if left == right:
+        ax.set_xlim(left - 1, right + 1)
+    else:
+        padding = max(1.0, (right - left) * 0.015)
+        ax.set_xlim(left - padding, right + padding)
+
     ax.set_ylim(0, upper)
-    label_x = min(x) + (max(x) - min(x)) * 0.01
-    ax.text(label_x, 30.4, "Q30", color=ACCENT, fontsize=7, va="bottom")
-    ax.text(label_x, 20.4, "Q20", color=WARNING, fontsize=7, va="bottom")
+
+    label_x = left + max(0.5, (right - left) * 0.01)
+
+    ax.text(
+        label_x,
+        30.4,
+        "Q30",
+        color=ACCENT,
+        fontsize=7,
+        va="bottom",
+    )
+
+    ax.text(
+        label_x,
+        20.4,
+        "Q20",
+        color=WARNING,
+        fontsize=7,
+        va="bottom",
+    )
+
+    ax.legend(loc="best")
+
     finish_figure(fig)
-    return fig, f"Mean Phred quality across {len(x)} {read} read positions."
+
+    return fig, (
+        f"Per base sequence quality across {len(groups)} {read} "
+        f"read groups."
+    )
 
 
 def plot_per_sequence_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
@@ -583,9 +823,10 @@ METRICS: tuple[MetricSpec, ...] = (
         "per_cycle",
         "per_base_quality",
         "Per base sequence quality",
-        ("cycle", "mean_quality"),
+        ("cycle", "mean_quality", "lower_quartile", "median"),
         plot_per_base_quality,
-        optional_columns=("lower_quartile", "median"),
+        text_columns=("cycle",),
+        allow_nan_columns=("lower_quartile", "median"),
     ),
     MetricSpec("adapter_content", "adapter_content", "adapter_content", "Adapter content", ("pos",), plot_adapter_content, adapters_only=True, variable_series=True),
     MetricSpec("per_base_sequence_content", "per_base_sequence_content", "per_base_sequence_content", "Per base sequence content", ("position", "A", "C", "G", "T", "N"), plot_base_content),

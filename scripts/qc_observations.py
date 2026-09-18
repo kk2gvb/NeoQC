@@ -42,7 +42,8 @@ def _read_numeric(
     *,
     optional: tuple[str, ...] = (),
     allow_extra: bool = False,
-    allow_nan: tuple[str, ...] = (),
+    text_columns: tuple[str, ...] = (),
+    allow_nan_columns: tuple[str, ...] = (),
 ) -> tuple[NumericRows, tuple[str, ...]]:
     try:
         handle = path.open("r", encoding="utf-8", newline="")
@@ -74,20 +75,37 @@ def _read_numeric(
             row: dict[str, float] = {}
             for column in columns:
                 value = (raw.get(column) or "").strip()
+
+                if column in text_columns:
+                    row[column] = value
+                    continue
+
                 try:
                     number = float(value)
                 except ValueError as error:
                     raise ObservationError(
                         f"{path.name}:{line_number}: {column} is not numeric"
                     ) from error
-                if not math.isfinite(number) and column not in allow_nan:
+
+                if math.isnan(number):
+                    if column in allow_nan_columns:
+                        row[column] = number
+                        continue
+
                     raise ObservationError(
                         f"{path.name}:{line_number}: {column} is not finite"
                     )
-                if math.isfinite(number) and number < 0:
+
+                if not math.isfinite(number):
+                    raise ObservationError(
+                        f"{path.name}:{line_number}: {column} is not finite"
+                    )
+
+                if number < 0:
                     raise ObservationError(
                         f"{path.name}:{line_number}: {column} must not be negative"
                     )
+
                 row[column] = number
             rows.append(row)
     if not rows:
@@ -104,18 +122,35 @@ def _per_base_quality(path: Path, _read: str) -> dict[str, float]:
     rows, _ = _read_numeric(
         path,
         ("cycle", "mean_quality", "lower_quartile", "median"),
-        allow_nan=("lower_quartile", "median"),
+        text_columns=("cycle",),
+        allow_nan_columns=("lower_quartile", "median"),
     )
-    _strictly_increasing_integer_column(rows, "cycle", path.name)
-    evaluated = [
-        row for row in rows
-        if math.isfinite(row["lower_quartile"]) and math.isfinite(row["median"])
+
+    lower_quartiles = [
+        row["lower_quartile"]
+        for row in rows
+        if math.isfinite(row["lower_quartile"])
     ]
-    if not evaluated:
-        raise ObservationError("per-base quality has no groups with sufficient observations")
+
+    medians = [
+        row["median"]
+        for row in rows
+        if math.isfinite(row["median"])
+    ]
+
+    if not lower_quartiles:
+        raise ObservationError(
+            "per-base quality contains no evaluated lower-quartile observations"
+        )
+
+    if not medians:
+        raise ObservationError(
+            "per-base quality contains no evaluated median observations"
+        )
+
     return {
-        "minimum_lower_quartile": min(row["lower_quartile"] for row in evaluated),
-        "minimum_median": min(row["median"] for row in evaluated),
+        "minimum_lower_quartile": min(lower_quartiles),
+        "minimum_median": min(medians),
     }
 
 

@@ -168,7 +168,7 @@ class QcReportTest(unittest.TestCase):
             self.assertNotRegex(document, r"MODULE [0-9]{2}")
             self.assertRegex(
                 document,
-                r"Generated</small><strong>\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2} МСК",
+                r"Generated</small><strong>\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2} GMT\+3</strong>",
             )
             self.assertIn('class="nav-index">00</span>', document)
             self.assertNotIn("IntersectionObserver", document)
