@@ -35,6 +35,9 @@ add_executable(neoqc
     src/sample_sheet.cpp
     src/gc_model.cpp
     src/adapter_config.cpp
+    src/trimming/quality_trimmer.cpp
+    src/trimming/adapter_trimmer.cpp
+    src/trimming/trimmer.cpp
 )
 
 target_include_directories(neoqc PRIVATE include)
@@ -56,12 +59,39 @@ add_executable(neoqc_duplication_test
 )
 target_include_directories(neoqc_duplication_test PRIVATE include)
 
+add_executable(neoqc_trimming_config_test
+    tests/trimming/test_trim_config.cpp
+    src/trimming/quality_trimmer.cpp
+    src/trimming/adapter_trimmer.cpp
+    src/trimming/trimmer.cpp
+)
+target_include_directories(neoqc_trimming_config_test PRIVATE include)
+
+add_executable(neoqc_quality_trimmer_test
+    tests/trimming/test_quality_trimmer.cpp
+    src/trimming/quality_trimmer.cpp
+    src/trimming/adapter_trimmer.cpp
+    src/trimming/trimmer.cpp
+)
+target_include_directories(neoqc_quality_trimmer_test PRIVATE include)
+
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 enable_testing()
 
 add_test(NAME test_unlimited_sequence_duplication
          COMMAND neoqc_duplication_test)
+
+add_test(NAME test_trim_config_defaults
+         COMMAND neoqc_trimming_config_test)
+
+add_test(NAME test_quality_trimmer
+         COMMAND neoqc_quality_trimmer_test)
+
+add_test(NAME test_trim_help
+         COMMAND neoqc --help)
+set_tests_properties(test_trim_help PROPERTIES
+    PASS_REGULAR_EXPRESSION "--trim[ ]+Enable the trimming pipeline")
 
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
@@ -142,6 +172,12 @@ set_tests_properties(test_per_cycle_quality PROPERTIES DEPENDS test_correct_sing
 # Пропуск поиска адаптеров для измерения влияния на скорость
 add_test(NAME test_skip_adapters
          COMMAND neoqc --r1 ${TEST_DATA_DIR}/correct_single.fq.gz --sample-id test_skip_adapters --out ${TEST_OUT_DIR} --skip-adapters)
+
+add_test(NAME test_trim_feature_flag
+         COMMAND neoqc --r1 ${TEST_DATA_DIR}/correct_single.fq.gz
+                       --sample-id test_trim_feature_flag
+                       --out ${TEST_OUT_DIR}/trim_feature_flag
+                       --trim)
 
 # Корректная таблица образцов (запуск QC по ней будет добавлен отдельно)
 add_test(NAME test_valid_sample_sheet
@@ -450,6 +486,7 @@ set_tests_properties(
     test_unlimited_sequence_duplication
     test_correct_single
     test_skip_adapters
+    test_trim_feature_flag
     test_case_summary
     test_correct_paired
     test_sequence_duplication

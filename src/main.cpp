@@ -2,6 +2,8 @@
 #include "../include/quality_analyzer.h"
 #include "../include/plot_runner.h"
 #include "../include/sample_sheet.h"
+#include "../include/trimming/trim_config.h"
+#include "../include/trimming/trimmer.h"
 
 #include <omp.h>
 #include <iostream>
@@ -49,6 +51,7 @@ struct Args {
     std::string samples;
     bool        plot = false;
     bool        skipAdapters = false;
+    TrimConfig  trimConfig;
 };
 
 struct RunManifest
@@ -85,6 +88,7 @@ Args parseArgs(int argc, char* argv[]) {
         else if (arg == "--samples")   args.samples  = needValue("--samples");
         else if (arg == "--plot")      args.plot     = true;
         else if (arg == "--skip-adapters") args.skipAdapters = true;
+        else if (arg == "--trim")      args.trimConfig.enabled = true;
         else if (arg == "--help" || arg == "-h") {
             throw std::runtime_error("help");
         } else {
@@ -111,11 +115,11 @@ void printUsage(const char* progName) {
         "NeoQC — FASTQ quality analysis\n\n"
         "Usage:\n"
         "  single-end:\n"
-        "    " << progName << " --r1 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters]\n\n"
+        "    " << progName << " --r1 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters] [--trim]\n\n"
         "  paired-end:\n"
-        "    " << progName << " --r1 <file> --r2 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters]\n\n"
+        "    " << progName << " --r1 <file> --r2 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters] [--trim]\n\n"
         "  validate sample sheet:\n"
-        "    " << progName << " --samples <samples.csv> [--out <dir>] [--plot] [--skip-adapters]\n\n"
+        "    " << progName << " --samples <samples.csv> [--out <dir>] [--plot] [--skip-adapters] [--trim]\n\n"
         "Options:\n"
         "  --r1 <file>       Path to R1 FASTQ (plain or .gz)\n"
         "  --r2 <file>       Path to R2 FASTQ (optional, for paired-end)\n"
@@ -123,7 +127,8 @@ void printUsage(const char* progName) {
         "  --out <dir>       Output directory (created if missing); enables batch QC with --samples\n"
         "  --samples <file>  Validate a CSV table; combine with --out to run batch QC\n"
         "  --plot            Build plots via plot_results.py (optional)\n"
-        "  --skip-adapters   Disable adapter search (for performance measurements)\n";
+        "  --skip-adapters   Disable adapter search (for performance measurements)\n"
+        "  --trim            Enable the trimming pipeline (currently no-op)\n";
 }
 
 void writeSummary(std::ostream& out,
@@ -1780,6 +1785,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Safe integration point for the future trimming pipeline.  The object
+    // only owns configuration and component structure until algorithms exist.
+    const Trimmer trimmer(args.trimConfig);
+
     if (!args.samples.empty()) {
         try {
             const auto entries = loadAndValidateSampleSheet(args.samples);
@@ -1869,6 +1878,9 @@ int main(int argc, char* argv[]) {
     if (isPaired) std::cout << "R2        : " << args.r2 << "\n";
     std::cout << "Output    : " << args.outDir << "\n";
     if (args.skipAdapters) std::cout << "Adapters  : skipped\n";
+    if (trimmer.getConfig().enabled) {
+        std::cout << "Trimming  : requested (no algorithms enabled)\n";
+    }
 
     const std::string runId = generateRunId();
 
