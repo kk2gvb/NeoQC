@@ -158,25 +158,29 @@ pass and is excluded from the evaluated denominator.
 - technical QC overall must not overwrite processing status or clinical case
   status.
 
-## Report presentation
+## Представление в HTML-отчёте
 
-The NeoQC report uses the evaluation model as follows:
+HTML-отчёт использует модель оценки так:
 
-1. A summary strip shows PASS / WARNING / FAIL / NOT EVALUATED counts and a
-   proportional segmented bar.
-2. A matrix lists modules in rows and R1/R2 in columns for rapid comparison.
-3. Each chart card shows a text-and-icon status badge, observed value, threshold
-   and concise reason.
-4. Navigation uses the aggregated module status.
-5. Colour is never the only signal: use a check, triangle, cross or dash plus
-   the status text.
-6. Graph threshold bands are added only when the threshold maps honestly to a
-   plotted axis; otherwise the explanation remains below the chart.
-7. Print/PDF preserves badges, the summary matrix and reasons without relying
-   on hover behaviour.
+1. Блок «Обзор QC» показывает итоговый статус, счётчики `PASS / WARNING / FAIL /
+   NOT EVALUATED` и пропорциональную полосу.
+2. Матрица «модуль × рид» позволяет сравнить R1 и R2 одним взглядом.
+3. В каждой дорожке R1/R2 показаны статус рида, наблюдаемые значения и причина
+   статуса с порогом.
+4. Статус модуля в заголовке панели и в навигации — худший из статусов ридов.
+5. Статус никогда не передаётся только цветом: у плашек и ячеек есть символ
+   (✓ ▲ ✕ —) и текст или подсказка.
+6. Пороговые зоны рисуются на графике только тогда, когда порог честно
+   соответствует оси графика; иначе пояснение остаётся под графиком.
+7. Печать и PDF сохраняют плашки, матрицу и причины и не зависят от наведения
+   мыши.
+8. В режиме «Приоритет» модули `FAIL`, `WARNING` и `NOT EVALUATED` идут первыми,
+   модули `PASS` — в конце в свёрнутом виде.
 
-Recommended report colours are existing palette tokens: accent green for PASS,
-`WARNING` for WARNING, `DANGER` for FAIL and neutral grey for NOT EVALUATED.
+Цвета статусов: зелёный — `PASS`, янтарный — `WARNING`, красный — `FAIL`,
+серый — `NOT EVALUATED`; значения для светлой и тёмной темы заданы в
+`scripts/qc_report.py`. Интерфейс, режимы и контракт отчёта описаны в
+[`html-report.md`](html-report.md).
 
 ## Backward compatibility
 
@@ -193,8 +197,8 @@ version 1 because QC decisions are kept in a separate contract.
 - aggregation tests including `not_evaluated` and artifact errors;
 - ruleset version/hash reproducibility tests;
 - JSON contract and escaping tests;
-- HTML tests for summary counts, matrix, badges and reason text;
-- screenshot/print regression for the NeoQC report;
+- HTML report tests (summary counts, matrix, badges, reason text, themes,
+  languages, ordering) — see [`html-report.md`](html-report.md);
 - comparison fixtures against known FastQC examples before calling the profile
   FastQC-compatible.
 
@@ -209,7 +213,7 @@ Implemented now:
 - automatic evaluation from `plot_results.py` and standalone evaluation CLI;
 - backward-compatible `NOT EVALUATED` behaviour;
 - summary strip, R1/R2 matrix, accessible badges, observations and reasons in
-  the NeoQC report;
+  the NeoQC report (see [`html-report.md`](html-report.md));
 - boundary, malformed-data, integration, HTML and C++ output contract tests.
 
 The RNA-specific profile remains intentionally pending domain approval and must

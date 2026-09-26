@@ -1,4 +1,9 @@
-"""Self-contained, FastQC-style report model and renderer for NeoQC charts."""
+"""Self-contained NeoQC HTML report: data model and renderer.
+
+The report is a single HTML file with embedded fonts, inline chart SVG, CSS and
+JavaScript. It supports light/dark themes, English/Russian text, a triage or
+sequential section order and foldable panels. See docs/html-report.md.
+"""
 
 from __future__ import annotations
 
@@ -6,12 +11,17 @@ import base64
 import csv
 import json
 import math
+import re
+import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from html import escape
 from pathlib import Path
 from typing import Mapping, Sequence
+
+from neoqc_i18n import ru
+from neoqc_theme import CHART_COLORS, LIGHT_TO_VAR
 
 
 REPORT_FILENAME = "neoqc_qc_report.html"
@@ -50,6 +60,8 @@ class PlotCard:
     qc_reasons: tuple[str, ...] = ()
     qc_observations: tuple[tuple[str, float, str], ...] = ()
     overrepresented_sequences: tuple[OverrepresentedSequence, ...] | None = None
+    # (locale, svg filename) pairs for translated chart variants, e.g. (("ru", "x_R1.ru.svg"),)
+    localized_svg: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -297,6 +309,22 @@ def _load_qc_evaluations(
     return decisions, f"{ruleset_id} · v{ruleset_version}"
 
 
+SUPPORTED_LOCALES = ("en", "ru")
+
+
+def _localized_svg(value: object, path: str) -> tuple[tuple[str, str], ...]:
+    if value is None:
+        return ()
+    localized = _mapping(value, path)
+    variants: list[tuple[str, str]] = []
+    for locale, raw_variant in localized.items():
+        if locale not in SUPPORTED_LOCALES or locale == "en":
+            raise QcReportError(f"{path} has an unsupported locale: {locale!r}")
+        variant = _mapping(raw_variant, f"{path}.{locale}")
+        variants.append((locale, _text(variant.get("svg"), f"{path}.{locale}.svg", required=True)))
+    return tuple(sorted(variants))
+
+
 def load_report_model(result_dir: Path, plot_dir: Path | None = None) -> QcReportModel:
     result_dir = result_dir.resolve()
     plot_dir = (plot_dir or result_dir / "plots").resolve()
@@ -348,6 +376,7 @@ def load_report_model(result_dir: Path, plot_dir: Path | None = None) -> QcRepor
                     if metric_id == "sequence_duplication_levels"
                     else None
                 ),
+                localized_svg=_localized_svg(entry.get("localized"), f"manifest.plots[{index}].localized"),
             )
         )
 
@@ -434,42 +463,314 @@ def _asset_data_uri(plot_dir: Path, card: PlotCard) -> str:
     raise QcReportError("; ".join(errors) or "no chart asset is available")
 
 
-def _badge(status: str, label: str | None = None) -> str:
-    labels = {"ready": "READY", "not_run": "NOT RUN", "error": "ERROR", "info": "INFO"}
-    return f'<span class="badge {escape(status)}">{escape(label or labels[status])}</span>'
+STATUS_LABELS = {
+    "pass": "PASS",
+    "warning": "WARNING",
+    "fail": "FAIL",
+    "not_evaluated": "NOT EVALUATED",
+}
+STATUS_SYMBOLS = {"pass": "✓", "warning": "▲", "fail": "✕", "not_evaluated": "—"}
+STATUS_ORDER = ("pass", "warning", "fail", "not_evaluated")
+SKIP_REASONS = {
+    "adapter_analysis_disabled": "Adapter analysis was disabled for this run.",
+    "source_not_found": "The source TSV was not produced.",
+}
+NOTICE = (
+    "PASS / WARNING / FAIL are technical QC flags from the displayed versioned ruleset, "
+    "not clinical conclusions. Plot availability errors are reported separately and never "
+    "converted into biological FAIL results."
+)
+FONT_DIR = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "ibm-plex"
+FONT_FACES = (
+    ("IBM Plex Sans", "IBMPlexSans", (400, 500, 600, 700)),
+    ("IBM Plex Mono", "IBMPlexMono", (400, 500, 600)),
+)
 
 
-def _qc_badge(status: str) -> str:
-    labels = {
-        "pass": ("✓", "PASS"),
-        "warning": ("▲", "WARNING"),
-        "fail": ("✕", "FAIL"),
-        "not_evaluated": ("—", "NOT EVALUATED"),
-    }
-    symbol, label = labels[status]
-    return (
-        f'<span class="badge qc {escape(status)}"><span aria-hidden="true">'
-        f'{symbol}</span> {label}</span>'
+# ---------------------------------------------------------------------------
+# Bilingual text
+# ---------------------------------------------------------------------------
+def _t(text: str) -> str:
+    """Escaped bilingual text; CSS shows the span that matches <html lang>."""
+    translated = ru(text)
+    if translated == text:
+        return escape(text)
+    return f'<span class="l-en">{escape(text)}</span><span class="l-ru">{escape(translated)}</span>'
+
+
+# ---------------------------------------------------------------------------
+# Inline chart SVG
+# ---------------------------------------------------------------------------
+_SVG_NS = "http://www.w3.org/2000/svg"
+_XLINK_NS = "http://www.w3.org/1999/xlink"
+ET.register_namespace("", _SVG_NS)
+ET.register_namespace("xlink", _XLINK_NS)
+# Everything Matplotlib emits for NeoQC charts; anything else (script,
+# foreignObject, image, a, style, metadata, ...) is dropped before inlining.
+_SVG_TAGS = frozenset({
+    "svg", "g", "defs", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon",
+    "text", "tspan", "clipPath", "use", "title", "desc", "linearGradient", "radialGradient",
+    "stop", "pattern", "mask", "symbol", "marker",
+})
+_COLOR_ATTRIBUTES = ("fill", "stroke", "stop-color", "color")
+_HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}\b")
+_URL_REF = re.compile(r"url\(\s*#([^)\s]+)\s*\)")
+_UNSAFE_STYLE = re.compile(r"url\(\s*(?!#)|expression\s*\(|@import|javascript:", re.IGNORECASE)
+_FONT_FALLBACK = re.compile(r"(font(?:-family)?:[^;\"]*?)'(IBM Plex Sans|IBM Plex Mono)'(?!\s*,)")
+
+
+def _local_name(name: str) -> str:
+    return name.rsplit("}", 1)[-1]
+
+
+def _themed(value: str) -> str:
+    return _HEX_COLOR.sub(
+        lambda match: f"var({LIGHT_TO_VAR[match[0].lower()]})" if match[0].lower() in LIGHT_TO_VAR else match[0],
+        value,
     )
 
 
-def _render_basic_statistics(model: QcReportModel) -> str:
-    cards: list[str] = []
-    for stats in model.basic_statistics:
-        rows = "".join(
-            f"<tr><th>{escape(label)}</th><td>{escape(value)}</td></tr>"
-            for label, value in stats.items
+def _with_font_fallback(style: str) -> str:
+    def fallback(match: re.Match[str]) -> str:
+        generic = "Consolas, monospace" if match[2] == "IBM Plex Mono" else "'Segoe UI', Arial, sans-serif"
+        return f"{match[1]}'{match[2]}', {generic}"
+
+    return _FONT_FALLBACK.sub(fallback, style)
+
+
+def _sanitize_svg_element(element: ET.Element, prefix: str) -> None:
+    for child in list(element):
+        if not isinstance(child.tag, str) or _local_name(child.tag) not in _SVG_TAGS:
+            element.remove(child)
+        else:
+            _sanitize_svg_element(child, prefix)
+    style_parts: list[str] = []
+    for name, value in list(element.attrib.items()):
+        local = _local_name(name)
+        lowered = value.strip().lower()
+        if local.lower().startswith("on") or "javascript:" in lowered:
+            del element.attrib[name]
+        elif local == "href":
+            if value.startswith("#"):
+                element.attrib[name] = f"#{prefix}{value[1:]}"
+            else:  # external references are never followed
+                del element.attrib[name]
+        elif local == "id":
+            element.attrib[name] = f"{prefix}{value}"
+        elif local == "style":
+            if _UNSAFE_STYLE.search(value):
+                del element.attrib[name]
+            else:
+                element.attrib[name] = _with_font_fallback(_themed(_URL_REF.sub(rf"url(#{prefix}\1)", value)))
+        elif local in _COLOR_ATTRIBUTES and _HEX_COLOR.search(value):
+            # CSS variables are not valid in presentation attributes; move the colour into style.
+            del element.attrib[name]
+            style_parts.append(f"{local}: {_themed(value)}")
+        elif "url(" in lowered:
+            if _UNSAFE_STYLE.search(value):
+                del element.attrib[name]
+            else:
+                element.attrib[name] = _URL_REF.sub(rf"url(#{prefix}\1)", value)
+    if style_parts:
+        existing = element.attrib.get("style", "").strip().rstrip(";")
+        element.attrib["style"] = "; ".join(filter(None, [existing, *style_parts]))
+
+
+def _inline_svg(path: Path, prefix: str, label: str) -> str:
+    """Sanitize a chart SVG and return inline markup whose colours follow the report theme."""
+    text = path.read_text(encoding="utf-8")
+    # Matplotlib writes a plain SVG 1.1 DOCTYPE. Entity declarations or an
+    # internal DTD subset could expand content, so they are rejected.
+    if re.search(r"<!ENTITY|<!DOCTYPE[^>]*\[", text, re.IGNORECASE):
+        raise QcReportError(f"{path.name}: SVG with entity declarations is not accepted")
+    text = re.sub(r"<!DOCTYPE[^>]*>", "", text, count=1, flags=re.IGNORECASE)
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as error:
+        raise QcReportError(f"{path.name}: invalid SVG ({error})") from error
+    if _local_name(root.tag) != "svg":
+        raise QcReportError(f"{path.name}: root element is not <svg>")
+    _sanitize_svg_element(root, prefix)
+    if "viewBox" in root.attrib:  # let CSS size the chart
+        root.attrib.pop("width", None)
+        root.attrib.pop("height", None)
+    root.attrib.update({"class": "chart-svg", "role": "img", "aria-label": label, "focusable": "false"})
+    return ET.tostring(root, encoding="unicode", short_empty_elements=True)
+
+
+def _chart_markup(card: PlotCard, plot_dir: Path) -> str:
+    label = card.alt_text or f"{card.title} {card.read}"
+    if card.status != "generated":
+        message = SKIP_REASONS.get(card.reason, card.reason or "Chart was not generated.")
+        return f'<div class="empty">{_t(message)}</div>'
+    try:
+        if card.svg:
+            prefix = f"{card.metric_id}-{card.read}-"
+            primary = _inline_svg(_safe_asset(plot_dir, card.svg, ".svg"), f"{prefix}en-", label)
+            translated = []
+            for locale, filename in card.localized_svg:
+                try:
+                    svg = _inline_svg(_safe_asset(plot_dir, filename, ".svg"), f"{prefix}{locale}-", label)
+                except (OSError, QcReportError):
+                    continue  # a missing translation falls back to the English chart
+                translated.append(f'<span class="chart l-{locale}">{svg}</span>')
+            if translated:
+                inner = f'<span class="chart l-en">{primary}</span>' + "".join(translated)
+            else:
+                inner = f'<span class="chart">{primary}</span>'
+        else:  # PNG-only runs: a static image that does not follow the dark theme
+            inner = f'<img class="chart-img" src="{_asset_data_uri(plot_dir, card)}" alt="{escape(label)}">'
+    except (OSError, QcReportError) as error:
+        return (f'<div class="empty error-box">{_t("Chart asset unavailable")}: '
+                f'{escape(str(error))}</div>')
+    return (f'<button class="chart-button" type="button" aria-label="{escape(label)} — open full size">'
+            f"{inner}</button>")
+
+
+def _font_face_css() -> str:
+    """Embed the bundled IBM Plex web fonts (latin + cyrillic); missing files fall back to system fonts."""
+    try:
+        ranges = json.loads((FONT_DIR / "unicode_ranges.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    rules = []
+    for family, slug, weights in FONT_FACES:
+        for weight in weights:
+            for subset, unicode_range in ranges.items():
+                path = FONT_DIR / f"{slug}-{weight}.{subset}.woff2"
+                if not path.is_file():
+                    continue
+                data = base64.b64encode(path.read_bytes()).decode("ascii")
+                rules.append(
+                    f"@font-face{{font-family:'{family}';font-style:normal;font-weight:{weight};"
+                    f"font-display:swap;src:url(data:font/woff2;base64,{data}) format('woff2');"
+                    f"unicode-range:{unicode_range}}}"
+                )
+    return "\n".join(rules)
+
+
+# ---------------------------------------------------------------------------
+# Markup helpers
+# ---------------------------------------------------------------------------
+def _pill(status: str, label: str | None = None) -> str:
+    symbol = STATUS_SYMBOLS.get(status)
+    text = escape(label or STATUS_LABELS.get(status, status.upper()))
+    mark = f'<span aria-hidden="true">{symbol}</span> ' if symbol else ""
+    return f'<span class="pill {escape(status)}">{mark}{text}</span>'
+
+
+def _cell(status: str, title: str) -> str:
+    return f'<i class="cell {escape(status)}" title="{escape(title)}"></i>'
+
+
+def _keys(seq: int, tri: int) -> str:
+    return f'data-seq="{seq}" data-tri="{tri}"'
+
+
+def _triage_rank(status: str, index: int) -> int:
+    """FAIL, WARNING and NOT EVALUATED need attention; PASS modules follow folded."""
+    return {"fail": 100, "warning": 200, "not_evaluated": 300}.get(status, 6000) + index
+
+
+def _needs_attention(status: str) -> bool:
+    return status in ("fail", "warning", "not_evaluated")
+
+
+CHEVRON = (
+    '<button class="fold" type="button" aria-label="Collapse or expand section" aria-expanded="true">'
+    '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" '
+    'fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'
+    "</svg></button>"
+)
+SUN = (
+    '<svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3.2" '
+    'fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 '
+    '1.4M11.6 11.6 13 13M3 13l1.4-1.4M11.6 4.4 13 3" stroke="currentColor" stroke-width="1.5" '
+    'stroke-linecap="round"/></svg>'
+)
+MOON = (
+    '<svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 10.2A6 6 0 0 1 '
+    '5.8 2.5a6 6 0 1 0 7.7 7.7Z" fill="none" stroke="currentColor" stroke-width="1.5" '
+    'stroke-linejoin="round"/></svg>'
+)
+
+
+def _render_overview(model: QcReportModel, keys: str) -> str:
+    counts = dict(model.qc_counts)
+    total = sum(counts.values()) or 1
+    counters = "".join(
+        f'<div class="count {status}"><small>{STATUS_LABELS[status]}</small><strong>{counts[status]}</strong></div>'
+        for status in STATUS_ORDER
+    )
+    segments = "".join(
+        f'<i class="{status}" style="width:{counts[status] / total * 100:.4f}%" '
+        f'title="{STATUS_LABELS[status]}: {counts[status]}"></i>'
+        for status in STATUS_ORDER
+        if counts[status]
+    )
+    bar_label = ", ".join(f"{STATUS_LABELS[status]} {counts[status]}" for status in STATUS_ORDER)
+    rows = []
+    for index, module in enumerate(model.modules, start=2):
+        by_read = {card.read: card for card in module.cards}
+        cells = "".join(
+            f"<td>{_cell(by_read[read].qc_status, STATUS_LABELS[by_read[read].qc_status])}</td>"
+            if read in by_read else "<td>—</td>"
+            for read in model.reads
         )
-        cards.append(
-            f'<article class="stats-card"><h3>{escape(stats.read)}</h3>'
-            f'<table><tbody>{rows}</tbody></table></article>'
+        rows.append(
+            f'<tr {_keys(index, _triage_rank(module.qc_status, index))}><th scope="row" class="row-h">'
+            f"{_t(module.title)}</th>{cells}</tr>"
         )
-    if not cards:
-        cards.append('<p class="empty">Summary files were not found.</p>')
+    headers = "".join(f'<th scope="col" class="c">{escape(read)}</th>' for read in model.reads)
+    error_label = str(model.errors) if model.errors else "None"
+    facts = (
+        ("Read sets", " / ".join(model.reads)),
+        ("Charts available", str(model.generated_plots)),
+        ("Rendering errors", error_label),
+    )
+    facts_html = "".join(f"<div><small>{_t(k)}</small><strong>{_t(v)}</strong></div>" for k, v in facts)
     return (
-        '<section class="module" id="basic-statistics">'
-        '<div class="module-head"><h2>Basic Statistics</h2>' + _badge("info") + '</div>'
-        '<div class="stats-grid">' + "".join(cards) + '</div></section>'
+        f'<section class="panel" id="qc-summary" data-section {keys}><div class="hero"><div class="id">'
+        f'<div class="eyebrow">{_t("Sequencing quality control")}</div><h1>{escape(model.sample_id)}</h1>'
+        f'<div class="kv">{facts_html}</div>'
+        f'<p class="print-meta">{_t("Generated")}: {escape(model.generated_at)}</p>'
+        f'<div class="notice">{_t(NOTICE)}</div></div>'
+        f'<div class="qcbox"><div class="top"><div><h2>{_t("Technical QC overview · PASS / WARNING / FAIL distribution")}</h2>'
+        f'<div class="rs">{_t("Ruleset")}: {escape(model.ruleset_label)}</div></div>{_pill(model.overall_qc_status)}</div>'
+        f'<div class="counts">{counters}</div><div class="sbar" role="img" aria-label="{bar_label}">{segments}</div>'
+        f'</div></div><div class="table-wrap"><table class="grid hm"><thead><tr><th scope="col">{_t("QC module")}</th>'
+        f'{headers}</tr></thead><tbody>{"".join(rows)}</tbody></table></div></section>'
+    )
+
+
+def _render_basic_statistics(model: QcReportModel, keys: str) -> str:
+    if model.basic_statistics:
+        labels: list[str] = []
+        for stats in model.basic_statistics:
+            labels.extend(label for label, _ in stats.items if label not in labels)
+        values = {stats.read: dict(stats.items) for stats in model.basic_statistics}
+        head = "".join(f'<th scope="col" class="n">{escape(stats.read)}</th>' for stats in model.basic_statistics)
+        rows = "".join(
+            f'<tr><th scope="row" class="row-h">{_t(label)}</th>' + "".join(
+                f'<td class="n">{escape(values[stats.read].get(label, "—"))}</td>'
+                for stats in model.basic_statistics
+            ) + "</tr>"
+            for label in labels
+        )
+        body = (f'<div class="table-wrap"><table class="grid"><thead><tr><th scope="col">{_t("Metric")}</th>{head}'
+                f"</tr></thead><tbody>{rows}</tbody></table></div>")
+        first = labels[0] if labels else ""
+        peek = "".join(
+            f"<span>{escape(stats.read)} <b>{escape(values[stats.read].get(first, '—'))}</b></span>"
+            for stats in model.basic_statistics
+        )
+    else:
+        body = f'<div class="empty">{_t("Summary files were not found.")}</div>'
+        peek = ""
+    return (
+        f'<section class="panel foldable" id="basic-statistics" data-section data-sev="info" {keys}>'
+        f'<div class="phead" data-fold>{CHEVRON}<h2>{_t("Basic Statistics")}</h2><span class="peek">{peek}</span>'
+        f'<span class="sp"></span>{_pill("info", "INFO")}</div>{body}</section>'
     )
 
 
@@ -477,216 +778,397 @@ def _render_overrepresented_sequences(card: PlotCard) -> str:
     rows = card.overrepresented_sequences
     if rows is None:
         return ""
-    if not rows:
-        body = (
-            '<p class="overrepresented-empty">'
-            "No sequences exceeded the reporting threshold.</p>"
-        )
-    else:
-        table_rows = "".join(
-            "<tr>"
-            f'<td class="sequence"><code>{escape(row.sequence)}</code></td>'
-            f'<td class="numeric">{row.count:,}</td>'
-            f'<td class="numeric">{row.percentage:.4f}%</td>'
-            "</tr>"
+    if rows:
+        body = "".join(
+            f'<tr><td><code>{escape(row.sequence)}</code></td><td class="n">{row.count:,}</td>'
+            f'<td class="n">{row.percentage:.4f}%</td></tr>'
             for row in rows
         )
-        body = (
-            '<div class="overrepresented-table-wrap"><table class="overrepresented-table">'
-            '<colgroup><col class="sequence-col"><col class="count-col">'
-            '<col class="percentage-col"></colgroup>'
-            "<thead><tr><th>Sequence</th>"
-            '<th class="numeric">Count</th>'
-            '<th class="numeric">Percentage</th>'
-            f"</tr></thead><tbody>{table_rows}</tbody></table></div>"
-        )
+        table = (f'<div class="table-wrap"><table class="grid"><thead><tr><th scope="col">{_t("Sequence")}</th>'
+                 f'<th scope="col" class="n">{_t("Count")}</th><th scope="col" class="n">{_t("Percentage")}</th>'
+                 f"</tr></thead><tbody>{body}</tbody></table></div>")
+    else:
+        table = f'<p class="none">{_t("No sequences exceeded the reporting threshold.")}</p>'
     return (
-        '<section class="overrepresented-block" aria-label="Overrepresented sequences">'
-        '<div class="overrepresented-head"><div><p class="section-kicker">Sequence screen</p>'
-        f'<h4>Overrepresented sequences</h4></div><span class="table-count">{len(rows)}</span></div>'
-        f"{body}</section>"
+        f'<div class="orep" aria-label="Overrepresented sequences"><div class="orep-h">'
+        f'<span>{_t("Sequence screen · Overrepresented sequences")}</span><span class="table-count">{len(rows)}</span></div>{table}</div>'
     )
 
 
-def _render_plot_card(card: PlotCard, plot_dir: Path) -> str:
-    if card.status == "generated":
-        try:
-            source = _asset_data_uri(plot_dir, card)
-            image = (
-                f'<button class="chart-button" type="button" aria-label="Open {escape(card.title)} {escape(card.read)}">'
-                f'<img class="chart-image" src="{source}" alt="{escape(card.alt_text or card.title)}" loading="lazy">'
-                '<span class="expand-hint">Open full size</span></button>'
-            )
-            state = _qc_badge(card.qc_status)
-        except QcReportError as error:
-            image = f'<div class="empty error-box">Chart asset unavailable: {escape(str(error))}</div>'
-            state = _badge("error")
-    else:
-        reasons = {
-            "adapter_analysis_disabled": "Adapter analysis was disabled for this run.",
-            "source_not_found": "The source TSV was not produced.",
-        }
-        message = reasons.get(card.reason, card.reason or "Chart was not generated.")
-        image = f'<div class="empty">{escape(message)}</div>'
-        state = _badge("error" if card.status == "error" else "not_run")
+def _render_lane(card: PlotCard, plot_dir: Path) -> str:
     observations = "".join(
-        '<span class="observation"><small>' + escape(label) + "</small><strong>" +
-        escape(f"{value:.4g}{(' ' + unit) if unit else ''}") + "</strong></span>"
+        f"<tr><td>{_t(label)}</td><td>{escape(f'{value:.4g}' + (' ' + unit if unit else ''))}</td></tr>"
         for label, value, unit in card.qc_observations
     )
-    reasons = "".join(f"<p>{escape(reason)}</p>" for reason in card.qc_reasons)
-    decision = (
-        '<div class="decision-detail">'
-        + (f'<div class="observations">{observations}</div>' if observations else "")
-        + reasons
-        + "</div>"
-    )
+    reasons = "".join(f'<div class="why">{_t(reason)}</div>' for reason in card.qc_reasons)
+    if card.status == "generated":
+        state = _pill(card.qc_status)
+    else:
+        state = _pill("not_evaluated", "ERROR" if card.status == "error" else "NOT RUN")
     return (
-        '<article class="plot-card">'
-        f'<div class="plot-card-head"><h3>{escape(card.read)}</h3>{state}</div>'
-        f'{image}{_render_overrepresented_sequences(card)}{decision}</article>'
+        f'<div class="lane"><div class="lane-h"><span>{escape(card.read)}</span>{state}</div>'
+        f"{_chart_markup(card, plot_dir)}"
+        f'<div class="metrics">{"<table>" + observations + "</table>" if observations else ""}{reasons}</div>'
+        f"{_render_overrepresented_sequences(card)}</div>"
     )
 
 
-def _render_module(module: PlotModule, plot_dir: Path) -> str:
-    cards = "".join(_render_plot_card(card, plot_dir) for card in module.cards)
+def _render_module(module: PlotModule, index: int, plot_dir: Path) -> str:
+    peek = "".join(
+        f"<span>{escape(card.read)} <b>{escape(f'{card.qc_observations[0][1]:.4g}' + (' ' + card.qc_observations[0][2] if card.qc_observations[0][2] else ''))}</b></span>"
+        for card in module.cards
+        if card.qc_observations
+    )
+    severity = module.qc_status if _needs_attention(module.qc_status) else "ok"
+    lanes = "".join(_render_lane(card, plot_dir) for card in module.cards)
     return (
-        f'<section class="module" id="module-{escape(module.metric_id)}">'
-        '<div class="module-head">'
-        f'<h2>{escape(module.title)}</h2>{_qc_badge(module.qc_status)}</div>'
-        f'<div class="plot-grid">{cards}</div></section>'
+        f'<section class="panel foldable" id="module-{escape(module.metric_id)}" data-section data-sev="{severity}" '
+        f'{_keys(index, _triage_rank(module.qc_status, index))}>'
+        f'<div class="phead" data-fold>{CHEVRON}<h2>{_t(module.title)}</h2><span class="peek">{peek}</span>'
+        f'<span class="sp"></span>{_pill(module.qc_status)}</div><div class="tracks">{lanes}</div></section>'
     )
 
 
-def _render_qc_summary(model: QcReportModel) -> str:
-    counts = dict(model.qc_counts)
-    labels = {
-        "pass": "PASS",
-        "warning": "WARNING",
-        "fail": "FAIL",
-        "not_evaluated": "NOT EVALUATED",
-    }
-    total = sum(counts.values()) or 1
-    segments = "".join(
-        f'<span class="summary-segment {status}" style="width:{counts[status] / total * 100:.6f}%" '
-        f'title="{labels[status]}: {counts[status]}"></span>'
-        for status in labels
-        if counts[status]
-    )
-    counters = "".join(
-        f'<div class="qc-count {status}"><span>{labels[status]}</span><strong>{counts[status]}</strong></div>'
-        for status in labels
-    )
-    rows = []
-    for module in model.modules:
-        by_read = {card.read: card for card in module.cards}
-        cells = "".join(
-            f'<td>{_qc_badge(by_read[read].qc_status) if read in by_read else "—"}</td>'
-            for read in model.reads
-        )
-        rows.append(f'<tr><th scope="row">{escape(module.title)}</th>{cells}</tr>')
-    headers = "".join(f'<th scope="col">{escape(read)}</th>' for read in model.reads)
-    return (
-        '<section class="module qc-summary" id="qc-summary">'
-        '<div class="module-head"><div><p class="section-kicker">Technical QC overview</p>'
-        f'<h2>PASS / WARNING / FAIL distribution</h2></div>{_qc_badge(model.overall_qc_status)}</div>'
-        f'<p class="ruleset">Ruleset: {escape(model.ruleset_label)}</p>'
-        f'<div class="qc-counts">{counters}</div><div class="summary-bar" role="img" '
-        f'aria-label="PASS {counts["pass"]}, WARNING {counts["warning"]}, FAIL {counts["fail"]}, '
-        f'NOT EVALUATED {counts["not_evaluated"]}">{segments}</div>'
-        '<div class="qc-matrix-wrap"><table class="qc-matrix"><thead><tr>'
-        f'<th scope="col">QC module</th>{headers}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
-        '</section>'
-    )
+# ---------------------------------------------------------------------------
+# Styles and behaviour
+# ---------------------------------------------------------------------------
+_LIGHT_VARS = (
+    "color-scheme:light;--bg:#eceff3;--panel:#fff;--sub:#f6f7f9;--line:#d5dbe3;--line2:#e6eaef;--ink:#1b2430;"
+    "--muted:#5d6878;--faint:#626d7d;--brand:#1f5fd1;--pass:#0e9f6e;--warning:#e09b00;--fail:#d8343d;--ne:#9aa3b0;"
+    "--info:#1f5fd1;--pill-pass:#0a7f57;--pill-warning:#e09b00;--pill-fail:#d8343d;--pill-ne:#6b7686;"
+    "--pill-info:#1f5fd1;--on-pill:#fff;--on-pill-warning:#1b2430;--fail-text:#b52a33;--hover:#e9edf2;"
+    "--active:#e3ebfb;--row-hover:#f7f9fc;--head-hover:#eef1f5;--fold-hover:#dfe4ea;--notice-bg:#f3f7ff;"
+    "--notice-line:#d6e2fb;--notice-ink:#34425a;--backdrop:rgba(20,28,40,.5);"
+    + ";".join(f"{name}:{light}" for name, (light, _) in CHART_COLORS.items())
+)
+_DARK_VARS = (
+    "color-scheme:dark;--bg:#0e1319;--panel:#151b23;--sub:#1a212b;--line:#2b3441;--line2:#222a35;--ink:#e3e8ef;"
+    "--muted:#9aa6b6;--faint:#8591a3;--brand:#6c9bff;--pass:#1fae7a;--warning:#e0a52a;--fail:#e5535b;--ne:#5f6a7a;"
+    "--info:#5b8cff;--pill-pass:#1fae7a;--pill-warning:#e0a52a;--pill-fail:#e5535b;--pill-ne:#8591a3;"
+    "--pill-info:#5b8cff;--on-pill:#0e1319;--on-pill-warning:#0e1319;--fail-text:#ff7b82;--hover:#1f2833;"
+    "--active:#1c2a47;--row-hover:#1a2230;--head-hover:#1d2530;--fold-hover:#2a3340;--notice-bg:#16213a;"
+    "--notice-line:#26375e;--notice-ink:#b8c6e0;--backdrop:rgba(0,0,0,.62);"
+    + ";".join(f"{name}:{dark}" for name, (_, dark) in CHART_COLORS.items())
+)
 
+_CSS = (
+    ":root{" + _LIGHT_VARS + ";--sans:'IBM Plex Sans','Segoe UI',Arial,sans-serif;"
+    "--mono:'IBM Plex Mono',Consolas,monospace}\n"
+    ':root[data-theme="dark"]{' + _DARK_VARS + "}\n"
+    "@media print{:root,:root[data-theme=\"dark\"]{" + _LIGHT_VARS + "}}\n"
+    + """
+html[lang="ru"] .l-en,html:not([lang="ru"]) .l-ru{display:none!important}
+*{box-sizing:border-box}html{scroll-padding-top:62px}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.5 var(--sans)}
+:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.appbar{position:sticky;top:0;z-index:10;display:flex;align-items:stretch;height:46px;background:var(--panel);border-bottom:1px solid var(--line)}
+.logo{display:flex;align-items:center;gap:8px;padding:0 16px;border-right:1px solid var(--line);font:600 14px var(--sans);width:268px;flex:none}
+.logo i{display:grid;grid-template-columns:repeat(2,7px);gap:2px}.logo i b{width:7px;height:7px;display:block}
+.logo i b:nth-child(1){background:var(--c-a)}.logo i b:nth-child(2){background:var(--c-c)}.logo i b:nth-child(3){background:var(--c-warning)}.logo i b:nth-child(4){background:var(--c-danger)}
+.crumbs{display:flex;align-items:center;flex:1;min-width:0;overflow:hidden}
+.crumbs .cr{display:flex;flex-direction:column;justify-content:center;padding:0 16px;height:100%;border-right:1px solid var(--line2);white-space:nowrap}
+.crumbs small{font:500 10px/1.2 var(--mono);color:var(--faint);text-transform:uppercase;letter-spacing:.04em}
+.crumbs strong{font:500 12.5px/1.3 var(--mono)}
+.btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:0 12px;font:500 12px var(--sans);cursor:pointer;border-radius:3px;white-space:nowrap}
+.btn:hover{border-color:var(--brand);color:var(--brand)}
+.appbar .btn{margin:8px 12px 8px 0}.appbar .btn.ghost{margin-right:8px}
+.seg{display:flex;align-items:stretch;border:1px solid var(--line);border-radius:3px;overflow:hidden;flex:none}
+.appbar .seg{margin:8px 8px 8px auto}
+.seg small{display:flex;align-items:center;padding:0 9px;font:500 10px var(--mono);color:var(--faint);text-transform:uppercase;letter-spacing:.06em;border-right:1px solid var(--line);background:var(--sub)}
+.seg button{border:0;background:var(--panel);padding:0 12px;font:500 12px var(--sans);color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:6px}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--panel)}
+.shell{display:grid;grid-template-columns:268px minmax(0,1fr)}
+.rail{position:sticky;top:46px;height:calc(100vh - 46px);overflow:auto;background:var(--sub);border-right:1px solid var(--line);padding:12px 0}
+.prefs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 16px 12px;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.pref small{display:block;margin-bottom:5px;font:600 10px/1 var(--mono);color:var(--faint);text-transform:uppercase;letter-spacing:.08em}
+.pref .seg{height:28px}.pref .seg button{flex:1;justify-content:center;padding:0 6px;font:600 11.5px var(--mono)}
+.pref svg{display:block}
+.rail-h{width:calc(100% - 32px);border:0;background:none;padding:0;cursor:default;margin:8px 16px 6px;font:600 10px/1 var(--mono);color:var(--faint);text-transform:uppercase;letter-spacing:.08em;display:flex;justify-content:space-between}
+.rail-h em{font-style:normal;display:flex;gap:4px}.rail-h em b{width:18px;text-align:center;font-weight:600}
+.track{display:flex;align-items:center;gap:8px;padding:6px 16px;text-decoration:none;color:var(--ink);border-left:3px solid transparent}
+.track:hover{background:var(--hover)}.track.active{background:var(--active);border-left-color:var(--brand)}
+.track .i{font:500 11px var(--mono);color:var(--faint);width:18px;flex:none}.track .l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.track .cells{display:flex;gap:4px}
+.cell{width:18px;height:14px;display:grid;place-items:center;border-radius:2px;font:700 9px/1 var(--sans);font-style:normal;color:var(--on-pill)}
+.cell.pass{background:var(--pass)}.cell.warning{background:var(--warning);color:var(--on-pill-warning)}.cell.fail{background:var(--fail)}.cell.not_evaluated{background:var(--ne)}
+.cell.info{background:var(--panel);border:1px solid var(--line)}
+.cell.pass::after{content:"✓"}.cell.warning::after{content:"▲";font-size:7px}.cell.fail::after{content:"✕"}.cell.not_evaluated::after{content:"—"}
+.legend{margin:14px 16px 0;padding-top:12px;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;gap:6px;font:11px var(--mono);color:var(--muted)}
+.legend span{display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:10.5px}
+.main{padding:16px;display:grid;grid-template-columns:minmax(0,1fr);gap:12px;min-width:0}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:3px;min-width:0}
+.phead{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--sub)}
+.phead h2{margin:0;font:600 13.5px var(--sans)}.phead .sp{flex:1}
+.pill{display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:2px;font:600 10.5px/1.6 var(--mono);letter-spacing:.03em;color:var(--on-pill);white-space:nowrap}
+.pill.pass{background:var(--pill-pass)}.pill.warning{background:var(--pill-warning);color:var(--on-pill-warning)}.pill.fail{background:var(--pill-fail)}
+.pill.not_evaluated{background:var(--pill-ne)}.pill.info{background:var(--pill-info)}
+.hero{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr)}
+.hero .id{padding:16px 16px 14px;border-right:1px solid var(--line);min-width:0}
+.eyebrow{font:500 11px var(--mono);color:var(--brand);text-transform:uppercase;letter-spacing:.06em}
+.hero h1{margin:4px 0 2px;font:600 30px/1.1 var(--mono);letter-spacing:-.02em;overflow-wrap:anywhere}
+.kv{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line2);margin-top:14px}
+.kv div{padding:8px 0 0}.kv small{display:block;font:500 10px var(--mono);color:var(--faint);text-transform:uppercase}.kv strong{font:500 15px var(--mono)}
+.print-meta{display:none;margin:10px 0 0;font:12px var(--mono);color:var(--muted)}
+.notice{margin:12px 0 0;padding:8px 10px;background:var(--notice-bg);border:1px solid var(--notice-line);border-left:3px solid var(--brand);font-size:12px;color:var(--notice-ink)}
+.qcbox{padding:14px 16px;min-width:0}
+.qcbox .top{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.qcbox h2{margin:0;font:600 13px var(--sans)}.qcbox .rs{font:11px var(--mono);color:var(--faint);overflow-wrap:anywhere}
+.counts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0 10px}
+.count{border:1px solid var(--line);border-top:3px solid;padding:6px 8px;border-radius:2px;min-width:0}
+.count small{display:block;font:500 10px var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.count strong{font:500 22px/1.2 var(--mono)}
+.count.pass{border-top-color:var(--pass)}.count.warning{border-top-color:var(--warning)}.count.fail{border-top-color:var(--fail)}.count.not_evaluated{border-top-color:var(--ne)}
+.sbar{display:flex;height:8px;border-radius:2px;overflow:hidden;background:var(--line2)}.sbar i{display:block}
+.sbar .pass{background:var(--pass)}.sbar .warning{background:var(--warning)}.sbar .fail{background:var(--fail)}.sbar .not_evaluated{background:var(--ne)}
+.table-wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%}
+.grid th,.grid td{border-bottom:1px solid var(--line2);padding:5px 12px;text-align:left;font-weight:400;white-space:nowrap}
+.grid thead th{font:600 10.5px var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.04em;background:var(--sub);border-bottom:1px solid var(--line)}
+.grid td.n{text-align:right;font:12.5px var(--mono)}.grid thead th.n{text-align:right}.grid th.c{text-align:center}
+.grid tbody tr:hover{background:var(--row-hover)}
+.grid .row-h{color:var(--muted);white-space:normal}
+.hm td{text-align:center}.hm td .cell{margin:0 auto;width:44px;height:18px;font-size:11px}
+.hm td .cell.warning::after{font-size:9px}
+.tracks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+.lane{min-width:0}.lane+.lane{border-left:1px solid var(--line)}
+.lane-h{display:flex;align-items:center;justify-content:space-between;padding:6px 12px;border-bottom:1px solid var(--line2);font:600 12px var(--mono)}
+.chart-button{display:block;width:100%;padding:6px 6px 0;border:0;background:var(--panel);cursor:zoom-in;color:inherit;font:inherit}
+.chart{display:block}
+.chart-svg,.chart-img{display:block;width:100%;height:auto}
+.chart-svg path,.chart-svg use{stroke-linejoin:round;stroke-linecap:butt}
+.empty{margin:12px;padding:30px 12px;border:1px dashed var(--line);text-align:center;color:var(--muted);font:12px var(--mono);overflow-wrap:anywhere}
+.error-box{border-color:var(--fail);color:var(--fail-text)}
+.metrics{border-top:1px solid var(--line2)}
+.metrics table td{padding:4px 12px;border-bottom:1px solid var(--line2)}
+.metrics table td:last-child{text-align:right;font:500 12.5px var(--mono);white-space:nowrap}
+.why{padding:6px 12px 10px;font:12px/1.45 var(--mono);color:var(--muted)}
+.why::before{content:"› ";color:var(--brand)}
+.orep{border-top:1px solid var(--line)}
+.orep-h{display:flex;justify-content:space-between;align-items:center;padding:6px 12px;background:var(--sub);border-bottom:1px solid var(--line2);font:600 11px var(--mono);text-transform:uppercase;color:var(--muted)}
+.table-count{display:inline-grid;place-items:center;min-width:22px;height:18px;padding:0 6px;border:1px solid var(--line);border-radius:2px;background:var(--panel);color:var(--ink);font:600 11px var(--mono)}
+.orep code{font:11.5px/1.4 var(--mono);word-break:break-all}
+.orep td:first-child{white-space:normal}
+.orep .none{padding:8px 12px;margin:0;color:var(--muted);font:12px var(--mono)}
+.divider{display:none;align-items:center;gap:10px;margin:6px 2px -2px;font:600 11px var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.divider::after{content:"";flex:1;height:1px;background:var(--line)}
+.divider b{display:inline-grid;place-items:center;min-width:20px;height:18px;padding:0 5px;border-radius:2px;background:var(--panel);border:1px solid var(--line);color:var(--ink);font-weight:600}
+.divider.attention{color:var(--fail-text)}
+.tracklist .divider{margin:10px 16px 4px;font-size:10px}
+body[data-order="triage"] .divider{display:flex}
+body[data-order="triage"] .panel[data-sev="fail"]{border-left:3px solid var(--fail)}
+body[data-order="triage"] .panel[data-sev="warning"]{border-left:3px solid var(--warning)}
+body[data-order="triage"] .panel[data-sev="not_evaluated"]{border-left:3px solid var(--ne)}
+.phead[data-fold]{cursor:pointer;user-select:none}
+.phead[data-fold]:hover{background:var(--head-hover)}
+.fold{flex:none;width:22px;height:22px;margin-left:-4px;border:0;border-radius:2px;background:none;display:grid;place-items:center;color:var(--muted);cursor:pointer;transition:transform .15s}
+.fold:hover{background:var(--fold-hover)}
+.fold svg{display:block}
+.panel.collapsed .fold{transform:rotate(-90deg)}
+.panel.collapsed>:not(.phead){display:none}
+.panel.collapsed>.phead{border-bottom:0}
+.peek{display:none;gap:14px;font:12px var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden;min-width:0}
+.peek b{font-weight:500;color:var(--ink)}
+.panel.collapsed .peek{display:flex}
+#fold-all[data-state="collapse"] .fa-e,#fold-all[data-state="expand"] .fa-c{display:none}
+footer{padding:8px 4px 24px;font:11px var(--mono);color:var(--faint)}
+dialog{border:1px solid var(--line);border-radius:3px;padding:0;width:min(1200px,94vw);background:var(--panel);color:var(--ink)}
+dialog::backdrop{background:var(--backdrop)}
+.dialog-head{display:flex;justify-content:flex-end;padding:6px;border-bottom:1px solid var(--line);background:var(--sub)}
+.dialog-close{border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:3px 10px;font:12px var(--sans);cursor:pointer}
+#dialog-body{padding:8px}
+@media(prefers-reduced-motion:reduce){.fold{transition:none}}
+@media(max-width:1000px){.shell{grid-template-columns:minmax(0,1fr)}.rail{position:relative;top:0;height:auto}.logo{width:auto}
+.crumbs .cr:nth-child(n+3){display:none}.hero{grid-template-columns:minmax(0,1fr)}.hero .id{border-right:0;border-bottom:1px solid var(--line)}
+.appbar .seg small{display:none}.appbar .btn.print{display:none}
+.rail-h{cursor:pointer;padding:8px 0;margin-top:0}.rail-h>span:first-child::after{content:" ▾"}.rail.open .rail-h>span:first-child::after{content:" ▴"}
+.rail:not(.open) .tracklist,.rail:not(.open) .legend{display:none}
+#dialog-body{overflow-x:auto}#dialog-body .chart-svg,#dialog-body .chart-img{min-width:720px}}
+@media(max-width:700px){.hm td .cell{width:28px}.grid th,.grid td{padding:5px 8px}.tracks{grid-template-columns:minmax(0,1fr)}
+.lane+.lane{border-left:0;border-top:1px solid var(--line)}.counts{grid-template-columns:repeat(2,minmax(0,1fr))}.main{padding:8px}
+.peek{display:none!important}.phead h2{min-width:0;flex:1 1 auto}.phead{flex-wrap:wrap}.appbar{height:auto;flex-wrap:wrap}
+.logo{border-right:0;height:44px}.crumbs{display:none}.appbar .seg{margin:0 8px 8px 12px}.kv{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media print{.appbar,.rail,.fold,dialog{display:none!important}.print-meta{display:block}.shell{display:block}body{background:#fff}.main{padding:0}
+.panel{break-inside:avoid}.panel.collapsed>:not(.phead){display:revert!important}.panel.collapsed .tracks{display:grid!important}
+.panel.collapsed .peek{display:none!important}.chart-button{cursor:default}}
+"""
+)
 
-_CSS = """
-:root{--ink:#0a132d;--muted:#657285;--line:#dce3ea;--panel:#f4f7f9;--brand:#2947a0;--brand-dark:#192f70;--accent:#539d96;--white:#fff;--danger:#c84a5a;--warn:#e69f00;--neutral:#77849a}
-*{box-sizing:border-box}html{scroll-behavior:auto;scroll-padding-top:20px}body{margin:0;background:#edf1f5;color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}.layout{display:grid;grid-template-columns:280px minmax(0,1fr);max-width:1540px;margin:0 auto;min-height:100vh}.sidebar{position:sticky;top:0;height:100vh;padding:28px 22px;color:#fff;overflow:auto;background-color:var(--ink);background-image:radial-gradient(circle at 18% 8%,#365fc03d 0,transparent 27%),linear-gradient(#ffffff08 1px,transparent 1px),linear-gradient(90deg,#ffffff08 1px,transparent 1px);background-size:auto,28px 28px,28px 28px;background-position:0 0,-1px -1px,-1px -1px;border-top:3px solid #7190e2}.brand{display:flex;align-items:center;gap:11px;font-size:19px;font-weight:800;letter-spacing:.01em}.brand-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:linear-gradient(145deg,#4268c9,#2947a0);color:#fff;box-shadow:0 8px 22px #0004}.sidebar-meta{margin:24px 0;padding:16px;border:1px solid #ffffff24;border-radius:11px;background:#101b38cc;box-shadow:inset 0 1px #ffffff0d,0 12px 28px #0002;backdrop-filter:blur(4px)}.sidebar-meta small{display:block;color:#aebbd1}.sidebar-meta strong{display:block;margin:3px 0 12px;overflow-wrap:anywhere}.sidebar-meta strong:last-child{margin-bottom:0}.nav-title{margin:22px 8px 8px;color:#91a9de;font-size:11px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}.nav{list-style:none;margin:0;padding:0}.nav a{display:grid;grid-template-columns:24px minmax(0,1fr) 8px;align-items:center;gap:8px;margin:2px 0;padding:9px 10px;border:1px solid transparent;border-radius:8px;color:#dce3ef;text-decoration:none;font-size:13px;transition:background .12s,border-color .12s}.nav a:hover,.nav a:focus{background:#ffffff10;border-color:#ffffff13;color:#fff}.nav a.active{background:linear-gradient(90deg,#3153a650,#ffffff0b);border-color:#7894db42;color:#fff;box-shadow:inset 3px 0 #7190e2}.nav-index{color:#8395b4;font:700 10px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.04em}.nav a.active .nav-index{color:#aac0fa}.nav-label{min-width:0}.nav-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px #539d961c;flex:0 0 auto}.nav-dot.info{background:#7190e2}.nav-dot.not_run,.nav-dot.not_evaluated{background:var(--neutral)}.nav-dot.pass{background:var(--accent)}.nav-dot.warning{background:var(--warn)}.nav-dot.fail,.nav-dot.error{background:var(--danger)}.main{min-width:0;padding:34px}.report-head,.module{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 28px #0a132d0d}.report-head{padding:34px 38px;border-top:6px solid var(--brand)}.eyebrow,.section-kicker{margin:0 0 7px;color:var(--brand);font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}h1{margin:0;font-size:30px;line-height:1.2}h2{margin:0;font-size:21px}h3{margin:0;font-size:15px}.subtitle{max-width:80ch;margin:12px 0 0;color:var(--muted)}.overview{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:24px}.overview-card{padding:15px 17px;border:1px solid var(--line);border-radius:9px;background:var(--panel)}.overview-card span{display:block;color:var(--muted);font-size:12px}.overview-card strong{display:block;margin-top:3px;font-size:21px}.notice{margin-top:18px;padding:12px 14px;border-left:3px solid var(--accent);background:#e8f3f1;color:var(--brand-dark);font-size:13px}.module{margin-top:18px;padding:28px 30px;scroll-margin-top:20px}.module-head,.plot-card-head{display:flex;align-items:center;justify-content:space-between;gap:18px}.badge{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:4px 9px;font-size:10px;font-weight:800;letter-spacing:.06em;white-space:nowrap}.badge.ready,.badge.pass{background:#e8f3f1;color:#276c66}.badge.info{background:#eef1f8;color:var(--brand-dark)}.badge.not_run,.badge.not_evaluated{background:#f1f3f5;color:var(--muted)}.badge.warning{background:#fff3d6;color:#8c5b00}.badge.fail,.badge.error{background:#fae9ec;color:#9f3041}.stats-grid,.plot-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:20px}.stats-card,.plot-card{min-width:0;border:1px solid var(--line);border-radius:10px;overflow:hidden}.stats-card h3,.plot-card-head{padding:12px 15px;background:var(--panel);border-bottom:1px solid var(--line)}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 13px;border-bottom:1px solid var(--line);text-align:left}th{width:58%;color:var(--muted);font-weight:500}tr:last-child th,tr:last-child td{border-bottom:0}.chart-button{position:relative;display:block;width:100%;padding:0;border:0;background:#fff;cursor:zoom-in}.chart-image{display:block;width:100%;height:auto}.expand-hint{position:absolute;right:10px;bottom:10px;padding:5px 8px;border-radius:6px;background:#0a132ddd;color:#fff;font-size:10px;opacity:0;transition:opacity .15s}.chart-button:hover .expand-hint,.chart-button:focus .expand-hint{opacity:1}.empty{display:grid;place-items:center;min-height:210px;padding:28px;text-align:center;color:var(--muted);background:var(--panel)}.error-box{color:#9f3041}.decision-detail{padding:13px 15px;border-top:1px solid var(--line);background:#fff}.decision-detail p{margin:7px 0 0;color:var(--muted);font-size:12px}.observations{display:flex;flex-wrap:wrap;gap:8px 18px}.observation small,.observation strong{display:block}.observation small{color:var(--muted);font-size:10px}.observation strong{font-size:13px}.ruleset{margin:7px 0 0;color:var(--muted);font-size:12px}.qc-counts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:20px}.qc-count{display:flex;align-items:center;justify-content:space-between;padding:11px 13px;border:1px solid var(--line);border-left:4px solid var(--neutral);border-radius:8px;background:var(--panel)}.qc-count.pass{border-left-color:var(--accent)}.qc-count.warning{border-left-color:var(--warn)}.qc-count.fail{border-left-color:var(--danger)}.qc-count span{color:var(--muted);font-size:10px;font-weight:800}.qc-count strong{font-size:20px}.summary-bar{display:flex;height:14px;margin-top:12px;overflow:hidden;border-radius:999px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line)}.summary-segment.pass{background:var(--accent)}.summary-segment.warning{background:var(--warn)}.summary-segment.fail{background:var(--danger)}.summary-segment.not_evaluated{background:var(--neutral)}.qc-matrix-wrap{margin-top:20px;overflow-x:auto;border:1px solid var(--line);border-radius:9px}.qc-matrix th:first-child{width:auto}.qc-matrix th:not(:first-child),.qc-matrix td{text-align:center}.qc-matrix .badge{font-size:9px}.footer{padding:24px 6px;color:var(--muted);font-size:12px;text-align:center}.print-button{position:fixed;right:22px;bottom:22px;border:0;border-radius:9px;padding:11px 16px;background:var(--brand);color:#fff;font-weight:700;box-shadow:0 8px 22px #0a132d35;cursor:pointer}dialog{width:min(96vw,1400px);max-height:94vh;padding:18px;border:0;border-radius:14px;box-shadow:0 20px 70px #0008}dialog::backdrop{background:#071127c9}.dialog-head{display:flex;justify-content:flex-end;margin-bottom:8px}.dialog-close{border:0;border-radius:7px;padding:8px 12px;background:var(--ink);color:#fff;cursor:pointer}#dialog-image{display:block;max-width:100%;max-height:82vh;margin:auto}
-.overrepresented-block{border-top:1px solid var(--line);background:#fff}.overrepresented-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px}.overrepresented-head .section-kicker{margin-bottom:2px}.overrepresented-head h4{margin:0;font-size:14px}.table-count{display:grid;place-items:center;min-width:27px;height:27px;padding:0 8px;border-radius:999px;background:#eef1f8;color:var(--brand-dark);font-size:11px;font-weight:800}.overrepresented-table-wrap{overflow-x:auto;border-top:1px solid var(--line)}.overrepresented-table{table-layout:fixed;font-size:11px}.overrepresented-table .sequence-col{width:58%}.overrepresented-table .count-col{width:21%}.overrepresented-table .percentage-col{width:21%}.overrepresented-table th{width:auto;padding:8px 10px;background:var(--panel);color:var(--brand-dark);font-size:10px;font-weight:800;letter-spacing:.035em;text-transform:uppercase}.overrepresented-table th.numeric{text-align:right;}.overrepresented-table td{padding:9px 10px;vertical-align:top}.overrepresented-table td.numeric{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.overrepresented-table td.sequence code{color:var(--ink);font:10px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere;word-break:break-all}.overrepresented-empty{margin:0;padding:14px 15px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}.overrepresented-table tbody tr:nth-child(even){background:#f8fafb}
-@media(max-width:980px){.layout{grid-template-columns:1fr}.sidebar{position:relative;height:auto}.nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.main{padding:20px}.stats-grid,.plot-grid{grid-template-columns:1fr}}
-@media(max-width:620px){.main{padding:0}.report-head,.module{border-radius:0;border-left:0;border-right:0}.report-head,.module{padding:22px}.overview,.nav,.qc-counts{grid-template-columns:1fr}.sidebar{padding:22px}h1{font-size:25px}}
-@media print{body{background:#fff}.layout{display:block;max-width:none}.sidebar,.print-button,dialog{display:none!important}.main{padding:0}.report-head,.module{box-shadow:none;border-radius:0;break-inside:avoid}.module{margin-top:12px}.chart-button{cursor:default}.expand-hint{display:none}.plot-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.overrepresented-block{break-inside:avoid}.overrepresented-table{font-size:9px}.overrepresented-table td.sequence code{font-size:8px}}
+# Runs in <head> so the saved theme and language apply before the first paint.
+_HEAD_JS = """
+(function(){var d=document.documentElement,t=null,l=null;
+try{t=localStorage.getItem('neoqc.report.theme');l=localStorage.getItem('neoqc.report.lang');}catch(e){}
+if(t!=='light'&&t!=='dark')t=(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';
+if(l!=='en'&&l!=='ru')l=((navigator.language||'').toLowerCase().indexOf('ru')===0)?'ru':'en';
+d.setAttribute('data-theme',t);d.setAttribute('lang',l);})();
 """.strip()
 
-
 _JS = """
-const dialog=document.getElementById('chart-dialog');
-const dialogImage=document.getElementById('dialog-image');
-document.querySelectorAll('.chart-button').forEach((button)=>{
-  button.addEventListener('click',()=>{
-    const image=button.querySelector('img');
-    dialogImage.src=image.src; dialogImage.alt=image.alt; dialog.showModal();
-  });
-});
+const root=document.documentElement;
+const store=(key,value)=>{try{localStorage.setItem(key,value);}catch(e){}};
+const press=(attr,value)=>document.querySelectorAll('['+attr+']').forEach((b)=>b.setAttribute('aria-pressed',String(b.getAttribute(attr)===value)));
+
+// Scroll-spy: highlight the rail entry of the section at the top of the viewport.
+const navLinks=[...document.querySelectorAll('[data-nav]')];
+let clickedHash=null;
+const spy=()=>{
+  const sections=[...document.querySelectorAll('[data-section]')].filter((s)=>s.offsetParent!==null);
+  if(!sections.length)return;
+  let active=sections[0];
+  for(const section of sections){if(section.getBoundingClientRect().top<=120)active=section;else break;}
+  if(window.scrollY+window.innerHeight>=document.documentElement.scrollHeight-2){
+    // At the bottom several short sections are visible at once: keep the one the user picked.
+    const picked=clickedHash&&sections.find((s)=>'#'+s.id===clickedHash);
+    active=picked&&picked.getBoundingClientRect().top<window.innerHeight?picked:sections[sections.length-1];
+  }
+  navLinks.forEach((link)=>{const on=link.getAttribute('href')==='#'+active.id;link.classList.toggle('active',on);
+    if(on)link.setAttribute('aria-current','true');else link.removeAttribute('aria-current');});
+};
+let spyFrame=0;
+window.addEventListener('scroll',()=>{if(spyFrame)return;spyFrame=requestAnimationFrame(()=>{spyFrame=0;spy();});},{passive:true});
+
+// Theme and language.
+const setTheme=(theme,save)=>{root.setAttribute('data-theme',theme);press('data-theme-btn',theme);if(save)store('neoqc.report.theme',theme);};
+const setLang=(lang,save)=>{root.setAttribute('lang',lang);press('data-lang-btn',lang);if(save)store('neoqc.report.lang',lang);spy();};
+document.querySelectorAll('[data-theme-btn]').forEach((b)=>b.addEventListener('click',()=>setTheme(b.dataset.themeBtn,true)));
+document.querySelectorAll('[data-lang-btn]').forEach((b)=>b.addEventListener('click',()=>setLang(b.dataset.langBtn,true)));
+setTheme(root.getAttribute('data-theme')==='dark'?'dark':'light',false);
+setLang(root.getAttribute('lang')==='ru'?'ru':'en',false);
+
+// Section order (triage / sequential) and folding.
+const ORDER_KEY='neoqc.report.order';
+const main=document.querySelector('.main'),tracklist=document.querySelector('.tracklist'),heatmap=document.querySelector('.hm tbody');
+const foldables=[...document.querySelectorAll('.panel.foldable')];
+const foldAll=document.getElementById('fold-all');
+const sortBy=(box,key)=>{if(!box)return;[...box.children].sort((a,b)=>(+a.dataset[key])-(+b.dataset[key])).forEach((e)=>box.appendChild(e));};
+const setFold=(panel,folded)=>{panel.classList.toggle('collapsed',folded);
+  const button=panel.querySelector('.fold');if(button)button.setAttribute('aria-expanded',String(!folded));};
+const syncFoldAll=()=>{if(foldAll)foldAll.dataset.state=foldables.some((p)=>!p.classList.contains('collapsed'))?'collapse':'expand';};
+const applyOrder=(mode,resetFold)=>{
+  document.body.dataset.order=mode;
+  [main,tracklist,heatmap].forEach((box)=>sortBy(box,mode==='triage'?'tri':'seq'));
+  press('data-order-btn',mode);
+  if(resetFold)foldables.forEach((p)=>setFold(p,mode==='triage'&&p.dataset.sev==='ok'));
+  syncFoldAll();spy();store(ORDER_KEY,mode);
+};
+document.querySelectorAll('[data-order-btn]').forEach((b)=>b.addEventListener('click',()=>applyOrder(b.dataset.orderBtn,true)));
+document.querySelectorAll('.phead[data-fold]').forEach((head)=>head.addEventListener('click',()=>{
+  const panel=head.parentElement;setFold(panel,!panel.classList.contains('collapsed'));syncFoldAll();spy();}));
+if(foldAll)foldAll.addEventListener('click',()=>{const fold=foldables.some((p)=>!p.classList.contains('collapsed'));
+  foldables.forEach((p)=>setFold(p,fold));syncFoldAll();spy();});
+const reveal=(hash)=>{let target=null;try{target=hash&&document.querySelector(hash);}catch(e){}
+  if(target&&target.classList.contains('collapsed')){setFold(target,false);syncFoldAll();}};
+navLinks.forEach((link)=>link.addEventListener('click',()=>{clickedHash=link.getAttribute('href');reveal(clickedHash);
+  requestAnimationFrame(spy);}));
+
+// Narrow screens: the section list is folded behind the "Report sections" header.
+const rail=document.querySelector('.rail'),railToggle=document.querySelector('.rail-h');
+if(railToggle)railToggle.addEventListener('click',()=>{const open=!rail.classList.contains('open');
+  rail.classList.toggle('open',open);railToggle.setAttribute('aria-expanded',String(open));});
+
+// Full-size chart dialog.
+const dialog=document.getElementById('chart-dialog'),dialogBody=document.getElementById('dialog-body');
+document.querySelectorAll('.chart-button').forEach((b)=>b.addEventListener('click',()=>{dialogBody.innerHTML=b.innerHTML;dialog.showModal();}));
 document.getElementById('dialog-close').addEventListener('click',()=>dialog.close());
 dialog.addEventListener('click',(event)=>{if(event.target===dialog)dialog.close();});
-const reportSections=[...document.querySelectorAll('main section[id]')];
-const navLinks=[...document.querySelectorAll('.nav a')];
-const activateNav=(activeLink)=>navLinks.forEach((link)=>{
-  const active=link===activeLink;
-  link.classList.toggle('active',active);
-  if(active)link.setAttribute('aria-current','true'); else link.removeAttribute('aria-current');
-});
-const updateActiveNav=()=>{
-  if(!reportSections.length)return;
-  const marker=24;
-  let activeSection=reportSections[0];
-  for(const section of reportSections){
-    if(section.getBoundingClientRect().top<=marker)activeSection=section; else break;
-  }
-  if(window.scrollY+window.innerHeight>=document.documentElement.scrollHeight-2){
-    activeSection=reportSections[reportSections.length-1];
-  }
-  activateNav(navLinks.find((link)=>link.hash===`#${activeSection.id}`));
-};
-navLinks.forEach((link)=>link.addEventListener('click',(event)=>{
-  const target=document.querySelector(link.hash);
-  if(!target)return;
-  event.preventDefault();
-  activateNav(link);
-  const top=window.scrollY+target.getBoundingClientRect().top-20;
-  window.scrollTo({top:Math.max(0,top),behavior:'auto'});
-}));
-let scrollFrame=0;
-window.addEventListener('scroll',()=>{
-  if(scrollFrame)return;
-  scrollFrame=requestAnimationFrame(()=>{scrollFrame=0;updateActiveNav();});
-},{passive:true});
-updateActiveNav();
+dialog.addEventListener('close',()=>{dialogBody.innerHTML='';});
+
+// Printing always uses the light theme and expands every section.
+let printFolds=null,printTheme=null;
+window.addEventListener('beforeprint',()=>{printFolds=foldables.map((p)=>p.classList.contains('collapsed'));
+  foldables.forEach((p)=>setFold(p,false));printTheme=root.getAttribute('data-theme');root.setAttribute('data-theme','light');});
+window.addEventListener('afterprint',()=>{if(printFolds)foldables.forEach((p,i)=>setFold(p,printFolds[i]));printFolds=null;syncFoldAll();
+  if(printTheme)root.setAttribute('data-theme',printTheme);printTheme=null;});
+
+let savedOrder=null;try{savedOrder=localStorage.getItem(ORDER_KEY);}catch(e){}
+applyOrder(savedOrder==='sequential'?'sequential':'triage',true);
+reveal(location.hash);
 """.strip()
 
 
 def render_qc_report(model: QcReportModel, plot_dir: Path) -> str:
-    modules = "".join(_render_module(module, plot_dir) for module in model.modules)
-    nav_items = [
-        f'<li><a href="#qc-summary"><span class="nav-index">00</span>'
-        f'<span class="nav-label">QC overview</span><i class="nav-dot {escape(model.overall_qc_status)}"></i></a></li>',
-        '<li><a href="#basic-statistics"><span class="nav-index">01</span>'
-        '<span class="nav-label">Basic Statistics</span><i class="nav-dot info"></i></a></li>'
+    attention = [module for module in model.modules if _needs_attention(module.qc_status)]
+    passed = [module for module in model.modules if not _needs_attention(module.qc_status)]
+    k_overview, k_basic, k_footer = _keys(0, 0), _keys(1, 1), _keys(99999, 99999)
+    k_attention, k_passed = _keys(99990, 50), _keys(99991, 5000)
+
+    def divider(kind: str, label: str, count: int, keys: str) -> str:
+        if not count:
+            return ""
+        return f'<div class="divider {kind}" {keys} aria-hidden="true">{_t(label)} <b>{count}</b></div>'
+
+    def cells(module: PlotModule) -> str:
+        by_read = {card.read: card for card in module.cards}
+        return "".join(
+            _cell(by_read[read].qc_status, f"{read}: {STATUS_LABELS[by_read[read].qc_status]}")
+            if read in by_read else _cell("not_evaluated", f"{read}: —")
+            for read in model.reads
+        )
+
+    tracks = [
+        f'<a class="track" data-nav href="#qc-summary" {k_overview}><span class="i">00</span>'
+        f'<span class="l">{_t("QC overview")}</span><span class="cells">'
+        f'{_cell(model.overall_qc_status, STATUS_LABELS[model.overall_qc_status])}</span></a>',
+        f'<a class="track" data-nav href="#basic-statistics" {k_basic}><span class="i">01</span>'
+        f'<span class="l">{_t("Basic Statistics")}</span><span class="cells">{_cell("info", "INFO")}</span></a>',
+        divider("attention", "Needs attention", len(attention), k_attention),
+        divider("", "Passed", len(passed), k_passed),
     ]
-    nav_items.extend(
-        f'<li><a href="#module-{escape(module.metric_id)}"><span class="nav-index">{index:02d}</span>'
-        f'<span class="nav-label">{escape(module.title)}</span>'
-        f'<i class="nav-dot {escape(module.qc_status)}"></i></a></li>'
+    tracks += [
+        f'<a class="track" data-nav href="#module-{escape(module.metric_id)}" '
+        f'{_keys(index, _triage_rank(module.qc_status, index))}><span class="i">{index:02d}</span>'
+        f'<span class="l">{_t(module.title)}</span><span class="cells">{cells(module)}</span></a>'
         for index, module in enumerate(model.modules, start=2)
+    ]
+    reads_head = "".join(f"<b>{escape(read)}</b>" for read in model.reads)
+    legend = "".join(f"<span>{_cell(status, STATUS_LABELS[status])}{STATUS_LABELS[status]}</span>" for status in STATUS_ORDER)
+    prefs = (
+        f'<div class="prefs"><div class="pref"><small>{_t("Theme")}</small><div class="seg" role="group" aria-label="Theme">'
+        f'<button type="button" data-theme-btn="light" aria-pressed="true" aria-label="Light theme" title="Light">{SUN}</button>'
+        f'<button type="button" data-theme-btn="dark" aria-pressed="false" aria-label="Dark theme" title="Dark">{MOON}</button>'
+        f'</div></div><div class="pref"><small>{_t("Language")}</small><div class="seg" role="group" aria-label="Language">'
+        '<button type="button" data-lang-btn="en" aria-pressed="true" lang="en">EN</button>'
+        '<button type="button" data-lang-btn="ru" aria-pressed="false" lang="ru">RU</button></div></div></div>'
     )
-    read_label = " / ".join(model.reads)
-    error_label = str(model.errors) if model.errors else "None"
-    return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>NeoQC report — {escape(model.sample_id)}</title><style>{_CSS}</style></head>
-<body><div class="layout"><aside class="sidebar"><div class="brand"><span class="brand-mark">NQ</span>NeoQC Report</div>
-<div class="sidebar-meta"><small>Sample</small><strong>{escape(model.sample_id)}</strong><small>Generated</small><strong>{escape(model.generated_at)}</strong><small>Reads</small><strong>{escape(read_label)}</strong></div>
-<p class="nav-title">Report sections</p><ul class="nav">{''.join(nav_items)}</ul></aside>
-<main class="main"><header class="report-head"><p class="eyebrow">Sequencing quality control</p><h1>{escape(model.sample_id)}</h1>
-<p class="subtitle">Compact, self-contained NeoQC report with all available read-quality charts.</p>
-<div class="overview"><div class="overview-card"><span>Read sets</span><strong>{escape(read_label)}</strong></div><div class="overview-card"><span>Charts available</span><strong>{model.generated_plots}</strong></div><div class="overview-card"><span>Rendering errors</span><strong>{escape(error_label)}</strong></div></div>
-<div class="notice">PASS / WARNING / FAIL are technical QC flags from the displayed versioned ruleset, not clinical conclusions. Plot availability errors are reported separately and never converted into biological FAIL results.</div></header>
-{_render_qc_summary(model)}{_render_basic_statistics(model)}{modules}<footer class="footer">Generated by NeoQC • Self-contained QC report</footer></main></div>
-<button class="print-button" type="button" onclick="window.print()">Print / Save PDF</button>
-<dialog id="chart-dialog"><div class="dialog-head"><button class="dialog-close" id="dialog-close" type="button">Close</button></div><img id="dialog-image" alt=""></dialog>
-<script>{_JS}</script></body></html>"""
+    rail = (
+        f'<aside class="rail">{prefs}<button class="rail-h" type="button" aria-expanded="false" aria-controls="tracklist">'
+        f'<span>{_t("Report sections")}</span><em>{reads_head}</em></button>'
+        f'<nav class="tracklist" id="tracklist" aria-label="Report sections">{"".join(tracks)}</nav><div class="legend">{legend}</div></aside>'
+    )
+    appbar = (
+        '<header class="appbar"><div class="logo"><i aria-hidden="true"><b></b><b></b><b></b><b></b></i>NeoQC Report</div>'
+        '<div class="crumbs">'
+        f'<span class="cr"><small>{_t("Sample")}</small><strong>{escape(model.sample_id)}</strong></span>'
+        f'<span class="cr"><small>{_t("Reads")}</small><strong>{escape(" / ".join(model.reads))}</strong></span>'
+        f'<span class="cr"><small>{_t("Generated")}</small><strong>{escape(model.generated_at)}</strong></span>'
+        f'<span class="cr"><small>{_t("Ruleset")}</small><strong>{escape(model.ruleset_label)}</strong></span></div>'
+        f'<div class="seg" role="group" aria-label="Section order"><small>{_t("Order")}</small>'
+        f'<button type="button" data-order-btn="triage" aria-pressed="true">{_t("Triage")}</button>'
+        f'<button type="button" data-order-btn="sequential" aria-pressed="false">{_t("Sequential")}</button></div>'
+        f'<button class="btn ghost" id="fold-all" type="button" data-state="collapse"><span class="fa-c">{_t("Collapse all")}</span>'
+        f'<span class="fa-e">{_t("Expand all")}</span></button>'
+        f'<button class="btn print" type="button" onclick="window.print()">{_t("Print / Save PDF")}</button></header>'
+    )
+    main = (
+        _render_overview(model, k_overview)
+        + _render_basic_statistics(model, k_basic)
+        + divider("attention", "Needs attention", len(attention), k_attention)
+        + divider("", "Passed · folded", len(passed), k_passed)
+        + "".join(_render_module(module, index, plot_dir) for index, module in enumerate(model.modules, start=2))
+        + f'<footer {k_footer}>{_t("Generated by NeoQC")}</footer>'
+    )
+    dialog = (
+        '<dialog id="chart-dialog" aria-label="Chart"><div class="dialog-head">'
+        f'<button class="dialog-close" id="dialog-close" type="button">{_t("Close")}</button></div>'
+        '<div id="dialog-body"></div></dialog>'
+    )
+    return (
+        '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        f"<title>NeoQC report — {escape(model.sample_id)}</title>"
+        f"<style>{_font_face_css()}\n{_CSS}</style><script>{_HEAD_JS}</script></head>"
+        f'<body>{appbar}<div class="shell">{rail}<main class="main">{main}</main></div>{dialog}'
+        f"<script>{_JS}</script></body></html>"
+    )
 
 
 def generate_qc_report(

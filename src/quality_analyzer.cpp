@@ -204,9 +204,14 @@ std::size_t DuplicationKeyHash::operator()(const DuplicationKey& key) const noex
     return static_cast<std::size_t>(hash);
 }
 
+// Absolute path injected by CMake so that neoqc works from any working
+// directory; the relative fallback keeps ad-hoc builds usable from the repo root.
+#ifndef NEOQC_ADAPTER_CONFIG
+#define NEOQC_ADAPTER_CONFIG "config/adapters/neoqc-standard-v1.tsv"
+#endif
+
 QualityAnalyzer::QualityAnalyzer(ReadDirection direction)
-    : QualityAnalyzer(direction, loadAdapterConfig(
-          "config/adapters/neoqc-standard-v1.tsv"))
+    : QualityAnalyzer(direction, loadAdapterConfig(NEOQC_ADAPTER_CONFIG))
 {
 }
 
