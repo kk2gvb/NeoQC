@@ -38,6 +38,8 @@ add_executable(neoqc
     src/trimming/quality_trimmer.cpp
     src/trimming/adapter_trimmer.cpp
     src/trimming/trimmer.cpp
+    src/trimming/trim_stats.cpp
+    src/trimming/trim_report.cpp
 )
 
 target_include_directories(neoqc PRIVATE include)
@@ -64,6 +66,7 @@ add_executable(neoqc_trimming_config_test
     src/trimming/quality_trimmer.cpp
     src/trimming/adapter_trimmer.cpp
     src/trimming/trimmer.cpp
+    src/trimming/trim_stats.cpp
 )
 target_include_directories(neoqc_trimming_config_test PRIVATE include)
 
@@ -72,8 +75,28 @@ add_executable(neoqc_quality_trimmer_test
     src/trimming/quality_trimmer.cpp
     src/trimming/adapter_trimmer.cpp
     src/trimming/trimmer.cpp
+    src/trimming/trim_stats.cpp
 )
 target_include_directories(neoqc_quality_trimmer_test PRIVATE include)
+
+add_executable(neoqc_adapter_and_window_trimmer_test
+    tests/trimming/test_adapter_and_window_trimmer.cpp
+    src/trimming/quality_trimmer.cpp
+    src/trimming/adapter_trimmer.cpp
+    src/trimming/trimmer.cpp
+    src/trimming/trim_stats.cpp
+)
+target_include_directories(neoqc_adapter_and_window_trimmer_test PRIVATE include)
+
+add_executable(neoqc_trim_filter_report_test
+    tests/trimming/test_trim_filter_report.cpp
+    src/trimming/quality_trimmer.cpp
+    src/trimming/adapter_trimmer.cpp
+    src/trimming/trimmer.cpp
+    src/trimming/trim_stats.cpp
+    src/trimming/trim_report.cpp
+)
+target_include_directories(neoqc_trim_filter_report_test PRIVATE include)
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
@@ -87,6 +110,12 @@ add_test(NAME test_trim_config_defaults
 
 add_test(NAME test_quality_trimmer
          COMMAND neoqc_quality_trimmer_test)
+
+add_test(NAME test_adapter_and_window_trimmer
+         COMMAND neoqc_adapter_and_window_trimmer_test)
+
+add_test(NAME test_trim_filter_report
+         COMMAND neoqc_trim_filter_report_test)
 
 add_test(NAME test_trim_help
          COMMAND neoqc --help)
@@ -178,6 +207,24 @@ add_test(NAME test_trim_feature_flag
                        --sample-id test_trim_feature_flag
                        --out ${TEST_OUT_DIR}/trim_feature_flag
                        --trim)
+
+add_test(NAME test_trim_feature_report
+         COMMAND ${CMAKE_COMMAND}
+                 -DREPORT=${TEST_OUT_DIR}/trim_feature_flag/trimming_report.json
+                 -DMANIFEST=${TEST_OUT_DIR}/trim_feature_flag/run_manifest.json
+                 -P ${CMAKE_SOURCE_DIR}/tests/check_trimming_report.cmake)
+set_tests_properties(test_trim_feature_report PROPERTIES DEPENDS test_trim_feature_flag)
+
+add_test(NAME test_trim_report_disabled_run
+         COMMAND neoqc --r1 ${TEST_DATA_DIR}/correct_single.fq.gz
+                       --sample-id test_trim_report_disabled
+                       --out ${TEST_OUT_DIR}/trim_report_disabled)
+
+add_test(NAME test_trim_report_disabled
+         COMMAND ${CMAKE_COMMAND}
+                 -DPATH_TO_CHECK=${TEST_OUT_DIR}/trim_report_disabled/trimming_report.json
+                 -P ${CMAKE_SOURCE_DIR}/tests/check_file_absent.cmake)
+set_tests_properties(test_trim_report_disabled PROPERTIES DEPENDS test_trim_report_disabled_run)
 
 # Корректная таблица образцов (запуск QC по ней будет добавлен отдельно)
 add_test(NAME test_valid_sample_sheet
@@ -487,6 +534,7 @@ set_tests_properties(
     test_correct_single
     test_skip_adapters
     test_trim_feature_flag
+    test_trim_report_disabled_run
     test_case_summary
     test_correct_paired
     test_sequence_duplication

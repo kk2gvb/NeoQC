@@ -6,6 +6,8 @@
 #include "trimming/trim_result.h"
 #include "trimming/trim_stats.h"
 
+#include <utility>
+
 struct FastqRecord;
 
 // Top-level owner of trimming pipeline configuration and statistics.
@@ -19,8 +21,13 @@ public:
     const AdapterTrimmer& getAdapterTrimmer() const noexcept;
 
     TrimResult trim(FastqRecord& record);
+    std::pair<TrimResult, TrimResult> trimPair(FastqRecord& r1,
+                                                FastqRecord& r2);
 
 private:
+    void applyMinimumLengthFilter(TrimResult& result) const;
+    void updateStats(const TrimResult& result);
+
     TrimConfig config_;
     QualityTrimmer qualityTrimmer_;
     AdapterTrimmer adapterTrimmer_;

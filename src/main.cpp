@@ -3,6 +3,7 @@
 #include "../include/plot_runner.h"
 #include "../include/sample_sheet.h"
 #include "../include/trimming/trim_config.h"
+#include "../include/trimming/trim_report.h"
 #include "../include/trimming/trimmer.h"
 
 #include <omp.h>
@@ -31,6 +32,7 @@ using Clock = std::chrono::steady_clock;
 struct AnalysisResult {
     QualityStats r1Stats;
     std::optional<QualityStats> r2Stats;
+    TrimStats trimmingStats;
 };
 
 struct BatchSampleResult {
@@ -128,7 +130,7 @@ void printUsage(const char* progName) {
         "  --samples <file>  Validate a CSV table; combine with --out to run batch QC\n"
         "  --plot            Build plots via plot_results.py (optional)\n"
         "  --skip-adapters   Disable adapter search (for performance measurements)\n"
-        "  --trim            Enable the trimming pipeline (currently no-op)\n";
+        "  --trim            Enable the trimming pipeline and write trimming_report.json\n";
 }
 
 void writeSummary(std::ostream& out,
@@ -224,8 +226,9 @@ BaseValidationError processRecord(
 
 void processBatchParallel(
     std::vector<QualityAnalyzer>& analyzers,
-    const std::vector<FastqRecord>& batch,
-    bool skipAdapters)
+    std::vector<FastqRecord>& batch,
+    bool skipAdapters,
+    std::vector<Trimmer>* trimmers = nullptr)
 {
     std::vector<BaseValidationError> validationErrors(
         analyzers.size());
@@ -234,6 +237,11 @@ void processBatchParallel(
     for (int i = 0; i < static_cast<int>(batch.size()); ++i)
     {
         const int threadId = omp_get_thread_num();
+
+        if (trimmers != nullptr)
+        {
+            (*trimmers)[threadId].trim(batch[i]);
+        }
 
         BaseValidationError error = processRecord(
             analyzers[threadId],
@@ -260,6 +268,53 @@ void processBatchParallel(
                 << "' at position "
                 << (error.position + 1);
 
+            throw std::runtime_error(oss.str());
+        }
+    }
+}
+
+void processPairedBatchParallel(
+    std::vector<QualityAnalyzer>& analyzersR1,
+    std::vector<QualityAnalyzer>& analyzersR2,
+    std::vector<FastqRecord>& batchR1,
+    std::vector<FastqRecord>& batchR2,
+    bool skipAdapters,
+    std::vector<Trimmer>* trimmers = nullptr)
+{
+    std::vector<BaseValidationError> validationErrors(analyzersR1.size());
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < static_cast<int>(batchR1.size()); ++i)
+    {
+        const int threadId = omp_get_thread_num();
+
+        if (trimmers != nullptr)
+        {
+            (*trimmers)[threadId].trimPair(batchR1[i], batchR2[i]);
+        }
+
+        BaseValidationError error = processRecord(
+            analyzersR1[threadId], batchR1[i], skipAdapters);
+        if (!error.found)
+        {
+            error = processRecord(
+                analyzersR2[threadId], batchR2[i], skipAdapters);
+        }
+        if (error.found)
+        {
+            validationErrors[threadId] = error;
+        }
+    }
+
+    for (const auto& error : validationErrors)
+    {
+        if (error.found)
+        {
+            std::ostringstream oss;
+            oss << "FASTQ validation error:\n"
+                << "record: " << error.recordNumber
+                << "\nreason: invalid base '" << error.base
+                << "' at position " << (error.position + 1);
             throw std::runtime_error(oss.str());
         }
     }
@@ -935,7 +990,8 @@ AnalysisResult processOneFile(const std::string& path,
                             const std::string& readName,
                             const std::string& outDir,
                             const std::string& sampleId,
-                            bool skipAdapters) {
+                            bool skipAdapters,
+                            const TrimConfig* trimConfig = nullptr) {
     AnalysisResult result;
     beginDuplicationArtifacts(outDir, readName, path);
     QualityAnalyzer analyzer;
@@ -958,6 +1014,16 @@ AnalysisResult processOneFile(const std::string& path,
         localAnalyzers.emplace_back();
     }
 
+    std::vector<Trimmer> localTrimmers;
+    if (trimConfig != nullptr)
+    {
+        localTrimmers.reserve(threadCount);
+        for (int i = 0; i < threadCount; ++i)
+        {
+            localTrimmers.emplace_back(*trimConfig);
+        }
+    }
+
     std::vector<FastqRecord> batch;
 
     size_t count = 0;
@@ -967,7 +1033,8 @@ AnalysisResult processOneFile(const std::string& path,
         processBatchParallel(
             localAnalyzers,
             batch,
-            skipAdapters);
+            skipAdapters,
+            trimConfig != nullptr ? &localTrimmers : nullptr);
 
         count += batch.size();
 
@@ -982,6 +1049,10 @@ AnalysisResult processOneFile(const std::string& path,
     for (auto& localAnalyzer : localAnalyzers)
     {
         analyzer.merge(localAnalyzer);
+    }
+    for (const auto& localTrimmer : localTrimmers)
+    {
+        result.trimmingStats.merge(localTrimmer.getStats());
     }
 
     std::vector<std::vector<DuplicationEntry>> entries;
@@ -1037,7 +1108,8 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
                                 const std::string& r2Path,
                                 const std::string& outDir,
                                 const std::string& sampleId,
-                                bool skipAdapters)
+                                bool skipAdapters,
+                                const TrimConfig* trimConfig = nullptr)
 {
     AnalysisResult result;
     beginDuplicationArtifacts(outDir, "R1", r1Path);
@@ -1071,6 +1143,16 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
         localAnalyzersR2.emplace_back(ReadDirection::R2);
     }
 
+    std::vector<Trimmer> localTrimmers;
+    if (trimConfig != nullptr)
+    {
+        localTrimmers.reserve(threadCount);
+        for (int i = 0; i < threadCount; ++i)
+        {
+            localTrimmers.emplace_back(*trimConfig);
+        }
+    }
+
     std::vector<FastqRecord> batchR1;
     std::vector<FastqRecord> batchR2;
 
@@ -1083,15 +1165,13 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
         batchR2,
         BATCH_SIZE))
     {
-        processBatchParallel(
+        processPairedBatchParallel(
             localAnalyzersR1,
-            batchR1,
-            skipAdapters);
-
-        processBatchParallel(
             localAnalyzersR2,
+            batchR1,
             batchR2,
-            skipAdapters);
+            skipAdapters,
+            trimConfig != nullptr ? &localTrimmers : nullptr);
 
         count += batchR1.size();
 
@@ -1111,6 +1191,10 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
     for (auto& localAnalyzer : localAnalyzersR2)
     {
         analyzerR2.merge(localAnalyzer);
+    }
+    for (const auto& localTrimmer : localTrimmers)
+    {
+        result.trimmingStats.merge(localTrimmer.getStats());
     }
 
     std::vector<std::vector<DuplicationEntry>> entriesR1(
@@ -1574,7 +1658,8 @@ AnalysisResult runSampleTransaction(
     const std::string& sampleId,
     const fs::path& outputDir,
     bool plot,
-    bool skipAdapters)
+    bool skipAdapters,
+    const TrimConfig* trimConfig = nullptr)
 {
     const bool paired = !r2.empty();
     const std::string runId = generateRunId();
@@ -1582,8 +1667,15 @@ AnalysisResult runSampleTransaction(
     try
     {
         AnalysisResult analysis = paired
-            ? processPairedFiles(r1, r2, stagingDir.string(), sampleId, skipAdapters)
-            : processOneFile(r1, "R1", stagingDir.string(), sampleId, skipAdapters);
+            ? processPairedFiles(r1, r2, stagingDir.string(), sampleId, skipAdapters, trimConfig)
+            : processOneFile(r1, "R1", stagingDir.string(), sampleId, skipAdapters, trimConfig);
+
+        if (trimConfig != nullptr && trimConfig->enabled)
+        {
+            writeTrimmingReport(
+                stagingDir / "trimming_report.json",
+                analysis.trimmingStats);
+        }
 
         const RunManifest manifest{
             .runId = runId,
@@ -1788,6 +1880,9 @@ int main(int argc, char* argv[]) {
     // Safe integration point for the future trimming pipeline.  The object
     // only owns configuration and component structure until algorithms exist.
     const Trimmer trimmer(args.trimConfig);
+    const TrimConfig* activeTrimConfig = args.trimConfig.enabled
+        ? &args.trimConfig
+        : nullptr;
 
     if (!args.samples.empty()) {
         try {
@@ -1821,7 +1916,7 @@ int main(int argc, char* argv[]) {
                 try {
                     AnalysisResult analysis = runSampleTransaction(
                         entry.r1, entry.r2, entry.sampleId, sampleOutDir,
-                        args.plot, args.skipAdapters);
+                        args.plot, args.skipAdapters, activeTrimConfig);
                     std::cout << "Result: passed\n";
                     results.push_back({entry, true, std::move(analysis), ""});
                 } catch (const std::exception& e) {
@@ -1879,7 +1974,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Output    : " << args.outDir << "\n";
     if (args.skipAdapters) std::cout << "Adapters  : skipped\n";
     if (trimmer.getConfig().enabled) {
-        std::cout << "Trimming  : requested (no algorithms enabled)\n";
+        std::cout << "Trimming  : enabled\n";
     }
 
     const std::string runId = generateRunId();
@@ -1896,23 +1991,33 @@ int main(int argc, char* argv[]) {
         std::cout << "Run ID    : " << runId << "\n";
         std::cout << "Staging   : " << stagingDir << "\n";
 
+        AnalysisResult analysis;
         if (isPaired)
         {
-            processPairedFiles(
+            analysis = processPairedFiles(
                 args.r1,
                 args.r2,
                 stagingDir.string(),
                 args.sampleId,
-                args.skipAdapters);
+                args.skipAdapters,
+                activeTrimConfig);
         }
         else
         {
-            processOneFile(
+            analysis = processOneFile(
                 args.r1,
                 "R1",
                 stagingDir.string(),
                 args.sampleId,
-                args.skipAdapters);
+                args.skipAdapters,
+                activeTrimConfig);
+        }
+
+        if (activeTrimConfig != nullptr)
+        {
+            writeTrimmingReport(
+                stagingDir / "trimming_report.json",
+                analysis.trimmingStats);
         }
 
         manifest = RunManifest{
