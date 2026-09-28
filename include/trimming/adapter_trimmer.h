@@ -3,7 +3,10 @@
 #include "trimming/trim_config.h"
 #include "trimming/trim_result.h"
 
+#include <optional>
+
 struct FastqRecord;
+struct PeOverlap;
 
 // Applies explicit adapter matching and paired-end overlap adapter trimming.
 class AdapterTrimmer {
@@ -19,6 +22,11 @@ public:
                   FastqRecord& r2,
                   TrimResult& r1Result,
                   TrimResult& r2Result) const;
+    void trimPair(FastqRecord& r1,
+                  FastqRecord& r2,
+                  TrimResult& r1Result,
+                  TrimResult& r2Result,
+                  const std::optional<PeOverlap>& overlap) const;
 
 private:
     TrimConfig config_;

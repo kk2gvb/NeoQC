@@ -19,7 +19,12 @@ int main() {
         || stats.discarded_reads != 0 || stats.bases_before != 0
         || stats.bases_after != 0 || stats.bases_trimmed != 0
         || stats.adapter_trimmed_reads != 0
-        || stats.quality_trimmed_reads != 0 || stats.too_short_reads != 0) {
+        || stats.quality_trimmed_reads != 0 || stats.too_short_reads != 0
+        || stats.polyG_trimmed_reads != 0 || stats.polyX_trimmed_reads != 0
+        || stats.output_reads != 0 || stats.total_pairs != 0
+        || stats.corrected_reads != 0 || stats.corrected_bases != 0
+        || stats.merged_pairs != 0 || stats.umi_processed_reads != 0
+        || stats.umi_failed_reads != 0 || stats.umi_bases != 0) {
         std::cerr << "TrimStats counters must default to zero\n";
         return 1;
     }
@@ -38,13 +43,17 @@ int main() {
     if (!trimmer.getConfig().enabled
         || !trimmer.getQualityTrimmer().getConfig().enabled
         || !trimmer.getAdapterTrimmer().getConfig().enabled
+        || !trimmer.getPolyTailTrimmer().getConfig().enabled
         || trimmer.getStats().total_reads != 0) {
         std::cerr << "Trimmer must compose its configuration and empty statistics\n";
         return 1;
     }
 
     const TrimResult result;
-    if (result.quality_trimmed || result.adapter_found || result.adapter_position.has_value()
+    if (result.quality_trimmed || result.polyG_trimmed || result.polyX_trimmed
+        || result.umi_extracted || !result.umi.empty()
+        || result.corrected_bases != 0 || result.adapter_found
+        || result.adapter_position.has_value()
         || result.discard_reason.has_value()) {
         std::cerr << "TrimResult default optional state is invalid\n";
         return 1;

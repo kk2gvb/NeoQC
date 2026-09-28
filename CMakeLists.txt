@@ -37,6 +37,12 @@ add_executable(neoqc
     src/adapter_config.cpp
     src/trimming/quality_trimmer.cpp
     src/trimming/adapter_trimmer.cpp
+    src/trimming/adapter_fasta.cpp
+    src/trimming/pe_overlap.cpp
+    src/trimming/pe_processor.cpp
+    src/trimming/umi_processor.cpp
+    src/trimming/poly_tail_trimmer.cpp
+    src/trimming/fastq_writer.cpp
     src/trimming/trimmer.cpp
     src/trimming/trim_stats.cpp
     src/trimming/trim_report.cpp
@@ -65,6 +71,10 @@ add_executable(neoqc_trimming_config_test
     tests/trimming/test_trim_config.cpp
     src/trimming/quality_trimmer.cpp
     src/trimming/adapter_trimmer.cpp
+    src/trimming/pe_overlap.cpp
+    src/trimming/pe_processor.cpp
+    src/trimming/umi_processor.cpp
+    src/trimming/poly_tail_trimmer.cpp
     src/trimming/trimmer.cpp
     src/trimming/trim_stats.cpp
 )
@@ -74,6 +84,10 @@ add_executable(neoqc_quality_trimmer_test
     tests/trimming/test_quality_trimmer.cpp
     src/trimming/quality_trimmer.cpp
     src/trimming/adapter_trimmer.cpp
+    src/trimming/pe_overlap.cpp
+    src/trimming/pe_processor.cpp
+    src/trimming/umi_processor.cpp
+    src/trimming/poly_tail_trimmer.cpp
     src/trimming/trimmer.cpp
     src/trimming/trim_stats.cpp
 )
@@ -83,6 +97,10 @@ add_executable(neoqc_adapter_and_window_trimmer_test
     tests/trimming/test_adapter_and_window_trimmer.cpp
     src/trimming/quality_trimmer.cpp
     src/trimming/adapter_trimmer.cpp
+    src/trimming/pe_overlap.cpp
+    src/trimming/pe_processor.cpp
+    src/trimming/umi_processor.cpp
+    src/trimming/poly_tail_trimmer.cpp
     src/trimming/trimmer.cpp
     src/trimming/trim_stats.cpp
 )
@@ -92,11 +110,50 @@ add_executable(neoqc_trim_filter_report_test
     tests/trimming/test_trim_filter_report.cpp
     src/trimming/quality_trimmer.cpp
     src/trimming/adapter_trimmer.cpp
+    src/trimming/pe_overlap.cpp
+    src/trimming/pe_processor.cpp
+    src/trimming/umi_processor.cpp
+    src/trimming/poly_tail_trimmer.cpp
     src/trimming/trimmer.cpp
     src/trimming/trim_stats.cpp
     src/trimming/trim_report.cpp
 )
 target_include_directories(neoqc_trim_filter_report_test PRIVATE include)
+
+add_executable(neoqc_poly_tail_trimmer_test
+    tests/trimming/test_poly_tail_trimmer.cpp
+    src/trimming/quality_trimmer.cpp
+    src/trimming/adapter_trimmer.cpp
+    src/trimming/pe_overlap.cpp
+    src/trimming/pe_processor.cpp
+    src/trimming/umi_processor.cpp
+    src/trimming/poly_tail_trimmer.cpp
+    src/trimming/trimmer.cpp
+    src/trimming/trim_stats.cpp
+)
+target_include_directories(neoqc_poly_tail_trimmer_test PRIVATE include)
+
+add_executable(neoqc_fastq_writer_test
+    tests/trimming/test_fastq_writer.cpp
+    src/fastq_reader.cpp
+    src/trimming/fastq_writer.cpp
+)
+target_include_directories(neoqc_fastq_writer_test PRIVATE include)
+target_link_libraries(neoqc_fastq_writer_test PRIVATE ZLIB::ZLIB)
+
+add_executable(neoqc_advanced_trimming_test
+    tests/trimming/test_advanced_trimming.cpp
+    src/trimming/adapter_fasta.cpp
+    src/trimming/quality_trimmer.cpp
+    src/trimming/adapter_trimmer.cpp
+    src/trimming/pe_overlap.cpp
+    src/trimming/pe_processor.cpp
+    src/trimming/umi_processor.cpp
+    src/trimming/poly_tail_trimmer.cpp
+    src/trimming/trimmer.cpp
+    src/trimming/trim_stats.cpp
+)
+target_include_directories(neoqc_advanced_trimming_test PRIVATE include)
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
@@ -117,6 +174,15 @@ add_test(NAME test_adapter_and_window_trimmer
 add_test(NAME test_trim_filter_report
          COMMAND neoqc_trim_filter_report_test)
 
+add_test(NAME test_poly_tail_trimmer
+         COMMAND neoqc_poly_tail_trimmer_test)
+
+add_test(NAME test_fastq_writer
+         COMMAND neoqc_fastq_writer_test)
+
+add_test(NAME test_advanced_trimming
+         COMMAND neoqc_advanced_trimming_test)
+
 add_test(NAME test_trim_help
          COMMAND neoqc --help)
 set_tests_properties(test_trim_help PROPERTIES
@@ -132,6 +198,13 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME test_qc_rules
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_qc_rules.py)
     set_tests_properties(test_qc_rules PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+    add_test(NAME test_trimming_pipeline
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_SOURCE_DIR}/tests/test_trimming_pipeline.py
+                     $<TARGET_FILE:neoqc>)
+    set_tests_properties(test_trimming_pipeline PROPERTIES
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
     execute_process(

@@ -1,10 +1,9 @@
 #include "trimming/adapter_trimmer.h"
 #include "fastq_reader.h"
+#include "trimming/pe_overlap.h"
 
 #include <algorithm>
 #include <cctype>
-#include <cstdint>
-#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -13,11 +12,9 @@ namespace {
 
 struct AdapterMatch {
     std::size_t position = 0;
-};
-
-struct OverlapMatch {
-    std::size_t length = 0;
     std::size_t mismatches = 0;
+    std::size_t length = 0;
+    std::size_t order = 0;
 };
 
 void requireSynchronizedRead(const FastqRecord& record) {
@@ -35,112 +32,71 @@ std::size_t removeTail(FastqRecord& record, std::size_t count) {
     return removed;
 }
 
-char normalizedBase(char base) {
-    return static_cast<char>(std::toupper(static_cast<unsigned char>(base)));
-}
-
-bool matchesAdapter(const FastqRecord& record,
-                    std::size_t position,
-                    const std::string& adapter,
-                    std::size_t overlapLength) {
+std::optional<std::size_t> adapterMismatches(const FastqRecord& record,
+                                            std::size_t position,
+                                            const std::string& adapter,
+                                            std::size_t overlapLength) {
     const std::size_t allowedMismatches = overlapLength / 8;
     std::size_t mismatches = 0;
     for (std::size_t index = 0; index < overlapLength; ++index) {
-        if (normalizedBase(record.sequence[position + index])
-            != normalizedBase(adapter[index])) {
+        if (PeOverlapAnalyzer::normalizedBase(record.sequence[position + index])
+            != PeOverlapAnalyzer::normalizedBase(adapter[index])) {
             ++mismatches;
             if (mismatches > allowedMismatches) {
-                return false;
+                return std::nullopt;
             }
         }
     }
-    return true;
+    return mismatches;
 }
 
 std::optional<AdapterMatch> findAdapterMatch(const FastqRecord& record,
                                              const TrimConfig& config) {
-    const std::string& adapter = config.adapter_sequence;
-    if (adapter.empty() || adapter.size() < config.min_adapter_match
-        || record.sequence.size() < config.min_adapter_match) {
+    if (record.sequence.size() < config.min_adapter_match) {
         return std::nullopt;
     }
 
-    for (std::size_t position = 0;
-         position + config.min_adapter_match <= record.sequence.size();
-         ++position) {
-        const std::size_t overlapLength = std::min(
-            adapter.size(), record.sequence.size() - position);
-        if (overlapLength >= config.min_adapter_match
-            && matchesAdapter(record, position, adapter, overlapLength)) {
-            return AdapterMatch{position};
+    std::vector<std::string> adapters;
+    if (!config.adapter_sequence.empty()) {
+        adapters.push_back(config.adapter_sequence);
+    }
+    for (const TrimAdapter& adapter : config.fasta_adapters) {
+        adapters.push_back(adapter.sequence);
+    }
+
+    std::optional<AdapterMatch> best;
+    for (std::size_t order = 0; order < adapters.size(); ++order) {
+        const std::string& adapter = adapters[order];
+        if (adapter.size() < config.min_adapter_match) {
+            continue;
         }
-    }
-    return std::nullopt;
-}
-
-char complement(char base) {
-    switch (normalizedBase(base)) {
-        case 'A': return 'T';
-        case 'C': return 'G';
-        case 'G': return 'C';
-        case 'T': return 'A';
-        default: return 'N';
-    }
-}
-
-std::string reverseComplement(const std::string& sequence) {
-    std::string result;
-    result.reserve(sequence.size());
-    for (auto iterator = sequence.rbegin(); iterator != sequence.rend(); ++iterator) {
-        result.push_back(complement(*iterator));
-    }
-    return result;
-}
-
-std::size_t allowedOverlapMismatches(std::size_t overlapLength,
-                                     const TrimConfig& config) {
-    const std::uint64_t percentLimit =
-        static_cast<std::uint64_t>(config.overlap_diff_percent_limit);
-    const std::uint64_t overlap = static_cast<std::uint64_t>(overlapLength);
-    const std::uint64_t allowedByPercent =
-        percentLimit > std::numeric_limits<std::uint64_t>::max() / overlap
-            ? std::numeric_limits<std::uint64_t>::max()
-            : percentLimit * overlap / 100;
-    return static_cast<std::size_t>(std::min<std::uint64_t>(
-        config.overlap_diff_limit, allowedByPercent));
-}
-
-std::optional<OverlapMatch> findBestOverlap(const FastqRecord& r1,
-                                            const FastqRecord& r2,
-                                            const TrimConfig& config) {
-    const std::size_t maximumOverlap =
-        std::min(r1.sequence.size(), r2.sequence.size());
-    if (maximumOverlap < config.min_overlap) {
-        return std::nullopt;
-    }
-
-    const std::string reversedR2 = reverseComplement(r2.sequence);
-    for (std::size_t overlapLength = maximumOverlap;
-         overlapLength >= config.min_overlap;
-         --overlapLength) {
-        const std::size_t allowedMismatches =
-            allowedOverlapMismatches(overlapLength, config);
-        std::size_t mismatches = 0;
-        const std::size_t r2Start = reversedR2.size() - overlapLength;
-        for (std::size_t index = 0; index < overlapLength; ++index) {
-            if (normalizedBase(r1.sequence[index])
-                != reversedR2[r2Start + index]) {
-                ++mismatches;
-                if (mismatches > allowedMismatches) {
-                    break;
-                }
+        for (std::size_t position = 0;
+             position + config.min_adapter_match <= record.sequence.size();
+             ++position) {
+            const std::size_t length = std::min(
+                adapter.size(), record.sequence.size() - position);
+            const auto mismatches = adapterMismatches(
+                record, position, adapter, length);
+            if (!mismatches.has_value()) {
+                continue;
+            }
+            const AdapterMatch candidate{position, *mismatches, length, order};
+            if (!best.has_value()
+                || candidate.position < best->position
+                || (candidate.position == best->position
+                    && candidate.length > best->length)
+                || (candidate.position == best->position
+                    && candidate.length == best->length
+                    && candidate.mismatches < best->mismatches)
+                || (candidate.position == best->position
+                    && candidate.length == best->length
+                    && candidate.mismatches == best->mismatches
+                    && candidate.order < best->order)) {
+                best = candidate;
             }
         }
-        if (mismatches <= allowedMismatches) {
-            return OverlapMatch{overlapLength, mismatches};
-        }
     }
-    return std::nullopt;
+    return best;
 }
 
 void initializeResult(const FastqRecord& record, TrimResult& result) {
@@ -204,6 +160,18 @@ void AdapterTrimmer::trimPair(FastqRecord& r1,
                               FastqRecord& r2,
                               TrimResult& r1Result,
                               TrimResult& r2Result) const {
+    const std::optional<PeOverlap> overlap =
+        config_.enabled && config_.adapter_trimming
+            ? PeOverlapAnalyzer(config_).find(r1, r2)
+            : std::nullopt;
+    trimPair(r1, r2, r1Result, r2Result, overlap);
+}
+
+void AdapterTrimmer::trimPair(FastqRecord& r1,
+                              FastqRecord& r2,
+                              TrimResult& r1Result,
+                              TrimResult& r2Result,
+                              const std::optional<PeOverlap>& overlap) const {
     requireSynchronizedRead(r1);
     requireSynchronizedRead(r2);
     initializeResult(r1, r1Result);
@@ -218,8 +186,7 @@ void AdapterTrimmer::trimPair(FastqRecord& r1,
         throw std::invalid_argument("Paired-end adapter trimming requires min_overlap greater than zero");
     }
 
-    const std::optional<OverlapMatch> overlap = findBestOverlap(r1, r2, config_);
-    if (overlap.has_value()) {
+    if (overlap.has_value() && overlap->isReadThrough()) {
         applyAdapterTrim(r1, overlap->length, r1Result);
         applyAdapterTrim(r2, overlap->length, r2Result);
         return;

@@ -13,6 +13,9 @@ void validateStats(const TrimStats& stats) {
         || stats.bases_trimmed != stats.bases_before - stats.bases_after) {
         throw std::logic_error("Trimming statistics violate base-count invariant");
     }
+    if (stats.total_pairs != stats.passed_pairs + stats.discarded_pairs) {
+        throw std::logic_error("Trimming statistics violate pair-count invariant");
+    }
 }
 
 }  // namespace
@@ -44,10 +47,23 @@ void writeTrimmingReport(const std::filesystem::path& outputPath,
                << "    \"quality_trimmed_reads\": " << stats.quality_trimmed_reads << ",\n"
                << "    \"adapter_trimmed_reads\": " << stats.adapter_trimmed_reads << ",\n"
                << "    \"polyG_trimmed_reads\": " << stats.polyG_trimmed_reads << ",\n"
-               << "    \"polyX_trimmed_reads\": " << stats.polyX_trimmed_reads << "\n"
+               << "    \"polyX_trimmed_reads\": " << stats.polyX_trimmed_reads << ",\n"
+               << "    \"corrected_reads\": " << stats.corrected_reads << ",\n"
+               << "    \"corrected_bases\": " << stats.corrected_bases << ",\n"
+               << "    \"merged_pairs\": " << stats.merged_pairs << ",\n"
+               << "    \"umi_processed_reads\": " << stats.umi_processed_reads << ",\n"
+               << "    \"umi_failed_reads\": " << stats.umi_failed_reads << ",\n"
+               << "    \"umi_bases\": " << stats.umi_bases << "\n"
                << "  },\n"
                << "  \"filtering\": {\n"
                << "    \"too_short_reads\": " << stats.too_short_reads << "\n"
+               << "  },\n"
+               << "  \"output\": {\n"
+               << "    \"reads\": " << stats.output_reads << ",\n"
+               << "    \"mate_discarded_reads\": " << stats.mate_discarded_reads << ",\n"
+               << "    \"total_pairs\": " << stats.total_pairs << ",\n"
+               << "    \"passed_pairs\": " << stats.passed_pairs << ",\n"
+               << "    \"discarded_pairs\": " << stats.discarded_pairs << "\n"
                << "  },\n"
                << "  \"adapter_positions\":";
 

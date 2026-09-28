@@ -3,6 +3,8 @@
 #include "../include/plot_runner.h"
 #include "../include/sample_sheet.h"
 #include "../include/trimming/trim_config.h"
+#include "../include/trimming/adapter_fasta.h"
+#include "../include/trimming/fastq_writer.h"
 #include "../include/trimming/trim_report.h"
 #include "../include/trimming/trimmer.h"
 
@@ -21,6 +23,10 @@
 #include <future>
 #include <random>
 #include <sstream>
+#include <charconv>
+#include <cctype>
+#include <system_error>
+#include <memory>
 
 #ifndef NEOQC_VERSION
 #error "NEOQC_VERSION must be supplied by the build system"
@@ -32,6 +38,8 @@ using Clock = std::chrono::steady_clock;
 struct AnalysisResult {
     QualityStats r1Stats;
     std::optional<QualityStats> r2Stats;
+    std::optional<QualityStats> r1AfterStats;
+    std::optional<QualityStats> r2AfterStats;
     TrimStats trimmingStats;
 };
 
@@ -53,6 +61,9 @@ struct Args {
     std::string samples;
     bool        plot = false;
     bool        skipAdapters = false;
+    bool        trimmingOptionSpecified = false;
+    bool        adapterFastaSpecified = false;
+    std::string adapterFasta;
     TrimConfig  trimConfig;
 };
 
@@ -82,6 +93,21 @@ Args parseArgs(int argc, char* argv[]) {
             }
             return argv[++i];
         };
+        auto trimmingValue = [&](const std::string& name) -> std::string {
+            args.trimmingOptionSpecified = true;
+            return needValue(name);
+        };
+        auto parseSize = [&](const std::string& name) -> std::size_t {
+            const std::string value = trimmingValue(name);
+            std::size_t parsed = 0;
+            const auto [end, error] = std::from_chars(
+                value.data(), value.data() + value.size(), parsed);
+            if (error != std::errc{} || end != value.data() + value.size()) {
+                throw std::runtime_error(
+                    "Option " + name + " requires a non-negative integer");
+            }
+            return parsed;
+        };
 
         if      (arg == "--r1")        args.r1       = needValue("--r1");
         else if (arg == "--r2")        args.r2       = needValue("--r2");
@@ -91,11 +117,121 @@ Args parseArgs(int argc, char* argv[]) {
         else if (arg == "--plot")      args.plot     = true;
         else if (arg == "--skip-adapters") args.skipAdapters = true;
         else if (arg == "--trim")      args.trimConfig.enabled = true;
+        else if (arg == "--trim-front") args.trimConfig.trim_front = parseSize(arg);
+        else if (arg == "--trim-tail")  args.trimConfig.trim_tail = parseSize(arg);
+        else if (arg == "--cut-front") {
+            args.trimmingOptionSpecified = true;
+            args.trimConfig.cut_front = true;
+        }
+        else if (arg == "--cut-tail") {
+            args.trimmingOptionSpecified = true;
+            args.trimConfig.cut_tail = true;
+        }
+        else if (arg == "--cut-right") {
+            args.trimmingOptionSpecified = true;
+            args.trimConfig.cut_right = true;
+        }
+        else if (arg == "--quality-threshold") {
+            args.trimConfig.quality_threshold = parseSize(arg);
+        }
+        else if (arg == "--window-size") args.trimConfig.window_size = parseSize(arg);
+        else if (arg == "--adapter-sequence") {
+            args.trimConfig.adapter_sequence = trimmingValue(arg);
+            args.trimConfig.adapter_trimming = true;
+        }
+        else if (arg == "--adapter-fasta") {
+            args.adapterFastaSpecified = true;
+            args.adapterFasta = trimmingValue(arg);
+        }
+        else if (arg == "--overlap-correction") {
+            args.trimmingOptionSpecified = true;
+            args.trimConfig.overlap_correction = true;
+        }
+        else if (arg == "--merge") {
+            args.trimmingOptionSpecified = true;
+            args.trimConfig.merge_reads = true;
+        }
+        else if (arg == "--umi") {
+            args.trimmingOptionSpecified = true;
+            args.trimConfig.umi_enabled = true;
+        }
+        else if (arg == "--umi-length") {
+            args.trimConfig.umi_length = parseSize(arg);
+        }
+        else if (arg == "--min-length") args.trimConfig.min_length = parseSize(arg);
+        else if (arg == "--trim-polyg") {
+            args.trimmingOptionSpecified = true;
+            args.trimConfig.trim_poly_g = true;
+        }
+        else if (arg == "--trim-polyx") {
+            args.trimmingOptionSpecified = true;
+            args.trimConfig.trim_poly_x = true;
+        }
+        else if (arg == "--polyg-min-length") {
+            args.trimConfig.poly_g_min_length = parseSize(arg);
+        }
+        else if (arg == "--polyx-min-length") {
+            args.trimConfig.poly_x_min_length = parseSize(arg);
+        }
         else if (arg == "--help" || arg == "-h") {
             throw std::runtime_error("help");
         } else {
             throw std::runtime_error("Unknown argument: " + arg);
         }
+    }
+
+    if (args.trimmingOptionSpecified && !args.trimConfig.enabled) {
+        throw std::runtime_error("Trimming options require --trim");
+    }
+    if (args.adapterFastaSpecified) {
+        args.trimConfig.fasta_adapters = loadAdapterFasta(args.adapterFasta);
+        args.trimConfig.adapter_trimming = true;
+    }
+    if (args.trimConfig.cut_right && args.trimConfig.window_size == 0) {
+        throw std::runtime_error("--cut-right requires --window-size greater than zero");
+    }
+    if (args.trimConfig.quality_threshold > 93) {
+        throw std::runtime_error("--quality-threshold must be between 0 and 93");
+    }
+    if (!args.trimConfig.adapter_sequence.empty()) {
+        const bool valid = std::all_of(
+            args.trimConfig.adapter_sequence.begin(),
+            args.trimConfig.adapter_sequence.end(),
+            [](char base) {
+                const char normalized = static_cast<char>(
+                    std::toupper(static_cast<unsigned char>(base)));
+                return normalized == 'A' || normalized == 'C'
+                    || normalized == 'G' || normalized == 'T'
+                    || normalized == 'N';
+            });
+        if (!valid) {
+            throw std::runtime_error(
+                "--adapter-sequence may contain only A, C, G, T, or N");
+        }
+        if (args.trimConfig.adapter_sequence.size()
+            < args.trimConfig.min_adapter_match) {
+            throw std::runtime_error(
+                "--adapter-sequence must contain at least "
+                + std::to_string(args.trimConfig.min_adapter_match) + " bases");
+        }
+    }
+    if (args.trimConfig.umi_enabled && args.trimConfig.umi_length == 0) {
+        throw std::runtime_error("--umi requires --umi-length greater than zero");
+    }
+    if (!args.trimConfig.umi_enabled && args.trimConfig.umi_length != 0) {
+        throw std::runtime_error("--umi-length requires --umi");
+    }
+    if ((args.trimConfig.adapter_trimming || args.trimConfig.overlap_correction
+         || args.trimConfig.merge_reads) && args.trimConfig.min_overlap == 0) {
+        throw std::runtime_error("PE overlap minimum must be greater than zero");
+    }
+    if (args.trimConfig.trim_poly_g && args.trimConfig.poly_g_min_length == 0) {
+        throw std::runtime_error(
+            "--trim-polyg requires --polyg-min-length greater than zero");
+    }
+    if (args.trimConfig.trim_poly_x && args.trimConfig.poly_x_min_length == 0) {
+        throw std::runtime_error(
+            "--trim-polyx requires --polyx-min-length greater than zero");
     }
 
     if (!args.samples.empty()) {
@@ -108,6 +244,11 @@ Args parseArgs(int argc, char* argv[]) {
     if (args.r1.empty())       throw std::runtime_error("--r1 is required");
     if (args.sampleId.empty()) throw std::runtime_error("--sample-id is required");
     if (args.outDir.empty())   throw std::runtime_error("--out is required");
+    if ((args.trimConfig.overlap_correction || args.trimConfig.merge_reads)
+        && args.r2.empty()) {
+        throw std::runtime_error(
+            "--overlap-correction and --merge require paired-end input (--r2)");
+    }
 
     return args;
 }
@@ -129,8 +270,27 @@ void printUsage(const char* progName) {
         "  --out <dir>       Output directory (created if missing); enables batch QC with --samples\n"
         "  --samples <file>  Validate a CSV table; combine with --out to run batch QC\n"
         "  --plot            Build plots via plot_results.py (optional)\n"
-        "  --skip-adapters   Disable adapter search (for performance measurements)\n"
-        "  --trim            Enable the trimming pipeline and write trimming_report.json\n";
+        "  --skip-adapters   Disable QC adapter search (for performance measurements)\n\n"
+        "Trimming options (require --trim):\n"
+        "  --trim                 Enable the trimming pipeline, FASTQ output, and before/after QC\n"
+        "  --trim-front N         Remove N bases from 5' end (default: 0)\n"
+        "  --trim-tail N          Remove N bases from 3' end (default: 0)\n"
+        "  --cut-front            Remove low-quality bases from 5' end\n"
+        "  --cut-tail             Remove low-quality bases from 3' end\n"
+        "  --cut-right            Trim at first low-quality sliding window\n"
+        "  --quality-threshold N  Phred threshold (default: 20)\n"
+        "  --window-size N        Sliding-window size (default: 4)\n"
+        "  --adapter-sequence S   Trim explicit adapter sequence\n"
+        "  --adapter-fasta FILE   Trim adapters loaded from FASTA\n"
+        "  --overlap-correction   Correct PE overlap mismatches by base quality\n"
+        "  --merge                Write overlapping PE consensus reads\n"
+        "  --umi                  Extract a 5' UMI from R1 (or the SE read)\n"
+        "  --umi-length N         Required UMI length when --umi is enabled\n"
+        "  --min-length N         Discard reads shorter than N (default: 0)\n"
+        "  --trim-polyg           Trim terminal polyG runs\n"
+        "  --trim-polyx           Trim terminal A/C/G/T homopolymer runs\n"
+        "  --polyg-min-length N   Minimum polyG run (default: 10)\n"
+        "  --polyx-min-length N   Minimum polyX run (default: 10)\n";
 }
 
 void writeSummary(std::ostream& out,
@@ -316,6 +476,119 @@ void processPairedBatchParallel(
                 << "\nreason: invalid base '" << error.base
                 << "' at position " << (error.position + 1);
             throw std::runtime_error(oss.str());
+        }
+    }
+}
+
+void processTrimmedBatchParallel(
+    std::vector<QualityAnalyzer>& beforeAnalyzers,
+    std::vector<QualityAnalyzer>& afterAnalyzers,
+    std::vector<Trimmer>& trimmers,
+    std::vector<FastqRecord>& batch,
+    std::vector<TrimResult>& trimResults,
+    bool skipAdapters)
+{
+    trimResults.resize(batch.size());
+    std::vector<BaseValidationError> validationErrors(beforeAnalyzers.size());
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < static_cast<int>(batch.size()); ++i)
+    {
+        const int threadId = omp_get_thread_num();
+        BaseValidationError error = processRecord(
+            beforeAnalyzers[threadId], batch[i], skipAdapters);
+        if (!error.found)
+        {
+            trimResults[i] = trimmers[threadId].trim(batch[i]);
+            if (trimResults[i].passed)
+            {
+                error = processRecord(
+                    afterAnalyzers[threadId], batch[i], skipAdapters);
+            }
+        }
+        if (error.found)
+        {
+            validationErrors[threadId] = error;
+        }
+    }
+
+    for (const auto& error : validationErrors)
+    {
+        if (error.found)
+        {
+            std::ostringstream message;
+            message << "FASTQ validation error:\n"
+                    << "record: " << error.recordNumber
+                    << "\nreason: invalid base '" << error.base
+                    << "' at position " << (error.position + 1);
+            throw std::runtime_error(message.str());
+        }
+    }
+}
+
+void processTrimmedPairedBatchParallel(
+    std::vector<QualityAnalyzer>& beforeAnalyzersR1,
+    std::vector<QualityAnalyzer>& beforeAnalyzersR2,
+    std::vector<QualityAnalyzer>& afterAnalyzersR1,
+    std::vector<QualityAnalyzer>& afterAnalyzersR2,
+    std::vector<Trimmer>& trimmers,
+    std::vector<FastqRecord>& batchR1,
+    std::vector<FastqRecord>& batchR2,
+    std::vector<TrimResult>& trimResultsR1,
+    std::vector<TrimResult>& trimResultsR2,
+    std::vector<std::optional<FastqRecord>>& mergedRecords,
+    bool skipAdapters)
+{
+    trimResultsR1.resize(batchR1.size());
+    trimResultsR2.resize(batchR2.size());
+    mergedRecords.resize(batchR1.size());
+    std::vector<BaseValidationError> validationErrors(beforeAnalyzersR1.size());
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < static_cast<int>(batchR1.size()); ++i)
+    {
+        const int threadId = omp_get_thread_num();
+        BaseValidationError error = processRecord(
+            beforeAnalyzersR1[threadId], batchR1[i], skipAdapters);
+        if (!error.found)
+        {
+            error = processRecord(
+                beforeAnalyzersR2[threadId], batchR2[i], skipAdapters);
+        }
+        if (!error.found)
+        {
+            PairTrimResult results =
+                trimmers[threadId].trimPairDetailed(batchR1[i], batchR2[i]);
+            trimResultsR1[i] = std::move(results.r1);
+            trimResultsR2[i] = std::move(results.r2);
+            mergedRecords[i] = std::move(results.merged);
+            if (trimResultsR1[i].passed && trimResultsR2[i].passed)
+            {
+                error = processRecord(
+                    afterAnalyzersR1[threadId], batchR1[i], skipAdapters);
+                if (!error.found)
+                {
+                    error = processRecord(
+                        afterAnalyzersR2[threadId], batchR2[i], skipAdapters);
+                }
+            }
+        }
+        if (error.found)
+        {
+            validationErrors[threadId] = error;
+        }
+    }
+
+    for (const auto& error : validationErrors)
+    {
+        if (error.found)
+        {
+            std::ostringstream message;
+            message << "FASTQ validation error:\n"
+                    << "record: " << error.recordNumber
+                    << "\nreason: invalid base '" << error.base
+                    << "' at position " << (error.position + 1);
+            throw std::runtime_error(message.str());
         }
     }
 }
@@ -983,6 +1256,147 @@ std::vector<DuplicationEntry> mergeDuplicationEntriesTree(
     return std::move(entries[0]);
 }
 
+void createDirectoryOrThrow(const fs::path& path) {
+    std::error_code error;
+    fs::create_directories(path, error);
+    if (error) {
+        throw std::runtime_error(
+            "Cannot create output directory '" + path.string() + "': "
+            + error.message());
+    }
+}
+
+std::vector<DuplicationEntry> collectMergedDuplicationEntries(
+    const std::vector<QualityAnalyzer>& analyzers)
+{
+    std::vector<std::vector<DuplicationEntry>> entries;
+    entries.reserve(analyzers.size());
+    for (const auto& analyzer : analyzers) {
+        entries.push_back(analyzer.getDuplicationEntries());
+    }
+    for (auto& localEntries : entries) {
+        std::sort(
+            localEntries.begin(),
+            localEntries.end(),
+            [](const DuplicationEntry& left, const DuplicationEntry& right) {
+                return left.key.words < right.key.words;
+            });
+    }
+    return mergeDuplicationEntriesTree(std::move(entries));
+}
+
+void mergeAnalyzers(QualityAnalyzer& destination,
+                    const std::vector<QualityAnalyzer>& sources) {
+    for (const auto& source : sources) {
+        destination.merge(source);
+    }
+}
+
+AnalysisResult processOneFileWithTrimming(
+    const std::string& path,
+    const std::string& readName,
+    const std::string& outDir,
+    const std::string& sampleId,
+    bool skipAdapters,
+    const TrimConfig& trimConfig)
+{
+    AnalysisResult result;
+    const fs::path root(outDir);
+    const fs::path beforeDir = root / "qc" / "before";
+    const fs::path afterDir = root / "qc" / "after";
+    const fs::path trimmedDir = root / "trimmed";
+    const fs::path trimmedPath = trimmedDir / (readName + ".trimmed.fastq.gz");
+    createDirectoryOrThrow(beforeDir);
+    createDirectoryOrThrow(afterDir);
+    createDirectoryOrThrow(trimmedDir);
+
+    beginDuplicationArtifacts(beforeDir.string(), readName, path);
+    beginDuplicationArtifacts(afterDir.string(), readName, trimmedPath.string());
+
+    FastqReader reader(path);
+    FastqWriter writer(trimmedPath);
+    constexpr std::size_t BATCH_SIZE = 100000;
+    const int threadCount = omp_get_max_threads();
+    std::cout << "OpenMP threads: " << threadCount << "\n";
+
+    std::vector<QualityAnalyzer> beforeAnalyzers;
+    std::vector<QualityAnalyzer> afterAnalyzers;
+    std::vector<Trimmer> trimmers;
+    beforeAnalyzers.reserve(threadCount);
+    afterAnalyzers.reserve(threadCount);
+    trimmers.reserve(threadCount);
+    for (int i = 0; i < threadCount; ++i) {
+        beforeAnalyzers.emplace_back();
+        afterAnalyzers.emplace_back();
+        trimmers.emplace_back(trimConfig);
+    }
+
+    std::vector<FastqRecord> batch;
+    std::vector<TrimResult> trimResults;
+    std::size_t count = 0;
+    while (reader.readBatch(batch, BATCH_SIZE)) {
+        processTrimmedBatchParallel(
+            beforeAnalyzers,
+            afterAnalyzers,
+            trimmers,
+            batch,
+            trimResults,
+            skipAdapters);
+        for (std::size_t i = 0; i < batch.size(); ++i) {
+            if (trimResults[i].passed) {
+                writer.write(batch[i]);
+            }
+        }
+        count += batch.size();
+        if (count % 1000000 == 0) {
+            std::cout << "Processed " << count << " reads...\n";
+        }
+    }
+    writer.close();
+
+    QualityAnalyzer beforeAnalyzer;
+    QualityAnalyzer afterAnalyzer;
+    mergeAnalyzers(beforeAnalyzer, beforeAnalyzers);
+    mergeAnalyzers(afterAnalyzer, afterAnalyzers);
+    for (const auto& trimmer : trimmers) {
+        result.trimmingStats.merge(trimmer.getStats());
+    }
+
+    const auto beforeEntries = collectMergedDuplicationEntries(beforeAnalyzers);
+    const auto afterEntries = collectMergedDuplicationEntries(afterAnalyzers);
+    const QualityStats beforeStats = beforeAnalyzer.getStats();
+    const QualityStats afterStats = afterAnalyzer.getStats();
+    const DuplicationStats beforeDuplication =
+        beforeAnalyzer.getDuplicationStats(beforeEntries);
+    const DuplicationStats afterDuplication =
+        afterAnalyzer.getDuplicationStats(afterEntries);
+
+    printConsoleSummary(beforeStats, readName + " BEFORE", skipAdapters);
+    printConsoleSummary(afterStats, readName + " AFTER", skipAdapters);
+    writeAnalysisReports(
+        beforeStats,
+        beforeDuplication,
+        beforeAnalyzer,
+        path,
+        beforeDir.string(),
+        sampleId,
+        readName,
+        skipAdapters);
+    writeAnalysisReports(
+        afterStats,
+        afterDuplication,
+        afterAnalyzer,
+        trimmedPath.string(),
+        afterDir.string(),
+        sampleId,
+        readName,
+        skipAdapters);
+
+    result.r1Stats = beforeStats;
+    result.r1AfterStats = afterStats;
+    return result;
+}
+
 // ---------------------------------------------------------------------------
 // Обработка одного файла (R1 или R2)
 // ---------------------------------------------------------------------------
@@ -992,6 +1406,10 @@ AnalysisResult processOneFile(const std::string& path,
                             const std::string& sampleId,
                             bool skipAdapters,
                             const TrimConfig* trimConfig = nullptr) {
+    if (trimConfig != nullptr) {
+        return processOneFileWithTrimming(
+            path, readName, outDir, sampleId, skipAdapters, *trimConfig);
+    }
     AnalysisResult result;
     beginDuplicationArtifacts(outDir, readName, path);
     QualityAnalyzer analyzer;
@@ -1100,6 +1518,173 @@ AnalysisResult processOneFile(const std::string& path,
 }
 
 
+AnalysisResult processPairedFilesWithTrimming(
+    const std::string& r1Path,
+    const std::string& r2Path,
+    const std::string& outDir,
+    const std::string& sampleId,
+    bool skipAdapters,
+    const TrimConfig& trimConfig)
+{
+    AnalysisResult result;
+    const fs::path root(outDir);
+    const fs::path beforeDir = root / "qc" / "before";
+    const fs::path afterDir = root / "qc" / "after";
+    const fs::path trimmedDir = root / "trimmed";
+    const fs::path trimmedR1Path = trimmedDir / "R1.trimmed.fastq.gz";
+    const fs::path trimmedR2Path = trimmedDir / "R2.trimmed.fastq.gz";
+    const fs::path mergedPath = trimmedDir / "merged.fastq.gz";
+    createDirectoryOrThrow(beforeDir);
+    createDirectoryOrThrow(afterDir);
+    createDirectoryOrThrow(trimmedDir);
+
+    beginDuplicationArtifacts(beforeDir.string(), "R1", r1Path);
+    beginDuplicationArtifacts(beforeDir.string(), "R2", r2Path);
+    beginDuplicationArtifacts(afterDir.string(), "R1", trimmedR1Path.string());
+    beginDuplicationArtifacts(afterDir.string(), "R2", trimmedR2Path.string());
+
+    FastqReader readerR1(r1Path);
+    FastqReader readerR2(r2Path);
+    FastqWriter writerR1(trimmedR1Path);
+    FastqWriter writerR2(trimmedR2Path);
+    std::unique_ptr<FastqWriter> mergedWriter;
+    if (trimConfig.merge_reads) {
+        mergedWriter = std::make_unique<FastqWriter>(mergedPath);
+    }
+    constexpr std::size_t BATCH_SIZE = 100000;
+    const int threadCount = omp_get_max_threads();
+    std::cout << "OpenMP threads: " << threadCount << "\n";
+
+    std::vector<QualityAnalyzer> beforeAnalyzersR1;
+    std::vector<QualityAnalyzer> beforeAnalyzersR2;
+    std::vector<QualityAnalyzer> afterAnalyzersR1;
+    std::vector<QualityAnalyzer> afterAnalyzersR2;
+    std::vector<Trimmer> trimmers;
+    beforeAnalyzersR1.reserve(threadCount);
+    beforeAnalyzersR2.reserve(threadCount);
+    afterAnalyzersR1.reserve(threadCount);
+    afterAnalyzersR2.reserve(threadCount);
+    trimmers.reserve(threadCount);
+    for (int i = 0; i < threadCount; ++i) {
+        beforeAnalyzersR1.emplace_back(ReadDirection::R1);
+        beforeAnalyzersR2.emplace_back(ReadDirection::R2);
+        afterAnalyzersR1.emplace_back(ReadDirection::R1);
+        afterAnalyzersR2.emplace_back(ReadDirection::R2);
+        trimmers.emplace_back(trimConfig);
+    }
+
+    std::vector<FastqRecord> batchR1;
+    std::vector<FastqRecord> batchR2;
+    std::vector<TrimResult> trimResultsR1;
+    std::vector<TrimResult> trimResultsR2;
+    std::vector<std::optional<FastqRecord>> mergedRecords;
+    std::size_t count = 0;
+    while (readPairedBatch(
+        readerR1, readerR2, batchR1, batchR2, BATCH_SIZE))
+    {
+        processTrimmedPairedBatchParallel(
+            beforeAnalyzersR1,
+            beforeAnalyzersR2,
+            afterAnalyzersR1,
+            afterAnalyzersR2,
+            trimmers,
+            batchR1,
+            batchR2,
+            trimResultsR1,
+            trimResultsR2,
+            mergedRecords,
+            skipAdapters);
+        for (std::size_t i = 0; i < batchR1.size(); ++i) {
+            if (trimResultsR1[i].passed && trimResultsR2[i].passed) {
+                writerR1.write(batchR1[i]);
+                writerR2.write(batchR2[i]);
+                if (mergedWriter != nullptr && mergedRecords[i].has_value()) {
+                    mergedWriter->write(*mergedRecords[i]);
+                }
+            }
+        }
+        count += batchR1.size();
+        if (count % 1000000 == 0) {
+            std::cout << "Processed " << count << " paired reads...\n";
+        }
+    }
+    writerR1.close();
+    writerR2.close();
+    if (mergedWriter != nullptr) {
+        mergedWriter->close();
+    }
+
+    QualityAnalyzer beforeAnalyzerR1(ReadDirection::R1);
+    QualityAnalyzer beforeAnalyzerR2(ReadDirection::R2);
+    QualityAnalyzer afterAnalyzerR1(ReadDirection::R1);
+    QualityAnalyzer afterAnalyzerR2(ReadDirection::R2);
+    mergeAnalyzers(beforeAnalyzerR1, beforeAnalyzersR1);
+    mergeAnalyzers(beforeAnalyzerR2, beforeAnalyzersR2);
+    mergeAnalyzers(afterAnalyzerR1, afterAnalyzersR1);
+    mergeAnalyzers(afterAnalyzerR2, afterAnalyzersR2);
+    for (const auto& trimmer : trimmers) {
+        result.trimmingStats.merge(trimmer.getStats());
+    }
+
+    const auto beforeEntriesR1 = collectMergedDuplicationEntries(beforeAnalyzersR1);
+    const auto beforeEntriesR2 = collectMergedDuplicationEntries(beforeAnalyzersR2);
+    const auto afterEntriesR1 = collectMergedDuplicationEntries(afterAnalyzersR1);
+    const auto afterEntriesR2 = collectMergedDuplicationEntries(afterAnalyzersR2);
+    const QualityStats beforeStatsR1 = beforeAnalyzerR1.getStats();
+    const QualityStats beforeStatsR2 = beforeAnalyzerR2.getStats();
+    const QualityStats afterStatsR1 = afterAnalyzerR1.getStats();
+    const QualityStats afterStatsR2 = afterAnalyzerR2.getStats();
+
+    printConsoleSummary(beforeStatsR1, "R1 BEFORE", skipAdapters);
+    printConsoleSummary(beforeStatsR2, "R2 BEFORE", skipAdapters);
+    printConsoleSummary(afterStatsR1, "R1 AFTER", skipAdapters);
+    printConsoleSummary(afterStatsR2, "R2 AFTER", skipAdapters);
+
+    writeAnalysisReports(
+        beforeStatsR1,
+        beforeAnalyzerR1.getDuplicationStats(beforeEntriesR1),
+        beforeAnalyzerR1,
+        r1Path,
+        beforeDir.string(),
+        sampleId,
+        "R1",
+        skipAdapters);
+    writeAnalysisReports(
+        beforeStatsR2,
+        beforeAnalyzerR2.getDuplicationStats(beforeEntriesR2),
+        beforeAnalyzerR2,
+        r2Path,
+        beforeDir.string(),
+        sampleId,
+        "R2",
+        skipAdapters);
+    writeAnalysisReports(
+        afterStatsR1,
+        afterAnalyzerR1.getDuplicationStats(afterEntriesR1),
+        afterAnalyzerR1,
+        trimmedR1Path.string(),
+        afterDir.string(),
+        sampleId,
+        "R1",
+        skipAdapters);
+    writeAnalysisReports(
+        afterStatsR2,
+        afterAnalyzerR2.getDuplicationStats(afterEntriesR2),
+        afterAnalyzerR2,
+        trimmedR2Path.string(),
+        afterDir.string(),
+        sampleId,
+        "R2",
+        skipAdapters);
+
+    result.r1Stats = beforeStatsR1;
+    result.r2Stats = beforeStatsR2;
+    result.r1AfterStats = afterStatsR1;
+    result.r2AfterStats = afterStatsR2;
+    return result;
+}
+
+
 // ---------------------------------------------------------------------------
 // Обработка парных файлов (R1 и R2)
 // ---------------------------------------------------------------------------
@@ -1111,6 +1696,10 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
                                 bool skipAdapters,
                                 const TrimConfig* trimConfig = nullptr)
 {
+    if (trimConfig != nullptr) {
+        return processPairedFilesWithTrimming(
+            r1Path, r2Path, outDir, sampleId, skipAdapters, *trimConfig);
+    }
     AnalysisResult result;
     beginDuplicationArtifacts(outDir, "R1", r1Path);
     beginDuplicationArtifacts(outDir, "R2", r2Path);
@@ -1553,6 +2142,38 @@ fs::path createStagingDirectory(
     return stagingDir;
 }
 
+bool pathIsInside(const fs::path& path, const fs::path& directory) {
+    std::error_code pathError;
+    const fs::path normalizedPath = fs::weakly_canonical(path, pathError);
+    if (pathError) {
+        throw std::runtime_error(
+            "Cannot resolve input path '" + path.string() + "': "
+            + pathError.message());
+    }
+    std::error_code directoryError;
+    const fs::path normalizedDirectory =
+        fs::weakly_canonical(directory, directoryError);
+    if (directoryError) {
+        throw std::runtime_error(
+            "Cannot resolve output path '" + directory.string() + "': "
+            + directoryError.message());
+    }
+    const fs::path relative = normalizedPath.lexically_relative(normalizedDirectory);
+    return !relative.empty()
+        && *relative.begin() != "..";
+}
+
+void ensureInputsOutsideOutput(const std::string& r1,
+                               const std::string& r2,
+                               const fs::path& outputDir) {
+    if (pathIsInside(r1, outputDir)
+        || (!r2.empty() && pathIsInside(r2, outputDir))) {
+        throw std::runtime_error(
+            "Trimming output directory must not contain an input FASTQ: "
+            + outputDir.string());
+    }
+}
+
 void removeStagingDirectory(const fs::path& stagingDir)
 {
     std::error_code ec;
@@ -1662,6 +2283,15 @@ AnalysisResult runSampleTransaction(
     const TrimConfig* trimConfig = nullptr)
 {
     const bool paired = !r2.empty();
+    if (trimConfig != nullptr
+        && (trimConfig->overlap_correction || trimConfig->merge_reads)
+        && !paired) {
+        throw std::runtime_error(
+            "PE overlap correction and merging require paired-end input");
+    }
+    if (trimConfig != nullptr) {
+        ensureInputsOutsideOutput(r1, r2, outputDir);
+    }
     const std::string runId = generateRunId();
     fs::path stagingDir = createStagingDirectory(outputDir, runId);
     try
@@ -1686,6 +2316,7 @@ AnalysisResult runSampleTransaction(
             .skipAdapters = skipAdapters,
             .r1Path = r1,
             .r2Path = paired ? std::optional<std::string>(r2) : std::nullopt,
+            .artifacts = {},
         };
         // Plot generation uses the evaluation engine, which is manifest-only.
         writeRunManifest(stagingDir, manifest);
@@ -1693,7 +2324,21 @@ AnalysisResult runSampleTransaction(
         {
             PlotOptions options;
             options.includeAdapters = !skipAdapters;
-            PlotRunner::runAll(stagingDir.string(), (stagingDir / "plots").string(), options);
+            if (trimConfig != nullptr) {
+                PlotRunner::runAll(
+                    (stagingDir / "qc" / "before").string(),
+                    (stagingDir / "plots" / "before").string(),
+                    options);
+                PlotRunner::runAll(
+                    (stagingDir / "qc" / "after").string(),
+                    (stagingDir / "plots" / "after").string(),
+                    options);
+            } else {
+                PlotRunner::runAll(
+                    stagingDir.string(),
+                    (stagingDir / "plots").string(),
+                    options);
+            }
         }
         writeRunManifest(stagingDir, manifest);
         publishRun(stagingDir, outputDir);
@@ -1967,6 +2612,14 @@ int main(int argc, char* argv[]) {
 
 
     const bool isPaired = !args.r2.empty();
+    if (activeTrimConfig != nullptr) {
+        try {
+            ensureInputsOutsideOutput(args.r1, args.r2, fs::path(args.outDir));
+        } catch (const std::exception& error) {
+            std::cerr << "Error: " << error.what() << '\n';
+            return 1;
+        }
+    }
     std::cout << "Sample ID : " << args.sampleId << "\n"
               << "Mode      : " << (isPaired ? "paired-end" : "single-end") << "\n"
               << "R1        : " << args.r1 << "\n";
@@ -2030,7 +2683,8 @@ int main(int argc, char* argv[]) {
             .r1Path = args.r1,
             .r2Path = args.r2.empty()
                 ? std::nullopt
-                : std::optional<std::string>(args.r2)
+                : std::optional<std::string>(args.r2),
+            .artifacts = {},
         };
 
         writeRunManifest(
@@ -2064,15 +2718,23 @@ int main(int argc, char* argv[]) {
     {
         try
         {
-            const fs::path plotDir = stagingDir / "plots";
-
             PlotOptions plotOptions;
             plotOptions.includeAdapters = !args.skipAdapters;
-
-            PlotRunner::runAll(
-                stagingDir.string(),
-                plotDir.string(),
-                plotOptions);
+            if (activeTrimConfig != nullptr) {
+                PlotRunner::runAll(
+                    (stagingDir / "qc" / "before").string(),
+                    (stagingDir / "plots" / "before").string(),
+                    plotOptions);
+                PlotRunner::runAll(
+                    (stagingDir / "qc" / "after").string(),
+                    (stagingDir / "plots" / "after").string(),
+                    plotOptions);
+            } else {
+                PlotRunner::runAll(
+                    stagingDir.string(),
+                    (stagingDir / "plots").string(),
+                    plotOptions);
+            }
         }
         catch (const std::exception& e)
         {
