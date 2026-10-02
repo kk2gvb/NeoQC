@@ -1,31 +1,75 @@
-# NeoQC plot contract
+# Контракт графиков NeoQC
 
-NeoQC renders quality-control metrics through a single report-oriented plotting
-pipeline. C++ writes stable TSV files; `scripts/plot_results.py` validates and
-renders every available metric in one process.
+Графики строятся одним процессом Python. C++-ядро записывает стабильные TSV,
+`scripts/plot_results.py` проверяет их и строит все доступные метрики, затем
+рассчитывает `qc_evaluation.json` и собирает HTML-отчёт.
 
-## Output
+## Результаты
 
-With `--plot`, files are written to `<result>/plots/` in two formats:
+При запуске с `--plot` в `<result>/plots/` создаются:
 
-- SVG is the primary responsive asset for the self-contained HTML report;
-- PNG is a 2400 x 1350 pixel, 300 dpi fallback for export and print workflows.
+| Файл | Назначение |
+|---|---|
+| `<график>_<рид>.svg` | основной график на английском, векторный; текст остаётся текстом |
+| `<график>_<рид>.ru.svg` | тот же график с русскими подписями (для HTML-отчёта) |
+| `<график>_<рид>.png` | растровая копия на английском: 2400 × 1350 px, 300 dpi, для экспорта и печати |
+| `plots_manifest.json` | машинно-читаемый контракт для отчёта и внешних потребителей |
 
-`plots_manifest.json` is the integration boundary for downstream consumers.
-It contains one entry for every supported metric and read direction, including
-generated, skipped and failed plots. File paths in the manifest are relative to
-the plot directory.
+Рядом с каталогом графиков создаются `<result>/qc_evaluation.json` и
+`<result>/neoqc_qc_report.html`. Отчёт описан в [`html-report.md`](html-report.md).
 
-NeoQC also writes `<result>/neoqc_qc_report.html`. This is a self-contained
-sequencing QC report. It groups R1 and R2 by metric, embeds chart assets as data
-URIs, includes basic statistics, provides print/PDF styling and can open charts
-at full size.
+Русский SVG создаётся из той же фигуры сразу после сохранения английских
+файлов: все текстовые элементы переводятся через `scripts/neoqc_i18n.py`,
+раскладка пересчитывается (`tight_layout`). При `--formats png` русские SVG не
+создаются.
 
-NeoQC also writes `<result>/qc_evaluation.json`. It contains explainable,
-versioned technical QC decisions for every metric/read pair. Plot artifact
-status remains independent from QC status.
+## Манифест
 
-Supported plot identifiers are:
+`plots_manifest.json` содержит запись для каждой поддерживаемой пары
+«метрика × рид», включая построенные, пропущенные и завершившиеся ошибкой.
+Пути в манифесте относительные — от каталога графиков.
+
+```json
+{
+  "schema_version": 1,
+  "theme": "neo-report",
+  "formats": ["svg", "png"],
+  "locales": ["en", "ru"],
+  "figure": {"width_inches": 8.0, "height_inches": 4.5, "aspect_ratio": "16:9",
+             "png_width_px": 2400, "png_height_px": 1350, "png_dpi": 300},
+  "summary": {"generated": 16, "errors": 0, "skipped": 0},
+  "plots": [
+    {
+      "id": "per_base_quality",
+      "read": "R1",
+      "title": "Per base sequence quality",
+      "source": "per_cycle_R1.tsv",
+      "status": "generated",
+      "svg": "per_base_quality_R1.svg",
+      "png": "per_base_quality_R1.png",
+      "localized": {"ru": {"svg": "per_base_quality_R1.ru.svg"}},
+      "alt_text": "Per base sequence quality across 38 R1 read groups."
+    }
+  ]
+}
+```
+
+| Поле записи | Значение |
+|---|---|
+| `id`, `read` | идентификатор метрики и рид (`R1`, `R2`) |
+| `title` | английское название модуля; перевод берёт отчёт |
+| `status` | `generated`, `skipped` или `error` |
+| `reason` | причина пропуска или текст ошибки: `source_not_found`, `adapter_analysis_disabled`, сообщение исключения |
+| `svg`, `png` | имена файлов для построенных графиков |
+| `localized` | необязательно: `{"<язык>": {"svg": "<файл>"}}` для переведённых вариантов |
+| `warnings` | необязательно: список проблем с переводом; основной график при этом остаётся `generated` |
+| `alt_text` | текстовое описание графика для доступности |
+
+Поля `locales`, `localized` и `warnings` добавлены без смены `schema_version`:
+старые потребители их игнорируют, а отчёт без `localized` показывает английские
+графики в обоих языках.
+
+Поддерживаемые идентификаторы графиков:
 
 - `per_base_quality`;
 - `adapter_content`;
@@ -36,98 +80,101 @@ Supported plot identifiers are:
 - `sequence_duplication_levels`;
 - `per_sequence_quality`.
 
-`sequence_duplication_levels_R1.tsv` and
-`sequence_duplication_levels_R2.tsv` use the columns
-`duplication_level`, `total_sequences_percent` and
-`deduplicated_sequences_percent`. Duplication levels are labels (for example,
-`1`, `2`, `>10`), while both percentage columns must contain values from 0 to
-100.
+Если R2 не передан, его записи получают `source_not_found`. При
+`--skip-adapters` записи адаптеров получают `adapter_analysis_disabled`,
+остальные графики строятся как обычно. При повторном запуске устаревшие файлы
+графиков, включая `*.ru.svg`, удаляются до построения новых.
 
-Native FASTQ analysis also writes
-`sequence_duplication_summary_R1.tsv`/`R2.tsv`. This one-row provenance record
-contains the algorithm identifier, source FASTQ filename, prefix length,
-total/unique counts and the exact `deduplicated_remaining_percent` used by the QC
-decision engine. The level-1 ratio is retained only as a compatibility fallback
-for previously imported FastQC two-series TSV files.
+## Входные TSV
 
-Duplication outputs are a small transaction. NeoQC removes stale artifacts at
-the beginning of a run, publishes each file atomically, publishes the summary
-last and removes `sequence_duplication_R1.incomplete`/`R2.incomplete` only after
-success. The evaluator rejects a set while this marker exists, so a crashed run
-cannot silently reuse a partial or stale duplication profile. The full method
-and file semantics are documented in
-[`sequence-duplication.md`](sequence-duplication.md).
+`per_cycle_R1.tsv` / `per_cycle_R2.tsv` содержат `cycle`, `mean_quality`,
+`lower_quartile` и `median`. Последние две колонки нужны для
+FastQC-совместимой оценки качества по позициям. Старые файлы только со средним
+значением строятся, но получают `NOT EVALUATED`, а не выведенный PASS.
 
-`per_cycle_R1.tsv` and `per_cycle_R2.tsv` use `cycle`, `mean_quality`,
-`lower_quartile` and `median`. The latter two columns are required for the
-FastQC-compatible per-base quality decision. Older mean-only files still plot,
-but are reported as `NOT EVALUATED` rather than receiving an inferred PASS.
+`per_sequence_quality_R1.tsv` / `R2.tsv` содержат `mean_quality`, `read_count`
+и `read_count_truncate`. Округлённое распределение — собственное представление
+NeoQC; усечённое совпадает с разбиением FastQC и используется
+FastQC-совместимым профилем. Старые файлы без `read_count_truncate` читаются,
+вместо него берётся `read_count`.
 
-`per_sequence_quality_R1.tsv` and `per_sequence_quality_R2.tsv` use
-`mean_quality`, `read_count` and `read_count_truncate`. The rounded distribution
-is the native NeoQC view; the truncated distribution matches FastQC binning and
-is used by the FastQC-compatible decision profile. Legacy two-column files
-without `read_count_truncate` remain readable and fall back to `read_count`.
+`sequence_duplication_levels_R1.tsv` / `R2.tsv` содержат `duplication_level`,
+`total_sequences_percent` и `deduplicated_sequences_percent`. Уровни — метки
+(`1`, `2`, `>10` …), обе доли — значения от 0 до 100.
 
-Missing R2 inputs are recorded as `source_not_found`. When adapter analysis is
-disabled, adapter entries are recorded as `adapter_analysis_disabled`; all
-other available plots are still generated.
+Нативный анализ FASTQ также пишет `sequence_duplication_summary_R1.tsv` / `R2.tsv`
+— однострочную запись происхождения: идентификатор алгоритма, имя исходного
+FASTQ, длину префикса, общее и уникальное число последовательностей и точное
+значение `deduplicated_remaining_percent`, которое использует движок статусов.
+Доля уровня 1 оставлена только как запасной вариант для ранее импортированных
+двухсерийных TSV из FastQC.
 
-## Standalone use
+Результаты дупликации публикуются как транзакция: в начале запуска NeoQC
+удаляет устаревшие артефакты, публикует каждый файл атомарно, сводку — последней,
+и только после успеха удаляет маркер `sequence_duplication_R1.incomplete` /
+`R2.incomplete`. Пока маркер существует, оценщик отклоняет набор, поэтому
+аварийно прерванный запуск не может незаметно подставить неполный профиль.
+Метод описан в [`sequence-duplication.md`](sequence-duplication.md).
+
+## Отдельный запуск
 
 ```bash
 python3 scripts/plot_results.py results/sample01 results/sample01/plots
 ```
 
-Generate only one format:
+Только один формат и строгий код возврата при ошибках построения:
 
 ```bash
 python3 scripts/plot_results.py results/sample01 results/sample01/plots \
   --formats svg --strict
 ```
 
-The plotting process reports failures without invalidating TSV and summary
-outputs. C++ treats a plotting failure as a warning.
-
-Regenerate only the HTML report from existing artifacts:
-
-```bash
-python3 scripts/generate_qc_report.py results/sample01
-```
-
-Choose a custom output path:
-
-```bash
-python3 scripts/generate_qc_report.py results/sample01 \
-  --output results/sample01/sample01_fastqc.html
-```
-
-Evaluate existing TSV files without rendering charts:
-
-```bash
-python3 scripts/evaluate_qc.py results/sample01
-```
-
-Select an explicit ruleset when plotting:
+Явный набор правил:
 
 ```bash
 python3 scripts/plot_results.py results/sample01 results/sample01/plots \
   --ruleset config/qc_rules/fastqc-compatible-v1.json
 ```
 
-The report displays technical `PASS`, `WARNING`, `FAIL` and `NOT EVALUATED`
-decisions from the named ruleset. Artifact `generated`, `skipped` and `error`
-states remain separate; a rendering failure is never converted into QC FAIL.
-The data contract, ruleset strategy and aggregation are described in
-[`qc-status-engine.md`](qc-status-engine.md).
+Оценка без построения графиков:
 
-## Visual language
+```bash
+python3 scripts/evaluate_qc.py results/sample01
+```
 
-All figures share `scripts/plot_style.py`, which matches the HTML report brand
-palette, typography, spacing, grid, number formatting and accessible series
-styles. Individual metric renderers must not define their own global theme.
+Пересборка только HTML-отчёта:
 
-The HTML renderer should consume SVG first, use PNG as a fallback, and embed
-the chosen asset into the self-contained report. It should use `alt_text` and
-`title` from the manifest instead of reconstructing chart metadata from file
-names.
+```bash
+python3 scripts/generate_qc_report.py results/sample01
+python3 scripts/generate_qc_report.py results/sample01 \
+  --output results/sample01/sample01_qc.html
+```
+
+Ошибка построения графиков не делает недействительными TSV и сводки: C++
+считает её предупреждением. Состояние артефакта (`generated`, `skipped`,
+`error`) хранится отдельно от QC-статуса и никогда не превращается в QC `FAIL`
+(см. [`qc-status-engine.md`](qc-status-engine.md)).
+
+## Визуальный язык
+
+Все графики используют `scripts/plot_style.py`; отдельные функции построения не
+задают собственную тему.
+
+- **Шрифты.** IBM Plex Sans для текста, IBM Plex Mono для делений осей. Файлы
+  лежат в `assets/fonts/ibm-plex/` и регистрируются в Matplotlib при импорте
+  `plot_style`. Если их нет, используется DejaVu Sans / DejaVu Sans Mono.
+- **Текст в SVG остаётся текстом** (`svg.fonttype = "none"`) с запасными
+  семействами (`'IBM Plex Sans', 'Segoe UI', Arial, sans-serif`). В отчёте текст
+  рисуется встроенными веб-шрифтами, поэтому выглядит одинаково в любой системе.
+- **Без заголовка внутри фигуры.** Название модуля и рид показывает панель
+  отчёта; в метаданных файлов (`Title`) они сохраняются.
+- **Размер.** Фигура 8 × 4,5 дюйма (16:9), базовый кегль 11 pt, деления 10 pt.
+- **Цвета — только из палитры.** Все цвета берутся из констант `plot_style.py`,
+  которые определены токенами `scripts/neoqc_theme.py`. Отчёт заменяет эти цвета
+  CSS-переменными, поэтому график перекрашивается в тёмной теме. Цвет вне
+  палитры (например, `'red'`) останется неизменным; тест
+  `test_russian_chart_variants_and_theme_palette` это запрещает.
+- **Нуклеотиды** — как в геномных браузерах: A — зелёный, C — синий, G —
+  янтарный, T — красный, N — серый.
+- **Строки** на графиках пишутся по-английски; русский перевод — в `CHART` и
+  `CHART_PATTERNS` модуля `scripts/neoqc_i18n.py`.

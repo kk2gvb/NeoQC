@@ -13,6 +13,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.text import Text
 from matplotlib.ticker import FuncFormatter
 
 from plot_style import (
@@ -27,17 +28,20 @@ from plot_style import (
     LINE_STYLES,
     MARKERS,
     MUTED,
+    NEUTRAL,
     PANEL,
     PNG_DPI,
     SERIES_COLORS,
     WARNING,
     WHITE,
+    add_svg_font_fallbacks,
     apply_theme,
     compact_number,
     finish_figure,
     setup_axes,
     use_compact_y_axis,
 )
+from neoqc_i18n import chart_ru, ru
 from qc_observations import fastqc_theoretical_gc
 
 
@@ -380,23 +384,23 @@ def plot_per_base_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
             zorder=3,
         )
 
-    # X-axis labels.
-    if len(labels) <= 40:
-        ax.set_xticks(centers)
-        ax.set_xticklabels(labels, rotation=45, ha="right")
-    else:
-        stride = max(1, len(labels) // 12)
-        indices = list(range(0, len(labels), stride))
-
-        if indices[-1] != len(labels) - 1:
-            indices.append(len(labels) - 1)
-
-        ax.set_xticks([centers[index] for index in indices])
-        ax.set_xticklabels(
-            [labels[index] for index in indices],
-            rotation=45,
-            ha="right",
-        )
+    # X-axis labels: FastQC groups start with single-base positions (1, 2, ...)
+    # followed by wide ranges, so labelling every group crowds the left edge.
+    # Keep a label only when it is far enough from the previous one.
+    span = max(end for _, end in groups) - min(start for start, _ in groups)
+    min_gap = max(1.0, span / 16.0)
+    indices = [0]
+    for index in range(1, len(centers)):
+        if centers[index] - centers[indices[-1]] >= min_gap:
+            indices.append(index)
+    last = len(centers) - 1
+    if indices[-1] != last:
+        if len(indices) > 1 and centers[last] - centers[indices[-1]] < min_gap:
+            indices[-1] = last
+        else:
+            indices.append(last)
+    ax.set_xticks([centers[index] for index in indices])
+    ax.set_xticklabels([labels[index] for index in indices], rotation=45, ha="right")
 
     left = min(start for start, _ in groups)
     right = max(end for _, end in groups)
@@ -411,22 +415,24 @@ def plot_per_base_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
 
     label_x = left + max(0.5, (right - left) * 0.01)
 
+    # Threshold labels sit just below their lines: the quality curves start above
+    # Q30, so a label above the line would collide with the first data points.
     ax.text(
         label_x,
-        30.4,
+        29.6,
         "Q30",
         color=ACCENT,
-        fontsize=7,
-        va="bottom",
+        fontsize=9,
+        va="top",
     )
 
     ax.text(
         label_x,
-        20.4,
+        19.6,
         "Q20",
         color=WARNING,
-        fontsize=7,
-        va="bottom",
+        fontsize=9,
+        va="top",
     )
 
     ax.legend(loc="best")
@@ -507,7 +513,7 @@ def plot_per_sequence_quality(rows: Rows, read: str) -> tuple[plt.Figure, str]:
         ha="left",
         va="top",
         color=INK,
-        fontsize=8,
+        fontsize=10,
         fontweight=700,
         bbox={"boxstyle": "round,pad=0.45", "facecolor": WHITE, "edgecolor": GRID, "alpha": 0.94},
     )
@@ -554,7 +560,7 @@ def plot_adapter_content(rows: Rows, read: str) -> tuple[plt.Figure, str]:
             ha="center",
             va="center",
             color=MUTED,
-            fontsize=12,
+            fontsize=13,
             fontweight=700,
             bbox={"boxstyle": "round,pad=0.7", "facecolor": PANEL, "edgecolor": GRID},
         )
@@ -608,7 +614,7 @@ def plot_gc_content(rows: Rows, read: str) -> tuple[plt.Figure, str]:
     ax.plot(
         x,
         fastqc_counts,
-        color='red',
+        color=BRAND,
         linewidth=2.2,
         label="Observed (FastQC-compatible)",
     )
@@ -618,7 +624,7 @@ def plot_gc_content(rows: Rows, read: str) -> tuple[plt.Figure, str]:
         x,
         observed_counts,
         marker='x',
-        color='green',
+        color=NEUTRAL,
         s=18,
         label="Raw observed",
         zorder=3,
@@ -626,16 +632,13 @@ def plot_gc_content(rows: Rows, read: str) -> tuple[plt.Figure, str]:
     ax.plot(
         theoretical_x,
         theoretical,
-        color='dodgerblue',
+        color=WARNING,
         linewidth=2.0,
         linestyle="--",
         label="Theoretical distribution",
     )
     _mark_statistic(ax, mean, "Mean GC", ACCENT, "--")
     ax.set_xlim(0, 100)
-    ax.set_title("Per sequence GC content", loc="left", color=INK, pad=46)
-    if ax.texts:
-        ax.texts[0].set_y(1.13)
     ax.legend(
         loc="lower left",
         bbox_to_anchor=(0.0, 1.015),
@@ -668,7 +671,7 @@ def plot_n_content(rows: Rows, read: str) -> tuple[plt.Figure, str]:
         xytext=(8, 10),
         textcoords="offset points",
         color=INK,
-        fontsize=8,
+        fontsize=10,
     )
     ax.set_xlim(min(x), max(x) if len(x) > 1 else min(x) + 1)
     ax.set_ylim(0, max(1.0, min(100.0, peak * 1.25 + 0.2)))
@@ -706,7 +709,7 @@ def plot_length_distribution(rows: Rows, read: str) -> tuple[plt.Figure, str]:
             ha="left",
             va="top",
             color=INK,
-            fontsize=8.5,
+            fontsize=10,
             fontweight=700,
             bbox={"boxstyle": "round,pad=0.45", "facecolor": PANEL, "edgecolor": GRID},
         )
@@ -718,7 +721,7 @@ def plot_length_distribution(rows: Rows, read: str) -> tuple[plt.Figure, str]:
             ha="center",
             va="bottom",
             color=INK,
-            fontsize=8,
+            fontsize=10,
             fontweight=700,
         )
         use_compact_y_axis(ax)
@@ -749,7 +752,7 @@ def plot_length_distribution(rows: Rows, read: str) -> tuple[plt.Figure, str]:
         ha="left",
         va="top",
         color=INK,
-        fontsize=8,
+        fontsize=10,
         fontweight=700,
         bbox={"boxstyle": "round,pad=0.45", "facecolor": WHITE, "edgecolor": GRID, "alpha": 0.94},
     )
@@ -862,6 +865,10 @@ METRICS: tuple[MetricSpec, ...] = (
 
 RETIRED_PLOT_PREFIXES = ("quality_distribution",)
 
+# Additional chart languages rendered as SVG for the bilingual HTML report.
+REPORT_LOCALES = ("ru",)
+_CHART_TRANSLATORS: Mapping[str, Callable[[str], str]] = {"ru": chart_ru}
+
 
 def _save_figure(fig: plt.Figure, output_dir: Path, spec: MetricSpec, read: str, formats: Sequence[str]) -> Mapping[str, str]:
     files: dict[str, str] = {}
@@ -873,8 +880,26 @@ def _save_figure(fig: plt.Figure, output_dir: Path, spec: MetricSpec, read: str,
             fig.savefig(path, format="png", dpi=PNG_DPI, metadata=metadata)
         else:
             fig.savefig(path, format="svg", metadata=metadata)
+            path.write_text(add_svg_font_fallbacks(path.read_text(encoding="utf-8")), encoding="utf-8")
         files[output_format] = filename
     return files
+
+
+def _save_localized_svg(fig: plt.Figure, output_dir: Path, spec: MetricSpec, read: str, locale: str) -> str:
+    """Translate every text artist of an already saved figure and save it as <name>.<locale>.svg."""
+
+    translate = _CHART_TRANSLATORS[locale]
+    for text in fig.findobj(Text):
+        original = text.get_text()
+        if original:
+            text.set_text(translate(original))
+    fig.tight_layout(pad=1.6)
+    filename = spec.output_name(read, f"{locale}.svg")
+    path = output_dir / filename
+    title = ru(spec.title) if locale == "ru" else spec.title
+    fig.savefig(path, format="svg", metadata={"Creator": "NeoQC", "Title": f"{title} — {read}"})
+    path.write_text(add_svg_font_fallbacks(path.read_text(encoding="utf-8")), encoding="utf-8")
+    return filename
 
 
 def generate_plots(
@@ -883,8 +908,14 @@ def generate_plots(
     *,
     include_adapters: bool = True,
     formats: Sequence[str] = ("svg", "png"),
+    locales: Sequence[str] = REPORT_LOCALES,
 ) -> dict[str, object]:
-    """Render all recognized NeoQC TSV files and return the report contract."""
+    """Render all recognized NeoQC TSV files and return the report contract.
+
+    English SVG/PNG files are the primary artifacts. When SVG output is enabled,
+    every chart is additionally saved as ``<name>.<locale>.svg`` for each entry
+    of ``locales``; the manifest lists these under ``localized``.
+    """
 
     apply_theme()
     input_dir = input_dir.resolve()
@@ -901,6 +932,10 @@ def generate_plots(
         raise ValueError(f"unsupported output format(s): {', '.join(invalid_formats)}")
     if not formats:
         raise ValueError("at least one output format is required")
+    locales = tuple(dict.fromkeys(locales)) if "svg" in formats else ()
+    unknown_locales = sorted(set(locales) - set(_CHART_TRANSLATORS))
+    if unknown_locales:
+        raise ValueError(f"unsupported chart locale(s): {', '.join(unknown_locales)}")
 
     recognized_sources = {
         spec.source_name(read)
@@ -924,7 +959,7 @@ def generate_plots(
             }
             # A rerun with fewer reads or disabled adapters must not leave stale
             # report assets that contradict the new manifest.
-            for suffix in ("svg", "png"):
+            for suffix in ("svg", "png", *(f"{locale}.svg" for locale in _CHART_TRANSLATORS)):
                 stale_output = output_dir / spec.output_name(read, suffix)
                 if stale_output.is_file():
                     stale_output.unlink()
@@ -942,9 +977,18 @@ def generate_plots(
                 fig, alt_text = spec.plot(rows, read)
                 try:
                     files = _save_figure(fig, output_dir, spec, read, formats)
+                    localized: dict[str, dict[str, str]] = {}
+                    for locale in locales:
+                        # A translation problem must not invalidate the primary chart.
+                        try:
+                            localized[locale] = {"svg": _save_localized_svg(fig, output_dir, spec, read, locale)}
+                        except Exception as error:  # pragma: no cover - defensive
+                            entry.setdefault("warnings", []).append(f"{locale}: {error}")
                 finally:
                     plt.close(fig)
                 entry.update(files)
+                if localized:
+                    entry["localized"] = localized
                 entry["alt_text"] = alt_text
                 entry["status"] = "generated"
             except Exception as error:  # retain failures in the machine-readable contract
@@ -958,6 +1002,7 @@ def generate_plots(
         "schema_version": 1,
         "theme": "neo-report",
         "formats": list(formats),
+        "locales": ["en", *locales],
         "figure": {
             "width_inches": FIGURE_SIZE[0],
             "height_inches": FIGURE_SIZE[1],

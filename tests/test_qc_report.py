@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -15,7 +17,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from qc_report import QcReportError, generate_qc_report, load_report_model
+from neoqc_i18n import chart_ru, ru
+from neoqc_theme import CHART_COLORS, LIGHT_TO_VAR
+from qc_report import QcReportError, generate_qc_report, load_report_model, render_qc_report
 
 
 def write_summary(path: Path, sample: str, read: str, injected: str = "") -> None:
@@ -146,6 +150,44 @@ def write_evaluation(result_dir: Path) -> None:
     )
 
 
+MALICIOUS_SVG = """<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="576pt" height="324pt" viewBox="0 0 576 324" onload="alert(1)">
+ <style type="text/css">*{stroke-linecap: butt}</style>
+ <script>alert(2)</script>
+ <foreignObject><div xmlns="http://www.w3.org/1999/xhtml">x</div></foreignObject>
+ <defs><clipPath id="p1"><rect width="10" height="10"/></clipPath>
+   <path id="m1" d="M0 0h1" style="stroke: #1f5fd1"/></defs>
+ <g clip-path="url(#p1)">
+  <path d="M0 5h20" style="fill: #ffffff; stroke: #d8343d; clip-path: url(#p1)" onclick="alert(3)"/>
+  <use xlink:href="#m1" x="1" y="1" fill="#12a150"/>
+  <use xlink:href="https://example.org/evil.svg#x"/>
+  <path d="M0 0" style="fill: url(https://example.org/x.svg#y)"/>
+  <text style="font-size: 10px; font-family: 'IBM Plex Sans'; fill: #1b2430">Mean</text>
+ </g>
+</svg>"""
+
+
+def set_plot_svg(result_dir: Path, filename: str, content: str, *, localized: dict | None = None) -> None:
+    plot_dir = result_dir / "plots"
+    (plot_dir / filename).write_text(content, encoding="utf-8")
+    manifest_path = plot_dir / "plots_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    entry = manifest["plots"][0]
+    entry["svg"] = filename
+    if localized is not None:
+        entry["localized"] = localized
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def make_report(temporary: str) -> Path:
+    result_dir = Path(temporary)
+    write_summary(result_dir / "sample_R1_summary.txt", "sample", "R1")
+    write_manifest(result_dir / "plots")
+    return result_dir
+
+
 class QcReportTest(unittest.TestCase):
     def test_self_contained_single_read_report(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-report-") as temporary:
@@ -160,7 +202,8 @@ class QcReportTest(unittest.TestCase):
             self.assertIn("<!doctype html>", document)
             self.assertIn("sample_A", document)
             self.assertIn("Processed reads", document)
-            self.assertIn("data:image/svg+xml;base64,", document)
+            self.assertIn('class="chart-svg"', document)
+            self.assertNotIn("data:image/svg+xml;base64,", document)
             self.assertNotIn("quality_R1.svg\"", document)
             self.assertIn("Adapter analysis was disabled", document)
             self.assertNotIn("source_not_found", document)
@@ -168,11 +211,11 @@ class QcReportTest(unittest.TestCase):
             self.assertNotRegex(document, r"MODULE [0-9]{2}")
             self.assertRegex(
                 document,
-                r"Generated</small><strong>\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2} GMT\+3</strong>",
+                r'Generated</span><span class="l-ru">Создан</span></small>'
+                r"<strong>\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2} GMT\+3</strong>",
             )
-            self.assertIn('class="nav-index">00</span>', document)
+            self.assertIn('<span class="i">00</span>', document)
             self.assertNotIn("IntersectionObserver", document)
-            self.assertIn("window.scrollTo", document)
             self.assertIn("requestAnimationFrame", document)
             model = load_report_model(result_dir)
             self.assertEqual(model.reads, ("R1",))
@@ -216,7 +259,7 @@ class QcReportTest(unittest.TestCase):
             write_manifest(result_dir / "plots", unsafe=True)
             document = generate_qc_report(result_dir).read_text(encoding="utf-8")
             self.assertIn("asset path escapes the plot directory", document)
-            self.assertNotIn("data:image/svg+xml;base64,", document)
+            self.assertNotIn('class="chart-svg"', document)
 
     def test_overrepresented_sequences_table_is_embedded_and_escaped(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-report-overrepresented-") as temporary:
@@ -287,6 +330,165 @@ class QcReportTest(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(output.is_file())
+
+    def test_inline_svg_is_sanitized_themed_and_isolated(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-report-svg-") as temporary:
+            result_dir = make_report(temporary)
+            set_plot_svg(result_dir, "quality_R1.svg", MALICIOUS_SVG)
+            document = generate_qc_report(result_dir).read_text(encoding="utf-8")
+            body = document[document.index("<body"):]
+            chart = re.search(r'<svg[^>]*class="chart-svg".*?</svg>', body, re.S).group(0)
+            for forbidden in ("<script", "onload", "onclick", "foreignObject", "<style", "example.org", "alert("):
+                self.assertNotIn(forbidden, chart)
+            # Theme colours become CSS variables, including presentation attributes.
+            self.assertIn("var(--c-bg)", chart)
+            self.assertIn("var(--c-danger)", chart)
+            self.assertIn("fill: var(--c-a)", chart)
+            self.assertNotRegex(chart, r"#[0-9a-fA-F]{6}\b")
+            # Ids and references are prefixed so several charts can share one page.
+            self.assertIn('id="per_base_quality-R1-en-p1"', chart)
+            self.assertIn("url(#per_base_quality-R1-en-p1)", chart)
+            self.assertIn('href="#per_base_quality-R1-en-m1"', chart)
+            self.assertNotIn(' width="576pt"', chart)
+            self.assertIn("'IBM Plex Sans', 'Segoe UI', Arial, sans-serif", chart)
+
+    def test_svg_with_entity_declarations_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-report-entity-") as temporary:
+            result_dir = make_report(temporary)
+            set_plot_svg(
+                result_dir,
+                "quality_R1.svg",
+                '<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY a "aaaa">]>'
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><text>&a;</text></svg>',
+            )
+            document = generate_qc_report(result_dir).read_text(encoding="utf-8")
+            self.assertIn("SVG with entity declarations is not accepted", document)
+            self.assertNotIn('class="chart-svg"', document)
+
+    def test_localized_chart_variants_and_fallback(self) -> None:
+        svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 10"><text>{}</text></svg>'
+        with tempfile.TemporaryDirectory(prefix="neoqc-report-l10n-") as temporary:
+            result_dir = make_report(temporary)
+            (result_dir / "plots" / "quality_R1.ru.svg").write_text(svg.format("Среднее"), encoding="utf-8")
+            set_plot_svg(result_dir, "quality_R1.svg", svg.format("Mean"),
+                         localized={"ru": {"svg": "quality_R1.ru.svg"}})
+            document = generate_qc_report(result_dir).read_text(encoding="utf-8")
+            self.assertIn('<span class="chart l-en">', document)
+            self.assertIn('<span class="chart l-ru">', document)
+            self.assertIn("Среднее", document)
+
+            # A missing translation keeps the English chart visible in both languages.
+            (result_dir / "plots" / "quality_R1.ru.svg").unlink()
+            document = generate_qc_report(result_dir).read_text(encoding="utf-8")
+            self.assertIn('<span class="chart"><svg', document)
+            self.assertNotIn('<span class="chart l-ru">', document)
+
+            set_plot_svg(result_dir, "quality_R1.svg", svg.format("Mean"), localized={"de": {"svg": "x.svg"}})
+            with self.assertRaisesRegex(QcReportError, "unsupported locale"):
+                load_report_model(result_dir)
+
+    def test_theme_language_controls_and_print_are_self_contained(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-report-ui-") as temporary:
+            document = generate_qc_report(make_report(temporary)).read_text(encoding="utf-8")
+            head = document[: document.index("</head>")]
+            # Saved theme/language are applied in <head>, before the first paint.
+            self.assertIn("neoqc.report.theme", head)
+            self.assertIn("prefers-color-scheme: dark", head)
+            for control in ('data-theme-btn="light"', 'data-theme-btn="dark"',
+                            'data-lang-btn="en"', 'data-lang-btn="ru"',
+                            'data-order-btn="triage"', 'data-order-btn="sequential"', 'id="fold-all"'):
+                self.assertIn(control, document)
+            self.assertIn('<span class="l-ru">Основная статистика</span>', document)
+            self.assertIn(':root[data-theme="dark"]', document)
+            # Printing always uses the light palette.
+            self.assertRegex(document, r'@media print\{:root,:root\[data-theme="dark"\]\{color-scheme:light')
+            for name, (light, dark) in CHART_COLORS.items():
+                self.assertIn(f"{name}:{light}", document)
+                self.assertIn(f"{name}:{dark}", document)
+            # No external resources: the file must work offline.
+            self.assertNotRegex(document, r'(src|href)="https?://')
+            self.assertNotIn("@import", document)
+
+    def test_embedded_fonts_cover_latin_and_cyrillic(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-report-fonts-") as temporary:
+            document = generate_qc_report(make_report(temporary)).read_text(encoding="utf-8")
+            faces = re.findall(r"@font-face\{[^}]*\}", document)
+            self.assertEqual(len(faces), 14)  # 7 weights x (latin + cyrillic)
+            self.assertTrue(any("font-family:'IBM Plex Sans'" in face and "U+0400-045F" in face for face in faces))
+            self.assertTrue(any("font-family:'IBM Plex Mono'" in face and "U+0000-00FF" in face for face in faces))
+
+    def test_triage_order_keys_put_problems_first(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-report-order-") as temporary:
+            result_dir = make_report(temporary)
+            write_evaluation(result_dir)
+            document = generate_qc_report(result_dir).read_text(encoding="utf-8")
+
+            def section_keys(section_id: str) -> tuple[int, int, str]:
+                match = re.search(
+                    rf'<section class="panel[^"]*" id="{section_id}"[^>]*?(?:data-sev="([a-z_]+)" )?'
+                    r'data-seq="(\d+)" data-tri="(\d+)"',
+                    document,
+                )
+                self.assertIsNotNone(match, section_id)
+                return int(match.group(2)), int(match.group(3)), match.group(1) or ""
+
+            overview = section_keys("qc-summary")
+            basic = section_keys("basic-statistics")
+            quality = section_keys("module-per_base_quality")   # PASS
+            adapter = section_keys("module-adapter_content")    # WARNING
+            self.assertEqual(overview[:2], (0, 0))
+            self.assertEqual(basic[:2], (1, 1))                  # INFO always follows the overview
+            self.assertLess(quality[0], adapter[0])              # pipeline order
+            self.assertLess(adapter[1], quality[1])              # triage: problems first
+            self.assertEqual(adapter[2], "warning")
+            self.assertEqual(quality[2], "ok")                   # folded in triage mode
+            self.assertIn("Needs attention", document)
+
+    def test_report_javascript_is_valid(self) -> None:
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node is not installed")
+        with tempfile.TemporaryDirectory(prefix="neoqc-report-js-") as temporary:
+            document = generate_qc_report(make_report(temporary)).read_text(encoding="utf-8")
+            scripts = re.findall(r"<script>(.*?)</script>", document, re.S)
+            self.assertEqual(len(scripts), 2)
+            for index, script in enumerate(scripts):
+                path = Path(temporary) / f"script{index}.js"
+                path.write_text(script, encoding="utf-8")
+                result = subprocess.run([node, "--check", str(path)], capture_output=True, text=True, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class TranslationTest(unittest.TestCase):
+    def test_reason_messages_are_translated_with_values(self) -> None:
+        self.assertEqual(
+            ru("Maximum adapter content: 11.95 %; FAIL threshold > 10 %."),
+            "Макс. доля адаптеров: 11.95 %; порог FAIL > 10 %.",
+        )
+        self.assertEqual(ru("All evaluated observations are within configured thresholds."),
+                         "Все наблюдения в пределах заданных порогов.")
+        self.assertEqual(ru("Custom ruleset message"), "Custom ruleset message")
+
+    def test_chart_labels_and_patterns(self) -> None:
+        self.assertEqual(chart_ru("Position in read (bp)"), "Позиция в риде (п.н.)")
+        self.assertEqual(chart_ru("Mean GC: 47.9"), "Среднее GC: 47.9")
+        self.assertEqual(chart_ru("Peak 0.26%"), "Пик 0.26%")
+        self.assertEqual(chart_ru("1.0M reads"), "1.0M ридов")
+        self.assertEqual(chart_ru("TruSeq_R1"), "TruSeq_R1")
+
+    def test_theme_tokens_map_back_to_css_variables(self) -> None:
+        self.assertEqual(len(LIGHT_TO_VAR), len(CHART_COLORS))
+        for name, (light, dark) in CHART_COLORS.items():
+            self.assertEqual(LIGHT_TO_VAR[light.lower()], name)
+            self.assertRegex(dark, r"^#[0-9a-f]{6}$")
+
+    def test_render_does_not_mutate_model(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-report-pure-") as temporary:
+            result_dir = make_report(temporary)
+            model = load_report_model(result_dir)
+            first = render_qc_report(model, result_dir / "plots")
+            second = render_qc_report(model, result_dir / "plots")
+            self.assertEqual(first, second)
 
 
 if __name__ == "__main__":

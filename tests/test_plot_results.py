@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import struct
 import subprocess
 import sys
@@ -14,6 +15,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "plot_results.py"
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from neoqc_theme import LIGHT_TO_VAR  # noqa: E402
 
 
 FIXTURES = {
@@ -142,7 +146,7 @@ class PlotResultsTest(unittest.TestCase):
             report = input_dir / "neoqc_qc_report.html"
             self.assertTrue(report.is_file())
             report_text = report.read_text(encoding="utf-8")
-            self.assertIn("data:image/svg+xml;base64,", report_text)
+            self.assertIn('class="chart-svg"', report_text)
             self.assertIn("Per base sequence quality", report_text)
             self.assertIn("R1", report_text)
             self.assertIn("R2", report_text)
@@ -270,6 +274,53 @@ class PlotResultsTest(unittest.TestCase):
             self.assertEqual(manifest["summary"]["errors"], 1)
             failed = next(entry for entry in manifest["plots"] if entry["status"] == "error")
             self.assertIn("missing required column", failed["reason"])
+
+    def test_russian_chart_variants_and_theme_palette(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neo qc plots ru ") as temporary:
+            root = Path(temporary)
+            input_dir = root / "input"
+            output_dir = root / "plots"
+            write_fixture_set(input_dir)
+            result = run_plotter(input_dir, output_dir, "--formats", "svg", "--strict")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("findfont:", result.stderr)
+            manifest = json.loads((output_dir / "plots_manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["locales"], ["en", "ru"])
+            for entry in manifest["plots"]:
+                localized = output_dir / entry["localized"]["ru"]["svg"]
+                self.assertTrue(localized.is_file(), localized)
+                self.assertEqual(localized.name, entry["svg"].replace(".svg", ".ru.svg"))
+                for svg_path in (output_dir / entry["svg"], localized):
+                    svg = svg_path.read_text(encoding="utf-8")
+                    # Every colour must be a theme token, otherwise it cannot follow the dark theme.
+                    unknown = sorted({c.lower() for c in re.findall(r"#[0-9a-fA-F]{6}\b", svg)} - set(LIGHT_TO_VAR))
+                    self.assertEqual(unknown, [], f"{svg_path.name}: colours outside the palette")
+                    self.assertIn("<text", svg)  # text stays text (svg.fonttype = none)
+                    self.assertNotRegex(svg, r"font-family: '[^']+'(?!,)")  # generic fallback present
+            ru_duplication = (output_dir / "sequence_duplication_levels_R1.ru.svg").read_text(encoding="utf-8")
+            self.assertIn("Все последовательности", ru_duplication)
+            self.assertIn("Уровень дупликации", ru_duplication)
+            self.assertNotIn("Total sequences", ru_duplication)
+            en_quality = (output_dir / "per_base_quality_R1.svg").read_text(encoding="utf-8")
+            self.assertIn("Position in read (bp)", en_quality)
+            self.assertNotIn("Позиция", en_quality)
+            report = (input_dir / "neoqc_qc_report.html").read_text(encoding="utf-8")
+            self.assertIn('<span class="chart l-ru">', report)
+
+    def test_png_only_run_has_no_localized_svg(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neo qc plots png ") as temporary:
+            root = Path(temporary)
+            input_dir = root / "input"
+            output_dir = root / "plots"
+            write_fixture_set(input_dir)
+            result = run_plotter(input_dir, output_dir, "--formats", "png", "--strict")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = json.loads((output_dir / "plots_manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["locales"], ["en"])
+            self.assertFalse(any("localized" in entry for entry in manifest["plots"]))
+            self.assertFalse(list(output_dir.glob("*.ru.svg")))
+            report = (input_dir / "neoqc_qc_report.html").read_text(encoding="utf-8")
+            self.assertIn('class="chart-img" src="data:image/png;base64,', report)
 
 
 if __name__ == "__main__":

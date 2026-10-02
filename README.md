@@ -108,13 +108,22 @@ ctest --test-dir build --output-on-failure
 ### Single-end
 
 ```bash
-./build/neoqc     --r1 sample.fastq.gz     --sample-id sample01     --out results/sample01     --plot
+./build/neoqc \
+  --r1 sample.fastq.gz \
+  --sample-id sample01 \
+  --out results/sample01 \
+  --plot
 ```
 
 ### Paired-end
 
 ```bash
-./build/neoqc     --r1 sample_R1.fastq.gz     --r2 sample_R2.fastq.gz     --sample-id sample01     --out results/sample01     --plot
+./build/neoqc \
+  --r1 sample_R1.fastq.gz \
+  --r2 sample_R2.fastq.gz \
+  --sample-id sample01 \
+  --out results/sample01 \
+  --plot
 ```
 
 После выполнения при использовании `--plot` создаётся:
@@ -164,7 +173,10 @@ results/sample01/neoqc_qc_report.html
 Запустить анализ:
 
 ```bash
-./build/neoqc     --samples examples/samples.csv     --out results     --plot
+./build/neoqc \
+  --samples examples/samples.csv \
+  --out results \
+  --plot
 ```
 
 Результаты организуются по схеме:
@@ -205,7 +217,8 @@ results/sample01/
 ├── neoqc_qc_report.html
 └── plots/
     ├── plots_manifest.json
-    ├── *.svg
+    ├── *.svg        # графики на английском
+    ├── *.ru.svg     # те же графики с русскими подписями
     └── *.png
 ```
 
@@ -219,9 +232,15 @@ TSV-файлы содержат рассчитанные наблюдения о
 
 ### HTML-отчёт
 
-HTML-отчёт объединяет итоговые QC-статусы, численные показатели, графики, таблицы и информацию о выявленных проблемах.
+HTML-отчёт объединяет итоговые QC-статусы, основную статистику, графики R1/R2, наблюдаемые значения с порогами и таблицы сверхпредставленных последовательностей.
 
-Отчёт является автономным: необходимые ресурсы встроены в HTML.
+- **автономный:** шрифты, графики (встроенный SVG), стили и скрипты находятся внутри одного файла — отчёт открывается без интернета и без NeoQC;
+- **светлая и тёмная тема** — графики перекрашиваются вместе со страницей; печать и PDF всегда светлые;
+- **английский и русский язык** — переключаются в левой панели без перегенерации, включая подписи на графиках;
+- **порядок разделов:** «Приоритет» (сначала FAIL и WARNING, прошедшие модули свёрнуты в конце) или «По порядку»;
+- работает на экранах от телефона до широкого монитора.
+
+Подробное описание — [`docs/html-report.md`](docs/html-report.md).
 
 ---
 
@@ -361,6 +380,7 @@ ctest --test-dir build --output-on-failure
 | [`docs/QC_METRICS.md`](docs/QC_METRICS.md) | Определение метрик. |
 | [`docs/FastQ_origin_paired_end_and_plot_legends.md`](docs/FastQ_origin_paired_end_and_plot_legends.md) | FASTQ, paired-end, место QC в NGS-процессе и интерпретация графиков. |
 | [`docs/plots.md`](docs/plots.md) | Технический контракт графиков. |
+| [`docs/html-report.md`](docs/html-report.md) | HTML-отчёт: интерфейс, темы, языки, контракт данных, доработка и тесты. |
 | [`docs/qc-status-engine.md`](docs/qc-status-engine.md) | Движок технической оценки. |
 | [`docs/sequence-duplication.md`](docs/sequence-duplication.md) | Метод расчёта дупликации. |
 
@@ -368,7 +388,7 @@ ctest --test-dir build --output-on-failure
 
 ## 15. Версия и статус проекта
 
-**NeoQC `v1.1.0`**
+**NeoQC `v1.0.1`**
 
 NeoQC используется как инструмент контроля качества NGS-данных в составе проекта **neo-mRNA-vax**.
 
