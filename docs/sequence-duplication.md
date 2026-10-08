@@ -37,10 +37,12 @@ Native runs additionally produce:
 - `sequence_duplication_R*.incomplete` — a temporary transaction marker which
 remains only when calculation or publication did not finish.
 
-When the compact HTML report is generated, each duplication chart is followed
-by its read-specific `Overrepresented sequences` table. The report shows the
-sequence, exact count, percentage and possible source; a valid header-only TSV
-is rendered explicitly as “No sequences exceeded the reporting threshold.”
+**В HTML-отчёте** под графиком дупликации каждого рида выводится таблица
+сверхпредставленных последовательностей (`Overrepresented sequences`):
+последовательность, точное количество и доля в процентах. Корректный TSV,
+содержащий только заголовок, отображается явной строкой «Ни одна
+последовательность не превысила порог» (`No sequences exceeded the reporting
+threshold.`). Подробнее — в [`html-report.md`](html-report.md).
 
 The summary is published last. The QC evaluator rejects native artifacts while
 the incomplete marker exists and validates the summary against the percentage

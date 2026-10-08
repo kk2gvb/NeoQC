@@ -36,19 +36,31 @@ QC evaluation
 Минимальный запуск:
 
 ```bash
-./build/neoqc     --r1 sample.fastq.gz     --sample-id sample01     --out results/sample01
+./build/neoqc \
+  --r1 sample.fastq.gz \
+  --sample-id sample01 \
+  --out results/sample01
 ```
 
 С графиками и HTML-отчётом:
 
 ```bash
-./build/neoqc     --r1 sample.fastq.gz     --sample-id sample01     --out results/sample01     --plot
+./build/neoqc \
+  --r1 sample.fastq.gz \
+  --sample-id sample01 \
+  --out results/sample01 \
+  --plot
 ```
 
 ## 3. Paired-end
 
 ```bash
-./build/neoqc     --r1 sample_R1.fastq.gz     --r2 sample_R2.fastq.gz     --sample-id sample01     --out results/sample01     --plot
+./build/neoqc \
+  --r1 sample_R1.fastq.gz \
+  --r2 sample_R2.fastq.gz \
+  --sample-id sample01 \
+  --out results/sample01 \
+  --plot
 ```
 
 NeoQC проверяет соответствие парных reads и формирует результаты для R1 и R2.
@@ -114,7 +126,13 @@ NeoQC проверяет соответствие парных reads и форм
 Пример:
 
 ```bash
-./build/neoqc     --r1 sample_R1.fastq.gz     --r2 sample_R2.fastq.gz     --sample-id sample01     --out results/sample01     --plot     --timing
+./build/neoqc \
+  --r1 sample_R1.fastq.gz \
+  --r2 sample_R2.fastq.gz \
+  --sample-id sample01 \
+  --out results/sample01 \
+  --plot \
+  --timing
 ```
 
 ### `--samples`
@@ -148,7 +166,10 @@ patient_id,sample_id,sample_role,material,r1,r2,platform,library_type,reference
 Запустить batch QC:
 
 ```bash
-./build/neoqc     --samples examples/samples.csv     --out results     --plot
+./build/neoqc \
+  --samples examples/samples.csv \
+  --out results \
+  --plot
 ```
 
 Результаты располагаются по `patient_id` и `sample_id`.
@@ -185,6 +206,8 @@ results/sample01/
 - [`FastQ_origin_paired_end_and_plot_legends.md`](FastQ_origin_paired_end_and_plot_legends.md)
 
 HTML-отчёт предназначен для просмотра человеком, а `qc_evaluation.json` — для машинной обработки и проверки статусов.
+
+В отчёте в левой панели переключаются тема (светлая / тёмная) и язык (EN / RU), в верхней — порядок разделов: «Приоритет» (сначала проблемные модули, прошедшие свёрнуты) или «По порядку». Выбор запоминается браузером. Подробнее — [`html-report.md`](html-report.md).
 
 ## 8. QC-статусы
 
@@ -236,7 +259,12 @@ NeoQC рассчитывает дупликацию по первым 50 нук�
 Для измерения времени:
 
 ```bash
-./build/neoqc     --r1 sample_R1.fastq.gz     --r2 sample_R2.fastq.gz     --sample-id sample01     --out results/sample01     --timing
+./build/neoqc \
+  --r1 sample_R1.fastq.gz \
+  --r2 sample_R2.fastq.gz \
+  --sample-id sample01 \
+  --out results/sample01 \
+  --timing
 ```
 
 NeoQC использует OpenMP для параллельной обработки FASTQ.
@@ -253,13 +281,26 @@ sample_R2.fastq.gz
 ### Шаг 2. Первичный QC
 
 ```bash
-./build/neoqc     --r1 sample_R1.fastq.gz     --r2 sample_R2.fastq.gz     --sample-id sample01     --out results/sample01     --plot
+./build/neoqc \
+  --r1 sample_R1.fastq.gz \
+  --r2 sample_R2.fastq.gz \
+  --sample-id sample01 \
+  --out results/sample01 \
+  --plot
 ```
 
 ### Шаг 3. Просмотр отчёта
 
 ```text
 results/sample01/neoqc_qc_report.html
+```
+
+Файл открывается двойным щелчком в браузере. Начните с блока «Обзор QC» и группы «Требует внимания»; для печати или PDF используйте кнопку «Печать / PDF».
+
+Пересобрать только отчёт (например, после обновления NeoQC) можно без повторного анализа FASTQ:
+
+```bash
+python3 scripts/generate_qc_report.py results/sample01
 ```
 
 ### Шаг 4. Предварительная обработка
