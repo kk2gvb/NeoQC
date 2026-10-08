@@ -108,11 +108,28 @@ Evaluate existing TSV files without rendering charts:
 python3 scripts/evaluate_qc.py results/sample01
 ```
 
+For a nested trimming QC directory, use the same root manifest explicitly:
+
+```bash
+python3 scripts/evaluate_qc.py results/sample01/qc/after \
+  --run-manifest results/sample01/run_manifest.json
+```
+
 Select an explicit ruleset when plotting:
 
 ```bash
 python3 scripts/plot_results.py results/sample01 results/sample01/plots \
   --ruleset config/qc_rules/fastqc-compatible-v1.json
+```
+
+For a nested trimming view (`qc/before` or `qc/after`), pass the publication
+manifest from the result root so artifact paths are validated in the correct
+namespace:
+
+```bash
+python3 scripts/plot_results.py \
+  results/sample01/qc/before results/sample01/plots/before \
+  --run-manifest results/sample01/run_manifest.json
 ```
 
 The report displays technical `PASS`, `WARNING`, `FAIL` and `NOT EVALUATED`

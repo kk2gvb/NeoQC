@@ -37,7 +37,6 @@ add_executable(neoqc
     src/adapter_config.cpp
     src/trimming/quality_trimmer.cpp
     src/trimming/adapter_trimmer.cpp
-    src/trimming/adapter_fasta.cpp
     src/trimming/pe_overlap.cpp
     src/trimming/pe_processor.cpp
     src/trimming/umi_processor.cpp
@@ -143,7 +142,7 @@ target_link_libraries(neoqc_fastq_writer_test PRIVATE ZLIB::ZLIB)
 
 add_executable(neoqc_advanced_trimming_test
     tests/trimming/test_advanced_trimming.cpp
-    src/trimming/adapter_fasta.cpp
+    src/adapter_config.cpp
     src/trimming/quality_trimmer.cpp
     src/trimming/adapter_trimmer.cpp
     src/trimming/pe_overlap.cpp
@@ -154,6 +153,9 @@ add_executable(neoqc_advanced_trimming_test
     src/trimming/trim_stats.cpp
 )
 target_include_directories(neoqc_advanced_trimming_test PRIVATE include)
+target_compile_definitions(neoqc_advanced_trimming_test PRIVATE
+    NEOQC_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 

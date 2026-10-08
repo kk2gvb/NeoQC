@@ -2,8 +2,8 @@
 #include "../include/quality_analyzer.h"
 #include "../include/plot_runner.h"
 #include "../include/sample_sheet.h"
+#include "../include/adapter_config.h"
 #include "../include/trimming/trim_config.h"
-#include "../include/trimming/adapter_fasta.h"
 #include "../include/trimming/fastq_writer.h"
 #include "../include/trimming/trim_report.h"
 #include "../include/trimming/trimmer.h"
@@ -62,8 +62,8 @@ struct Args {
     bool        plot = false;
     bool        skipAdapters = false;
     bool        trimmingOptionSpecified = false;
-    bool        adapterFastaSpecified = false;
-    std::string adapterFasta;
+    bool        adapterConfigSpecified = false;
+    std::string adapterConfig;
     TrimConfig  trimConfig;
 };
 
@@ -139,9 +139,9 @@ Args parseArgs(int argc, char* argv[]) {
             args.trimConfig.adapter_sequence = trimmingValue(arg);
             args.trimConfig.adapter_trimming = true;
         }
-        else if (arg == "--adapter-fasta") {
-            args.adapterFastaSpecified = true;
-            args.adapterFasta = trimmingValue(arg);
+        else if (arg == "--adapter-config") {
+            args.adapterConfigSpecified = true;
+            args.adapterConfig = trimmingValue(arg);
         }
         else if (arg == "--overlap-correction") {
             args.trimmingOptionSpecified = true;
@@ -183,8 +183,8 @@ Args parseArgs(int argc, char* argv[]) {
     if (args.trimmingOptionSpecified && !args.trimConfig.enabled) {
         throw std::runtime_error("Trimming options require --trim");
     }
-    if (args.adapterFastaSpecified) {
-        args.trimConfig.fasta_adapters = loadAdapterFasta(args.adapterFasta);
+    if (args.adapterConfigSpecified) {
+        args.trimConfig.adapters = loadAdapterConfig(args.adapterConfig);
         args.trimConfig.adapter_trimming = true;
     }
     if (args.trimConfig.cut_right && args.trimConfig.window_size == 0) {
@@ -281,7 +281,7 @@ void printUsage(const char* progName) {
         "  --quality-threshold N  Phred threshold (default: 20)\n"
         "  --window-size N        Sliding-window size (default: 4)\n"
         "  --adapter-sequence S   Trim explicit adapter sequence\n"
-        "  --adapter-fasta FILE   Trim adapters loaded from FASTA\n"
+        "  --adapter-config FILE  Trim adapters loaded from NeoQC TSV adapter config\n"
         "  --overlap-correction   Correct PE overlap mismatches by base quality\n"
         "  --merge                Write overlapping PE consensus reads\n"
         "  --umi                  Extract a 5' UMI from R1 (or the SE read)\n"
@@ -2324,6 +2324,8 @@ AnalysisResult runSampleTransaction(
         {
             PlotOptions options;
             options.includeAdapters = !skipAdapters;
+            options.runManifestPath =
+                (stagingDir / "run_manifest.json").string();
             if (trimConfig != nullptr) {
                 PlotRunner::runAll(
                     (stagingDir / "qc" / "before").string(),
@@ -2720,6 +2722,8 @@ int main(int argc, char* argv[]) {
         {
             PlotOptions plotOptions;
             plotOptions.includeAdapters = !args.skipAdapters;
+            plotOptions.runManifestPath =
+                (stagingDir / "run_manifest.json").string();
             if (activeTrimConfig != nullptr) {
                 PlotRunner::runAll(
                     (stagingDir / "qc" / "before").string(),

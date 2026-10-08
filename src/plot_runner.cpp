@@ -64,6 +64,9 @@ PlotRunResult PlotRunner::runAll(const std::string& resultDir,
     if (options.generatePng) command += " png";
     if (!options.includeAdapters) command += " --skip-adapters";
     if (options.strict) command += " --strict";
+    if (!options.runManifestPath.empty()) {
+        command += " --run-manifest " + shellQuote(options.runManifestPath);
+    }
 
     const int returnCode = std::system(command.c_str());
     if (returnCode != 0) {

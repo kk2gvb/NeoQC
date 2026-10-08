@@ -60,7 +60,7 @@ std::optional<AdapterMatch> findAdapterMatch(const FastqRecord& record,
     if (!config.adapter_sequence.empty()) {
         adapters.push_back(config.adapter_sequence);
     }
-    for (const TrimAdapter& adapter : config.fasta_adapters) {
+    for (const AdapterConfigEntry& adapter : config.adapters) {
         adapters.push_back(adapter.sequence);
     }
 

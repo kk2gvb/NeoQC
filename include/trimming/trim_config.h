@@ -1,13 +1,10 @@
 #pragma once
 
+#include "adapter_config.h"
+
 #include <cstddef>
 #include <string>
 #include <vector>
-
-struct TrimAdapter {
-    std::string name;
-    std::string sequence;
-};
 
 // Trimming is disabled by default. Individual operations only take effect
 // when enabled is true.
@@ -25,7 +22,7 @@ struct TrimConfig {
 
     bool adapter_trimming = false;
     std::string adapter_sequence;
-    std::vector<TrimAdapter> fasta_adapters;
+    std::vector<AdapterConfigEntry> adapters;
     std::size_t min_adapter_match = 6;
 
     std::size_t min_overlap = 30;

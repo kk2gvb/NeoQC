@@ -72,8 +72,9 @@ def test_cli(root: Path) -> None:
     input_path = root / "cli.fastq.gz"
     write_fastq(input_path, [("@CLI", "ACGTAC", "IIIIII")])
     base = ["--r1", str(input_path), "--sample-id", "cli"]
-    adapter_fasta = root / "adapters.fa"
-    adapter_fasta.write_text(">one\nAGAT\nCGGA\n>two\nTTTTTT\n", encoding="ascii")
+    adapter_config = root / "adapters.tsv"
+    adapter_config.write_text(
+        "one\tAGATCGGA\ntwo\tTTTTTT\n", encoding="ascii")
     positive = [
         [],
         ["--trim-front", "1"],
@@ -82,7 +83,8 @@ def test_cli(root: Path) -> None:
         ["--cut-tail", "--quality-threshold", "20"],
         ["--cut-right", "--quality-threshold", "20", "--window-size", "2"],
         ["--adapter-sequence", "TTTTTT"],
-        ["--adapter-fasta", str(adapter_fasta)],
+        ["--adapter-config", str(adapter_config)],
+        ["--adapter-config", str(ROOT / "config/adapters/neoqc-standard-v1.tsv")],
         ["--umi", "--umi-length", "1"],
         ["--min-length", "1"],
         ["--trim-polyg", "--polyg-min-length", "4"],
@@ -100,7 +102,8 @@ def test_cli(root: Path) -> None:
         (["--trim", "--trim-front"], "requires a value"),
         (["--trim", "--adapter-sequence", "ACGTZQ"], "only A, C, G, T, or N"),
         (["--trim", "--unknown-trim-option"], "Unknown argument"),
-        (["--trim", "--adapter-fasta", str(root / "missing.fa")], "Cannot open adapter FASTA"),
+        (["--adapter-config", str(adapter_config)], "require --trim"),
+        (["--trim", "--adapter-config", str(root / "missing.tsv")], "Cannot open adapter config"),
         (["--trim", "--overlap-correction"], "require paired-end input"),
         (["--trim", "--merge"], "require paired-end input"),
         (["--trim", "--umi"], "greater than zero"),
@@ -118,6 +121,37 @@ def test_cli(root: Path) -> None:
         expect_success=False,
     )
     assert "must not contain an input FASTQ" in unsafe.stderr
+
+    adapter_input = root / "adapter-cli.fastq.gz"
+    write_fastq(adapter_input, [("@ADAPTER_CLI", "ACGTAGATCGGA", "I" * 12)])
+    trim_only_output = root / "adapter-trim-only"
+    run([
+        "--r1", str(adapter_input), "--sample-id", "trim_only",
+        "--out", str(trim_only_output), "--trim",
+    ])
+    assert read_fastq(
+        trim_only_output / "trimmed" / "R1.trimmed.fastq.gz")[0][1] == "ACGTAGATCGGA"
+
+    config_output = root / "adapter-config-output"
+    run([
+        "--r1", str(adapter_input), "--sample-id", "adapter_config",
+        "--out", str(config_output), "--trim",
+        "--adapter-config", str(adapter_config),
+    ])
+    assert read_fastq(
+        config_output / "trimmed" / "R1.trimmed.fastq.gz")[0][1] == "ACGT"
+
+    combined_input = root / "adapter-combined.fastq.gz"
+    write_fastq(combined_input, [("@COMBINED", "ACGTCCCCCC", "I" * 10)])
+    combined_output = root / "adapter-combined-output"
+    run([
+        "--r1", str(combined_input), "--sample-id", "adapter_combined",
+        "--out", str(combined_output), "--trim",
+        "--adapter-sequence", "CCCCCC",
+        "--adapter-config", str(adapter_config),
+    ])
+    assert read_fastq(
+        combined_output / "trimmed" / "R1.trimmed.fastq.gz")[0][1] == "ACGT"
 
     no_trim_output = root / "no-trim-regression"
     run([*base, "--out", str(no_trim_output)])

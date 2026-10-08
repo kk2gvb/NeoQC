@@ -1,5 +1,5 @@
 #include "fastq_reader.h"
-#include "trimming/adapter_fasta.h"
+#include "adapter_config.h"
 #include "trimming/adapter_trimmer.h"
 #include "trimming/pe_overlap.h"
 #include "trimming/pe_processor.h"
@@ -240,74 +240,79 @@ bool testUmi() {
                  "PE UMI is extracted from R1 only");
 }
 
-bool testAdapterFasta() {
+bool testAdapterConfig() {
     const std::filesystem::path path =
-        std::filesystem::temp_directory_path() / "neoqc-adapters-test.fa";
+        std::filesystem::temp_directory_path() / "neoqc-adapters-test.tsv";
     {
         std::ofstream output(path);
-        output << ">first\nAGAT\nCGGA\n>second\nACGTACGT\n";
+        output << "first\tAGATCGGA\n";
     }
-    const auto adapters = loadAdapterFasta(path);
+    const auto oneAdapter = loadAdapterConfig(path.string());
+    if (!check(oneAdapter.size() == 1
+               && oneAdapter[0].name == "first"
+               && oneAdapter[0].sequence == "AGATCGGA",
+               "single adapter TSV config")) return false;
+
+    {
+        std::ofstream output(path);
+        output << "first\tAGATCGGA\nsecond\tACGTACGT\n";
+    }
+    const auto adapters = loadAdapterConfig(path.string());
     std::filesystem::remove(path);
     if (!check(adapters.size() == 2 && adapters[0].sequence == "AGATCGGA",
-               "multiline adapter FASTA")) return false;
+               "multiple adapter TSV config preserves order")) return false;
+
+    const auto standardAdapters = loadAdapterConfig(
+        std::string(NEOQC_SOURCE_DIR)
+        + "/config/adapters/neoqc-standard-v1.tsv");
+    if (!check(standardAdapters.size() == 7
+               && standardAdapters.front().name == "TruSeq_R1"
+               && standardAdapters.back().name == "TruSeq_R2",
+               "standard NeoQC adapter config")) return false;
 
     TrimConfig config;
     config.enabled = true;
     config.adapter_trimming = true;
-    config.fasta_adapters = adapters;
+    config.adapters = adapters;
     FastqRecord read = record("@A", "TTTTACGTACGT");
     const TrimResult result = AdapterTrimmer(config).trim(read);
     if (!check(read.sequence == "TTTT" && result.adapter_position == 4,
-               "multiple FASTA adapters")) return false;
+               "multiple configured adapters")) return false;
 
     config.adapter_sequence = "CCCCCCCC";
     read = record("@A", "GGGGAGATCGGA");
     if (!check(AdapterTrimmer(config).trim(read).adapter_found
                && read.sequence == "GGGG",
-               "explicit and FASTA adapters form one collection")) return false;
+               "explicit and configured adapters form one collection")) return false;
 
-    bool malformedRejected = false;
-    {
-        std::ofstream output(path);
-        output << "ACGT\n";
-    }
-    try {
-        (void)loadAdapterFasta(path);
-    } catch (const std::runtime_error&) {
-        malformedRejected = true;
-    }
-    std::filesystem::remove(path);
     bool missingRejected = false;
     try {
-        (void)loadAdapterFasta(path);
+        (void)loadAdapterConfig(path.string());
     } catch (const std::runtime_error&) {
         missingRejected = true;
     }
-    bool emptyRejected = false;
-    {
+
+    const auto rejects = [&path](const std::string& contents) {
         std::ofstream output(path);
-    }
-    try {
-        (void)loadAdapterFasta(path);
-    } catch (const std::runtime_error&) {
-        emptyRejected = true;
-    }
-    std::filesystem::remove(path);
-    bool alphabetRejected = false;
-    {
-        std::ofstream output(path);
-        output << ">invalid\nACGTZ\n";
-    }
-    try {
-        (void)loadAdapterFasta(path);
-    } catch (const std::runtime_error&) {
-        alphabetRejected = true;
-    }
-    std::filesystem::remove(path);
-    return check(malformedRejected && missingRejected && emptyRejected
-                 && alphabetRejected,
-                 "malformed, empty, invalid, and missing adapter FASTA rejected");
+        output << contents;
+        output.close();
+        bool rejected = false;
+        try {
+            (void)loadAdapterConfig(path.string());
+        } catch (const std::runtime_error&) {
+            rejected = true;
+        }
+        std::filesystem::remove(path);
+        return rejected;
+    };
+
+    return check(missingRejected
+                 && rejects("")
+                 && rejects("missing-tab ACGT\n")
+                 && rejects("\tACGT\n")
+                 && rejects("empty\t\n")
+                 && rejects("invalid\tACGTZ\n"),
+                 "native adapter config validation rejects invalid TSV inputs");
 }
 
 bool testQualityBoundaries() {
@@ -336,7 +341,7 @@ int main() {
     return testOverlapCoordinatesAndCorrection()
         && testMerge()
         && testUmi()
-        && testAdapterFasta()
+        && testAdapterConfig()
         && testQualityBoundaries()
         ? 0 : 1;
 }

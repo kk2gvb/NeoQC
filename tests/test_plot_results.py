@@ -109,6 +109,38 @@ def png_metadata(path: Path) -> tuple[int, int, int | None]:
 
 
 class PlotResultsTest(unittest.TestCase):
+    def test_nested_trimming_layout_uses_root_run_manifest(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-trimming-plots-") as temporary:
+            root = Path(temporary)
+            input_dir = root / "qc" / "before"
+            output_dir = root / "plots" / "before"
+            write_fixture_set(input_dir, ("R1",))
+            (input_dir / "run_manifest.json").unlink()
+            artifacts = [
+                f"qc/before/{prefix}_R1.tsv"
+                for prefix in FIXTURES
+            ]
+            manifest_path = root / "run_manifest.json"
+            manifest_path.write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "run_id": "trimming-layout",
+                    "reads": ["R1"],
+                    "artifacts": artifacts,
+                }),
+                encoding="utf-8",
+            )
+
+            result = run_plotter(
+                input_dir,
+                output_dir,
+                "--formats", "svg", "--strict",
+                "--run-manifest", str(manifest_path),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((input_dir / "qc_evaluation.json").is_file())
+            self.assertTrue((input_dir / "neoqc_qc_report.html").is_file())
+
     def test_complete_r1_r2_svg_contract(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neo qc plots ") as temporary:
             root = Path(temporary)
