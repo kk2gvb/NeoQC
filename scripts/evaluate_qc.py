@@ -15,6 +15,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("input_dir", type=Path, help="directory containing NeoQC TSV files")
     parser.add_argument("--output", type=Path, help="qc_evaluation.json output path")
     parser.add_argument(
+        "--run-manifest",
+        type=Path,
+        help="run_manifest.json used to validate published input artifacts",
+    )
+    parser.add_argument(
         "--ruleset",
         type=Path,
         default=DEFAULT_RULESET,
@@ -29,7 +34,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"QC evaluation error: input directory does not exist: {args.input_dir}", file=sys.stderr)
         return 2
     try:
-        output = write_evaluation(args.input_dir, args.output, args.ruleset)
+        output = write_evaluation(
+            args.input_dir,
+            args.output,
+            args.ruleset,
+            args.run_manifest,
+        )
     except (OSError, ValueError, QcRuleError) as error:
         print(f"QC evaluation error: {error}", file=sys.stderr)
         return 2

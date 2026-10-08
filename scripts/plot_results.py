@@ -39,6 +39,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         help="versioned QC ruleset JSON (default: fastqc-compatible-v1)",
     )
+    parser.add_argument(
+        "--run-manifest",
+        type=Path,
+        help="run_manifest.json used to validate published input artifacts",
+    )
     return parser.parse_args(argv)
 
 
@@ -79,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         evaluation_path = write_evaluation(
             args.input_dir,
             ruleset_path=args.ruleset or DEFAULT_RULESET,
+            run_manifest_path=args.run_manifest,
         )
     except (ImportError, OSError, ValueError) as error:
         print(f"QC evaluation error: {error}", file=sys.stderr)

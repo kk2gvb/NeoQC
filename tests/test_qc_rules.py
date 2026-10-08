@@ -111,6 +111,44 @@ class QcRulesTest(unittest.TestCase):
 
             self.assertEqual(evaluated_reads, {"R1"})
 
+    def test_nested_qc_directory_uses_root_run_manifest(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-nested-manifest-") as temporary:
+            root = Path(temporary)
+            input_dir = root / "qc" / "before"
+            write_fixture_set(input_dir, ("R1",))
+            (input_dir / "run_manifest.json").unlink()
+
+            artifacts = [
+                f"qc/before/{prefix}_R1.tsv"
+                for prefix in (
+                    "per_cycle", "per_sequence_quality",
+                    "per_base_sequence_content", "per_sequence_gc_content",
+                    "per_base_n_content", "sequence_length_distribution",
+                    "sequence_duplication_levels", "adapter_content",
+                )
+            ]
+            manifest_path = root / "run_manifest.json"
+            manifest_path.write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "run_id": "nested-run",
+                    "reads": ["R1"],
+                    "artifacts": artifacts,
+                }),
+                encoding="utf-8",
+            )
+
+            result = evaluate_directory(
+                input_dir,
+                run_manifest_path=manifest_path,
+            )
+            self.assertEqual(len(result["evaluations"]), 8)
+            self.assertTrue(all(
+                item["reasons"][0]["code"] != "evaluation.source_not_published"
+                for item in result["evaluations"]
+                if item["reasons"]
+            ))
+
     def test_old_mean_only_quality_tsv_is_not_evaluated(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-old-quality-") as temporary:
             input_dir = Path(temporary)

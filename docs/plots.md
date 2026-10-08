@@ -130,6 +130,14 @@ python3 scripts/plot_results.py results/sample01 results/sample01/plots \
 ```
 
 Явный набор правил:
+For a nested trimming QC directory, use the same root manifest explicitly:
+
+```bash
+python3 scripts/evaluate_qc.py results/sample01/qc/after \
+  --run-manifest results/sample01/run_manifest.json
+```
+
+Select an explicit ruleset when plotting:
 
 ```bash
 python3 scripts/plot_results.py results/sample01 results/sample01/plots \
@@ -141,6 +149,21 @@ python3 scripts/plot_results.py results/sample01 results/sample01/plots \
 ```bash
 python3 scripts/evaluate_qc.py results/sample01
 ```
+For a nested trimming view (`qc/before` or `qc/after`), pass the publication
+manifest from the result root so artifact paths are validated in the correct
+namespace:
+
+```bash
+python3 scripts/plot_results.py \
+  results/sample01/qc/before results/sample01/plots/before \
+  --run-manifest results/sample01/run_manifest.json
+```
+
+The report displays technical `PASS`, `WARNING`, `FAIL` and `NOT EVALUATED`
+decisions from the named ruleset. Artifact `generated`, `skipped` and `error`
+states remain separate; a rendering failure is never converted into QC FAIL.
+The data contract, ruleset strategy and aggregation are described in
+[`qc-status-engine.md`](qc-status-engine.md).
 
 Пересборка только HTML-отчёта:
 

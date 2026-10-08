@@ -6,6 +6,7 @@ struct PlotOptions {
     bool generateSvg = true;
     bool generatePng = true;
     bool strict = true;
+    std::string runManifestPath;
 };
 
 struct PlotRunResult {
