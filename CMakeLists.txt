@@ -56,7 +56,6 @@ target_compile_definitions(neoqc PRIVATE
     NEOQC_VERSION="${PROJECT_VERSION}"
     NEOQC_RULESET_SHA256="${NEOQC_RULESET_SHA256}"
     NEOQC_PLOT_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/scripts/plot_results.py"
-    NEOQC_ADAPTER_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/adapters/neoqc-standard-v1.tsv"
 )
 
 add_executable(neoqc_duplication_test
@@ -66,9 +65,6 @@ add_executable(neoqc_duplication_test
     src/adapter_config.cpp
 )
 target_include_directories(neoqc_duplication_test PRIVATE include)
-target_compile_definitions(neoqc_duplication_test PRIVATE
-    NEOQC_ADAPTER_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/adapters/neoqc-standard-v1.tsv"
-)
 
 add_executable(neoqc_trimming_config_test
     tests/trimming/test_trim_config.cpp
