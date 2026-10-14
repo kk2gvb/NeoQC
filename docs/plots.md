@@ -118,8 +118,26 @@ FASTQ, длину префикса, общее и уникальное числ�
 
 ## Отдельный запуск
 
+Обычный QC, где TSV и `run_manifest.json` находятся в одном каталоге:
+
 ```bash
 python3 scripts/plot_results.py results/sample01 results/sample01/plots
+```
+
+Тримминг, где данные находятся в `qc/before` и `qc/after`, запускается той же
+командой от корня результата. Скрипт автоматически построит оба набора в
+`plots/before` и `plots/after` и использует корневой `run_manifest.json`:
+
+```bash
+python3 scripts/plot_results.py results/sample01 results/sample01/plots
+```
+
+Можно перестроить и только один этап тримминга. Путь к корневому манифесту
+будет найден автоматически:
+
+```bash
+python3 scripts/plot_results.py \
+  results/sample01/qc/after results/sample01/plots/after
 ```
 
 Только один формат и строгий код возврата при ошибках построения:
@@ -130,14 +148,6 @@ python3 scripts/plot_results.py results/sample01 results/sample01/plots \
 ```
 
 Явный набор правил:
-For a nested trimming QC directory, use the same root manifest explicitly:
-
-```bash
-python3 scripts/evaluate_qc.py results/sample01/qc/after \
-  --run-manifest results/sample01/run_manifest.json
-```
-
-Select an explicit ruleset when plotting:
 
 ```bash
 python3 scripts/plot_results.py results/sample01 results/sample01/plots \
@@ -149,20 +159,19 @@ python3 scripts/plot_results.py results/sample01 results/sample01/plots \
 ```bash
 python3 scripts/evaluate_qc.py results/sample01
 ```
-For a nested trimming view (`qc/before` or `qc/after`), pass the publication
-manifest from the result root so artifact paths are validated in the correct
-namespace:
+
+Для отдельной оценки вложенного этапа тримминга корневой манифест передаётся
+явно:
 
 ```bash
-python3 scripts/plot_results.py \
-  results/sample01/qc/before results/sample01/plots/before \
+python3 scripts/evaluate_qc.py results/sample01/qc/after \
   --run-manifest results/sample01/run_manifest.json
 ```
 
-The report displays technical `PASS`, `WARNING`, `FAIL` and `NOT EVALUATED`
-decisions from the named ruleset. Artifact `generated`, `skipped` and `error`
-states remain separate; a rendering failure is never converted into QC FAIL.
-The data contract, ruleset strategy and aggregation are described in
+Отчёт показывает технические решения `PASS`, `WARNING`, `FAIL` и
+`NOT EVALUATED` из выбранного набора правил. Состояния артефактов `generated`,
+`skipped` и `error` хранятся отдельно; ошибка отрисовки не превращается в QC
+`FAIL`. Контракт данных, правила и агрегация описаны в
 [`qc-status-engine.md`](qc-status-engine.md).
 
 Пересборка только HTML-отчёта:
