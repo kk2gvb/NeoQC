@@ -348,7 +348,6 @@ NeoQC не является полным NGS-пайплайном.
 Он не выполняет:
 
 ```text
-trimming
 filtering
 alignment
 variant calling
