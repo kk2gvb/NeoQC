@@ -76,6 +76,7 @@ struct RunManifest
     bool paired = false;
     bool plot = false;
     bool skipAdapters = false;
+    std::optional<TrimConfig> trimming;
 
     std::string r1Path;
     std::optional<std::string> r2Path;
@@ -2012,6 +2013,32 @@ void writeRunManifest(
 
     output << "  },\n";
 
+    if (manifest.trimming) {
+        const TrimConfig& trim = *manifest.trimming;
+        output << "  \"trimming\": {\n";
+        output << "    \"enabled\": true,\n";
+        output << "    \"trim_front\": " << trim.trim_front << ",\n";
+        output << "    \"trim_tail\": " << trim.trim_tail << ",\n";
+        output << "    \"cut_front\": " << (trim.cut_front ? "true" : "false") << ",\n";
+        output << "    \"cut_tail\": " << (trim.cut_tail ? "true" : "false") << ",\n";
+        output << "    \"cut_right\": " << (trim.cut_right ? "true" : "false") << ",\n";
+        output << "    \"quality_threshold\": " << trim.quality_threshold << ",\n";
+        output << "    \"window_size\": " << trim.window_size << ",\n";
+        output << "    \"adapter_trimming\": " << (trim.adapter_trimming ? "true" : "false") << ",\n";
+        output << "    \"adapter_count\": " << trim.adapters.size() << ",\n";
+        output << "    \"min_adapter_match\": " << trim.min_adapter_match << ",\n";
+        output << "    \"min_length\": " << trim.min_length << ",\n";
+        output << "    \"trim_poly_g\": " << (trim.trim_poly_g ? "true" : "false") << ",\n";
+        output << "    \"trim_poly_x\": " << (trim.trim_poly_x ? "true" : "false") << ",\n";
+        output << "    \"poly_g_min_length\": " << trim.poly_g_min_length << ",\n";
+        output << "    \"poly_x_min_length\": " << trim.poly_x_min_length << ",\n";
+        output << "    \"overlap_correction\": " << (trim.overlap_correction ? "true" : "false") << ",\n";
+        output << "    \"merge_reads\": " << (trim.merge_reads ? "true" : "false") << ",\n";
+        output << "    \"umi_enabled\": " << (trim.umi_enabled ? "true" : "false") << ",\n";
+        output << "    \"umi_length\": " << trim.umi_length << "\n";
+        output << "  },\n";
+    }
+
     output << "  \"reads\": [";
 
     output << "\"R1\"";
@@ -2314,6 +2341,9 @@ AnalysisResult runSampleTransaction(
             .paired = paired,
             .plot = plot,
             .skipAdapters = skipAdapters,
+            .trimming = trimConfig != nullptr && trimConfig->enabled
+                ? std::optional<TrimConfig>(*trimConfig)
+                : std::nullopt,
             .r1Path = r1,
             .r2Path = paired ? std::optional<std::string>(r2) : std::nullopt,
             .artifacts = {},
@@ -2328,12 +2358,8 @@ AnalysisResult runSampleTransaction(
                 (stagingDir / "run_manifest.json").string();
             if (trimConfig != nullptr) {
                 PlotRunner::runAll(
-                    (stagingDir / "qc" / "before").string(),
-                    (stagingDir / "plots" / "before").string(),
-                    options);
-                PlotRunner::runAll(
-                    (stagingDir / "qc" / "after").string(),
-                    (stagingDir / "plots" / "after").string(),
+                    stagingDir.string(),
+                    (stagingDir / "plots").string(),
                     options);
             } else {
                 PlotRunner::runAll(
@@ -2531,6 +2557,13 @@ int main(int argc, char* argv[]) {
         ? &args.trimConfig
         : nullptr;
 
+    // Do this before opening FASTQ files: otherwise a missing plotting
+    // dependency would only be discovered after a long analysis run.
+    const bool willProcessData = args.samples.empty() || !args.outDir.empty();
+    if (args.plot && willProcessData && !PlotRunner::checkDependencies()) {
+        return 2;
+    }
+
     if (!args.samples.empty()) {
         try {
             const auto entries = loadAndValidateSampleSheet(args.samples);
@@ -2644,7 +2677,6 @@ int main(int argc, char* argv[]) {
             runId);
 
         std::cout << "Run ID    : " << runId << "\n";
-        std::cout << "Staging   : " << stagingDir << "\n";
 
         AnalysisResult analysis;
         if (isPaired)
@@ -2682,6 +2714,9 @@ int main(int argc, char* argv[]) {
             .paired = isPaired,
             .plot = args.plot,
             .skipAdapters = args.skipAdapters,
+            .trimming = activeTrimConfig != nullptr
+                ? std::optional<TrimConfig>(*activeTrimConfig)
+                : std::nullopt,
             .r1Path = args.r1,
             .r2Path = args.r2.empty()
                 ? std::nullopt
@@ -2726,12 +2761,8 @@ int main(int argc, char* argv[]) {
                 (stagingDir / "run_manifest.json").string();
             if (activeTrimConfig != nullptr) {
                 PlotRunner::runAll(
-                    (stagingDir / "qc" / "before").string(),
-                    (stagingDir / "plots" / "before").string(),
-                    plotOptions);
-                PlotRunner::runAll(
-                    (stagingDir / "qc" / "after").string(),
-                    (stagingDir / "plots" / "after").string(),
+                    stagingDir.string(),
+                    (stagingDir / "plots").string(),
                     plotOptions);
             } else {
                 PlotRunner::runAll(

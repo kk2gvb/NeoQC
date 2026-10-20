@@ -28,12 +28,41 @@ std::string shellQuote(const std::string& value) {
 
 }  // namespace
 
+bool PlotRunner::checkDependencies() {
+    // Keep this command in sync with the interpreter used in runAll().
+    // Redirecting its traceback lets us show one concise, actionable message.
+    const int returnCode = std::system(
+        "python3 -c \"import matplotlib\" >/dev/null 2>&1");
+    if (returnCode == 0) {
+        return true;
+    }
+
+    const fs::path scriptPath = NEOQC_PLOT_SCRIPT;
+    const fs::path projectDir = scriptPath.parent_path().parent_path();
+    const fs::path virtualEnv = projectDir / "venv";
+    const fs::path requirements = projectDir / "requirements.txt";
+
+    std::cerr
+        << "Error: --plot requires Python 3 with the matplotlib package.\n"
+        << "Activate the project virtual environment, then install dependencies:\n"
+        << "  source " << (virtualEnv / "bin" / "activate") << "\n"
+        << "  python3 -m pip install -r " << requirements << "\n"
+        << "Run NeoQC again after activation.\n";
+    return false;
+}
+
 PlotRunResult PlotRunner::runAll(const std::string& resultDir,
                                  const std::string& plotDir,
                                  const PlotOptions& options) {
     PlotRunResult result;
-    result.manifestPath = (fs::path(plotDir) / "plots_manifest.json").string();
-    result.reportPath = (fs::path(resultDir) / "neoqc_qc_report.html").string();
+    const fs::path resultPath(resultDir);
+    const bool trimming = fs::is_directory(resultPath / "qc" / "before")
+        && fs::is_directory(resultPath / "qc" / "after");
+    result.manifestPath = (trimming
+        ? fs::path(plotDir) / "before" / "plots_manifest.json"
+        : fs::path(plotDir) / "plots_manifest.json").string();
+    result.reportPath = (resultPath /
+        (trimming ? "neoqc_trimming_report.html" : "neoqc_qc_report.html")).string();
 
     std::error_code error;
     fs::create_directories(plotDir, error);
@@ -48,7 +77,7 @@ PlotRunResult PlotRunner::runAll(const std::string& resultDir,
         std::cerr << "[warning] Plot script not found: " << scriptPath << "\n";
         return result;
     }
-    if (!fs::is_directory(resultDir)) {
+    if (!fs::is_directory(resultPath)) {
         std::cerr << "[warning] NeoQC result directory not found: " << resultDir << "\n";
         return result;
     }

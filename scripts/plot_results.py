@@ -119,8 +119,6 @@ def _plot_one(
         print(f"plot error: plotting dependency unavailable: {error}", file=sys.stderr)
         return 2
 
-    print(f"NeoQC plot input: {input_dir}")
-
     try:
         manifest = generate_plots(
             input_dir,
@@ -139,11 +137,10 @@ def _plot_one(
         f"skipped={summary['skipped']}, "
         f"errors={summary['errors']}"
     )
-    print(f"Manifest: {output_dir / 'plots_manifest.json'}")
     try:
         from qc_rules import DEFAULT_RULESET, write_evaluation
 
-        evaluation_path = write_evaluation(
+        write_evaluation(
             input_dir,
             ruleset_path=args.ruleset or DEFAULT_RULESET,
             run_manifest_path=run_manifest_path,
@@ -151,16 +148,16 @@ def _plot_one(
     except (ImportError, OSError, ValueError) as error:
         print(f"QC evaluation error: {error}", file=sys.stderr)
         return 2
-    print(f"QC evaluation: {evaluation_path}")
+    print("QC evaluation: generated")
     if not args.no_html_report:
         try:
             from qc_report import generate_qc_report
 
-            report_path = generate_qc_report(input_dir, output_dir)
+            generate_qc_report(input_dir, output_dir)
         except (ImportError, OSError, ValueError) as error:
             print(f"report error: {error}", file=sys.stderr)
             return 2
-        print(f"QC report: {report_path}")
+        print("QC report: generated")
     if args.strict and summary["errors"]:
         return 1
     return 0
@@ -183,6 +180,15 @@ def main(argv: list[str] | None = None) -> int:
             return_code,
             _plot_one(args, input_dir, output_dir, run_manifest_path),
         )
+    if len(jobs) == 2 and not args.no_html_report and return_code < 2:
+        try:
+            from trimming_report import generate_trimming_report
+
+            generate_trimming_report(args.input_dir)
+        except (ImportError, OSError, ValueError) as error:
+            print(f"trimming report error: {error}", file=sys.stderr)
+            return 2
+        print("Trimming report: generated")
     return return_code
 
 

@@ -201,6 +201,11 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(test_qc_report PROPERTIES
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+    add_test(NAME test_trimming_report
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_trimming_report.py)
+    set_tests_properties(test_trimming_report PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
     add_test(NAME test_qc_rules
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_qc_rules.py)
     set_tests_properties(test_qc_rules PROPERTIES

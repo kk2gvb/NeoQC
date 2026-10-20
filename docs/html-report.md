@@ -27,6 +27,16 @@ HTML-отчёт — представление результатов NeoQC дл
 
 Результат — `results/sample01/neoqc_qc_report.html`.
 
+Если запуск включает trimming, результаты располагаются в `qc/before` и
+`qc/after`. После `--trim --plot` NeoQC дополнительно создаёт в корне
+результата `neoqc_trimming_report.html`. Этот автономный отчёт выводит
+сравнительную таблицу основной статистики и пары графиков «до / после» для
+каждого QC-модуля. Его можно пересобрать командой:
+
+```bash
+python3 scripts/generate_trimming_report.py results/sample01
+```
+
 Пересобрать только отчёт из уже готовых TSV, графиков и `qc_evaluation.json`:
 
 ```bash
