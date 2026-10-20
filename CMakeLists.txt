@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(neoqc VERSION 1.1.1 LANGUAGES CXX)
+project(neoqc VERSION 1.2.0 LANGUAGES CXX)
 
 set(NEOQC_RULESET_FILE
     "${CMAKE_SOURCE_DIR}/config/qc_rules/fastqc-compatible-v1.json"
