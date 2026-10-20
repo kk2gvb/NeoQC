@@ -303,6 +303,15 @@ results/sample01/neoqc_qc_report.html
 python3 scripts/generate_qc_report.py results/sample01
 ```
 
+При запуске trimming вместе с `--plot` NeoQC создаёт также
+`neoqc_trimming_report.html`. Это отдельный автономный отчёт, который
+сопоставляет QC до и после trimming для каждого рида и модуля. Его можно
+пересобрать из готового каталога результатов:
+
+```bash
+python3 scripts/generate_trimming_report.py results/sample01
+```
+
 ### Шаг 4. Предварительная обработка
 
 При необходимости выполняется отдельным инструментом trimming/filtering.

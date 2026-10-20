@@ -1,7 +1,7 @@
 FastQC
 data
 info
-build
+build*/
 results
 plots
 Testing

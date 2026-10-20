@@ -230,8 +230,15 @@ def _checks(rule: MetricRule) -> list[dict[str, object]]:
     return result
 
 
-def _manifest_active_reads(input_dir: Path) -> tuple[str, ...]:
-    manifest_path = input_dir / "run_manifest.json"
+def _manifest_path(input_dir: Path, run_manifest_path: Path | None) -> Path:
+    return (run_manifest_path or input_dir / MANIFEST_FILENAME).resolve()
+
+
+def _manifest_active_reads(
+    input_dir: Path,
+    run_manifest_path: Path | None = None,
+) -> tuple[str, ...]:
+    manifest_path = _manifest_path(input_dir, run_manifest_path)
 
     if not manifest_path.is_file():
         raise QcRuleError(
@@ -281,9 +288,12 @@ def _manifest_active_reads(input_dir: Path) -> tuple[str, ...]:
     return tuple(reads)
 
 
-def _manifest_artifacts(input_dir: Path) -> frozenset[str]:
+def _manifest_artifacts(
+    input_dir: Path,
+    run_manifest_path: Path | None = None,
+) -> frozenset[str]:
     """Return validated publication inventory from the current run manifest."""
-    manifest_path = input_dir / MANIFEST_FILENAME
+    manifest_path = _manifest_path(input_dir, run_manifest_path)
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:  # validated above; defensive here
@@ -297,22 +307,36 @@ def _manifest_artifacts(input_dir: Path) -> frozenset[str]:
 def _active_reads(
     input_dir: Path,
     ruleset: Ruleset,
+    run_manifest_path: Path | None = None,
 ) -> tuple[str, ...]:
     del ruleset
-    return _manifest_active_reads(input_dir)
+    return _manifest_active_reads(input_dir, run_manifest_path)
 
 
-def evaluate_directory(input_dir: Path, ruleset_path: Path = DEFAULT_RULESET) -> dict[str, object]:
+def evaluate_directory(
+    input_dir: Path,
+    ruleset_path: Path = DEFAULT_RULESET,
+    run_manifest_path: Path | None = None,
+) -> dict[str, object]:
     input_dir = input_dir.resolve()
+    manifest_path = _manifest_path(input_dir, run_manifest_path)
     ruleset = load_ruleset(ruleset_path.resolve())
-    reads = _active_reads(input_dir, ruleset)
-    artifacts = _manifest_artifacts(input_dir)
-    
+    reads = _active_reads(input_dir, ruleset, manifest_path)
+    artifacts = _manifest_artifacts(input_dir, manifest_path)
+
     evaluations: list[dict[str, object]] = []
     for read in reads:
         for rule in ruleset.rules:
             path = source_path(input_dir, rule.metric_id, read)
-            if path.is_file() and path.name not in artifacts:
+            try:
+                artifact_path = path.resolve().relative_to(
+                    manifest_path.parent
+                ).as_posix()
+            except ValueError as exc:
+                raise QcRuleError(
+                    f"QC input directory is outside the run manifest root: {input_dir}"
+                ) from exc
+            if path.is_file() and artifact_path not in artifacts:
                 evaluations.append(
                     _not_evaluated(
                         rule,
@@ -379,10 +403,11 @@ def write_evaluation(
     input_dir: Path,
     output_path: Path | None = None,
     ruleset_path: Path = DEFAULT_RULESET,
+    run_manifest_path: Path | None = None,
 ) -> Path:
     input_dir = input_dir.resolve()
     destination = (output_path or input_dir / EVALUATION_FILENAME).resolve()
-    result = evaluate_directory(input_dir, ruleset_path)
+    result = evaluate_directory(input_dir, ruleset_path, run_manifest_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: str | None = None
     try:
