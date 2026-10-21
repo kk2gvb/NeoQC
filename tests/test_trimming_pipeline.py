@@ -95,6 +95,28 @@ def test_cli(root: Path) -> None:
         run([*base, "--out", str(output), "--trim", *options])
         assert (output / "trimmed" / "R1.trimmed.fastq.gz").is_file()
 
+    full_output = root / "cli-full-trim"
+    run([*base, "--out", str(full_output), "--full-trim"])
+    full_manifest = json.loads((full_output / "run_manifest.json").read_text())
+    full_config = full_manifest["trimming"]
+    assert full_config["enabled"]
+    assert full_config["cut_front"] and full_config["cut_tail"] and full_config["cut_right"]
+    assert full_config["quality_threshold"] == 20 and full_config["window_size"] == 4
+    assert full_config["min_length"] == 50
+    assert full_config["trim_poly_g"] and full_config["trim_poly_x"]
+    assert full_config["adapter_trimming"] and full_config["adapter_count"] > 0
+    assert not full_config["overlap_correction"] and not full_config["merge_reads"]
+    assert not full_config["umi_enabled"]
+
+    full_override_output = root / "cli-full-trim-override"
+    run([
+        *base, "--out", str(full_override_output), "--full-trim",
+        "--quality-threshold", "25", "--min-length", "1",
+    ])
+    full_override = json.loads((full_override_output / "run_manifest.json").read_text())["trimming"]
+    assert full_override["quality_threshold"] == 25
+    assert full_override["min_length"] == 1
+
     invalid = [
         (["--trim-front", "1"], "require --trim"),
         (["--trim", "--trim-front", "invalid"], "non-negative integer"),

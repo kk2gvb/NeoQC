@@ -32,6 +32,10 @@
 #error "NEOQC_VERSION must be supplied by the build system"
 #endif
 
+#ifndef NEOQC_ADAPTER_CONFIG
+#define NEOQC_ADAPTER_CONFIG "config/adapters/neoqc-standard-v1.tsv"
+#endif
+
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
 
@@ -84,6 +88,32 @@ struct RunManifest
     std::vector<std::string> artifacts;
 };
 
+void applyFullTrimProfile(Args& args) {
+    // This profile covers operations that are applicable without knowing
+    // library-specific metadata.  UMI extraction needs a known UMI length,
+    // while overlap correction and merging are paired-end-only operations,
+    // so users enable those explicitly when appropriate.
+    args.trimmingOptionSpecified = true;
+    args.trimConfig.enabled = true;
+    args.trimConfig.cut_front = true;
+    args.trimConfig.cut_tail = true;
+    args.trimConfig.cut_right = true;
+    args.trimConfig.quality_threshold = 20;
+    args.trimConfig.window_size = 4;
+    args.trimConfig.min_length = 50;
+    args.trimConfig.trim_poly_g = true;
+    args.trimConfig.trim_poly_x = true;
+    args.trimConfig.poly_g_min_length = 10;
+    args.trimConfig.poly_x_min_length = 10;
+
+    // Preserve a user-supplied adapter configuration regardless of argument
+    // order; otherwise use NeoQC's standard adapter list.
+    if (!args.adapterConfigSpecified) {
+        args.adapterConfigSpecified = true;
+        args.adapterConfig = NEOQC_ADAPTER_CONFIG;
+    }
+}
+
 Args parseArgs(int argc, char* argv[]) {
     Args args;
     for (int i = 1; i < argc; ++i) {
@@ -118,6 +148,7 @@ Args parseArgs(int argc, char* argv[]) {
         else if (arg == "--plot")      args.plot     = true;
         else if (arg == "--skip-adapters") args.skipAdapters = true;
         else if (arg == "--trim")      args.trimConfig.enabled = true;
+        else if (arg == "--full-trim") applyFullTrimProfile(args);
         else if (arg == "--trim-front") args.trimConfig.trim_front = parseSize(arg);
         else if (arg == "--trim-tail")  args.trimConfig.trim_tail = parseSize(arg);
         else if (arg == "--cut-front") {
@@ -259,11 +290,11 @@ void printUsage(const char* progName) {
         "NeoQC — FASTQ quality analysis\n\n"
         "Usage:\n"
         "  single-end:\n"
-        "    " << progName << " --r1 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters] [--trim]\n\n"
+        "    " << progName << " --r1 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters] [--trim | --full-trim]\n\n"
         "  paired-end:\n"
-        "    " << progName << " --r1 <file> --r2 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters] [--trim]\n\n"
+        "    " << progName << " --r1 <file> --r2 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters] [--trim | --full-trim]\n\n"
         "  validate sample sheet:\n"
-        "    " << progName << " --samples <samples.csv> [--out <dir>] [--plot] [--skip-adapters] [--trim]\n\n"
+        "    " << progName << " --samples <samples.csv> [--out <dir>] [--plot] [--skip-adapters] [--trim | --full-trim]\n\n"
         "Options:\n"
         "  --r1 <file>       Path to R1 FASTQ (plain or .gz)\n"
         "  --r2 <file>       Path to R2 FASTQ (optional, for paired-end)\n"
@@ -272,8 +303,9 @@ void printUsage(const char* progName) {
         "  --samples <file>  Validate a CSV table; combine with --out to run batch QC\n"
         "  --plot            Build plots via plot_results.py (optional)\n"
         "  --skip-adapters   Disable QC adapter search (for performance measurements)\n\n"
-        "Trimming options (require --trim):\n"
+        "Trimming options (require --trim or --full-trim):\n"
         "  --trim                 Enable the trimming pipeline, FASTQ output, and before/after QC\n"
+        "  --full-trim            Standard profile: adapters, quality trimming, polyG/polyX, min length 50\n"
         "  --trim-front N         Remove N bases from 5' end (default: 0)\n"
         "  --trim-tail N          Remove N bases from 3' end (default: 0)\n"
         "  --cut-front            Remove low-quality bases from 5' end\n"
