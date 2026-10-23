@@ -84,6 +84,7 @@ def make_result(root: Path) -> None:
             ),
             encoding="utf-8",
         )
+        (result_dir / "neoqc_qc_report.html").write_text("<!doctype html>", encoding="utf-8")
     (root / "trimming_report.json").write_text(
         json.dumps(
             {
@@ -178,6 +179,8 @@ class TrimmingReportTest(unittest.TestCase):
             self.assertIn('id="trim-accounting"', document)
             self.assertIn('id="trim-parameters"', document)
             self.assertIn('id="trim-compare"', document)
+            self.assertIn('href="qc/before/neoqc_qc_report.html"', document)
+            self.assertIn('href="qc/after/neoqc_qc_report.html"', document)
             self.assertIn("10,000", document)
             self.assertIn("trimmed/R1.trimmed.fastq.gz", document)
             self.assertIn('class="delta neutral">-20</span>', document)

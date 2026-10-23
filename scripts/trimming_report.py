@@ -424,6 +424,7 @@ _TRIMMING_CSS = """
 .compare-lane{grid-column:span 2}.compare-tracks{grid-template-columns:minmax(0,1fr)}
 .compare-lane .metrics table{width:100%}.compare-lane .metrics th,.compare-lane .metrics td{padding:5px 0}
 .params .output-path{font:11px var(--mono);overflow-wrap:anywhere}
+.stage-report-links{padding:12px 10px 8px;border-bottom:1px solid var(--line)}.stage-report-links small{display:block;margin:0 6px 6px;font:600 10px var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}.stage-report-links a{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 6px;border-radius:3px;color:var(--ink);font:12px var(--sans);text-decoration:none}.stage-report-links a:hover{background:var(--row-hover);color:var(--brand)}.stage-report-links a::after{content:"↗";font:13px var(--mono);color:var(--muted)}
 @media(max-width:700px){.kpis{grid-template-columns:minmax(0,1fr)}.qcbox .top{display:block}.overall{margin-top:8px}.stage-charts{grid-template-columns:minmax(0,1fr)}.stage-charts>div+div{border-left:0;border-top:1px solid var(--line);padding-left:0;padding-top:12px}.compare-lane{grid-column:auto}}
 """
 
@@ -436,6 +437,7 @@ def render_trimming_report(
     trimming_stats: Mapping[str, object] | None = None,
     run_manifest: Mapping[str, object] | None = None,
     output_fastqs: Mapping[str, Path] | None = None,
+    stage_report_links: Mapping[str, Path] | None = None,
 ) -> str:
     if before.sample_id != after.sample_id:
         raise qc.QcReportError("before and after reports have different sample identifiers")
@@ -483,8 +485,21 @@ def render_trimming_report(
         '<button type="button" data-lang-btn="en" aria-pressed="true">EN</button>'
         '<button type="button" data-lang-btn="ru" aria-pressed="false">RU</button></div></div></div>'
     )
+    report_links = "".join(
+        f'<a href="{escape(path.as_posix())}">{qc._t(label)}</a>'
+        for stage, label in (
+            ("before", "QC before trimming"),
+            ("after", "QC after trimming"),
+        )
+        if (path := (stage_report_links or {}).get(stage)) is not None
+    )
+    stage_reports = (
+        '<div class="stage-report-links" aria-label="QC reports">'
+        f'<small>{qc._t("QC reports")}</small>{report_links}</div>'
+        if report_links else ""
+    )
     rail = (
-        f'<aside class="rail">{prefs}<button class="rail-h" type="button" aria-expanded="false" aria-controls="tracklist">'
+        f'<aside class="rail">{prefs}{stage_reports}<button class="rail-h" type="button" aria-expanded="false" aria-controls="tracklist">'
         f'<span>{qc._t("Report sections")}</span><em>{reads_head}</em></button><nav class="tracklist" id="tracklist">'
         f'{"".join(tracks)}</nav><div class="legend">{legend}</div></aside>'
     )
@@ -541,11 +556,20 @@ def generate_trimming_report(result_dir: Path, output_path: Path | None = None) 
         )
         if path.is_file()
     }
+    stage_report_links = {
+        stage: report_path.relative_to(result_dir)
+        for stage, report_path in (
+            ("before", before_dir / qc.REPORT_FILENAME),
+            ("after", after_dir / qc.REPORT_FILENAME),
+        )
+        if report_path.is_file()
+    }
     output_path = (output_path or result_dir / REPORT_FILENAME).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         render_trimming_report(
-            before, after, before_plots, after_plots, trimming_stats, run_manifest, output_fastqs
+            before, after, before_plots, after_plots, trimming_stats, run_manifest, output_fastqs,
+            stage_report_links,
         ),
         encoding="utf-8",
     )

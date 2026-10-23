@@ -189,6 +189,19 @@ def make_report(temporary: str) -> Path:
 
 
 class QcReportTest(unittest.TestCase):
+    def test_stage_report_links_to_combined_trimming_report(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-trimming-stage-report-") as temporary:
+            root = Path(temporary)
+            result_dir = root / "qc" / "before"
+            result_dir.mkdir(parents=True)
+            make_report(str(result_dir))
+            (root / "trimming_report.json").write_text("{}", encoding="utf-8")
+
+            document = generate_qc_report(result_dir).read_text(encoding="utf-8")
+
+            self.assertIn('href="../../neoqc_trimming_report.html"', document)
+            self.assertIn("Trimming report", document)
+
     def test_self_contained_single_read_report(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-report-") as temporary:
             result_dir = Path(temporary) / "sample result"

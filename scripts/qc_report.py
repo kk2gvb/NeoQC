@@ -884,6 +884,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.5 var(--sans)}
 .pref small{display:block;margin-bottom:5px;font:600 10px/1 var(--mono);color:var(--faint);text-transform:uppercase;letter-spacing:.08em}
 .pref .seg{height:28px}.pref .seg button{flex:1;justify-content:center;padding:0 6px;font:600 11.5px var(--mono)}
 .pref svg{display:block}
+.trimming-report-link{padding:0 10px 8px;border-bottom:1px solid var(--line)}.trimming-report-link a{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 6px;border-radius:3px;color:var(--ink);font:12px var(--sans);text-decoration:none}.trimming-report-link a:hover{background:var(--hover);color:var(--brand)}.trimming-report-link a::after{content:"↗";font:13px var(--mono);color:var(--muted)}
 .rail-h{width:calc(100% - 32px);border:0;background:none;padding:0;cursor:default;margin:8px 16px 6px;font:600 10px/1 var(--mono);color:var(--faint);text-transform:uppercase;letter-spacing:.08em;display:flex;justify-content:space-between}
 .rail-h em{font-style:normal;display:flex;gap:4px}.rail-h em b{width:18px;text-align:center;font-weight:600}
 .track{display:flex;align-items:center;gap:8px;padding:6px 16px;text-decoration:none;color:var(--ink);border-left:3px solid transparent}
@@ -1085,7 +1086,11 @@ reveal(location.hash);
 """.strip()
 
 
-def render_qc_report(model: QcReportModel, plot_dir: Path) -> str:
+def render_qc_report(
+    model: QcReportModel,
+    plot_dir: Path,
+    trimming_report_link: Path | None = None,
+) -> str:
     attention = [module for module in model.modules if _needs_attention(module.qc_status)]
     passed = [module for module in model.modules if not _needs_attention(module.qc_status)]
     k_overview, k_basic, k_footer = _keys(0, 0), _keys(1, 1), _keys(99999, 99999)
@@ -1129,8 +1134,13 @@ def render_qc_report(model: QcReportModel, plot_dir: Path) -> str:
         '<button type="button" data-lang-btn="en" aria-pressed="true" lang="en">EN</button>'
         '<button type="button" data-lang-btn="ru" aria-pressed="false" lang="ru">RU</button></div></div></div>'
     )
+    trimming_link = (
+        f'<div class="trimming-report-link"><a href="{escape(trimming_report_link.as_posix())}">'
+        f'{_t("Trimming report")}</a></div>'
+        if trimming_report_link is not None else ""
+    )
     rail = (
-        f'<aside class="rail">{prefs}<button class="rail-h" type="button" aria-expanded="false" aria-controls="tracklist">'
+        f'<aside class="rail">{prefs}{trimming_link}<button class="rail-h" type="button" aria-expanded="false" aria-controls="tracklist">'
         f'<span>{_t("Report sections")}</span><em>{reads_head}</em></button>'
         f'<nav class="tracklist" id="tracklist" aria-label="Report sections">{"".join(tracks)}</nav><div class="legend">{legend}</div></aside>'
     )
@@ -1180,7 +1190,16 @@ def generate_qc_report(
     plot_dir = (plot_dir or result_dir / "plots").resolve()
     output_path = (output_path or result_dir / REPORT_FILENAME).resolve()
     model = load_report_model(result_dir, plot_dir)
-    document = render_qc_report(model, plot_dir)
+    trimming_report_link = None
+    if (
+        result_dir.name in {"before", "after"}
+        and result_dir.parent.name == "qc"
+        and (result_dir.parent.parent / "trimming_report.json").is_file()
+    ):
+        # Individual stage reports are located in qc/<stage>/; the combined
+        # before/after report is published in the trimming result root.
+        trimming_report_link = Path("../../") / "neoqc_trimming_report.html"
+    document = render_qc_report(model, plot_dir, trimming_report_link)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(document, encoding="utf-8")
     return output_path
