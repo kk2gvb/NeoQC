@@ -6,7 +6,7 @@ results
 plots
 Testing
 ctest.log
-benchmarks
+benchmark*
 TODO.md
 __pycache__/
 *.py[cod]
