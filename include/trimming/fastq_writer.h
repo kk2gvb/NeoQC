@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <string>
 
 #include <zlib.h>
 
@@ -24,4 +25,5 @@ private:
 
     std::filesystem::path path_;
     gzFile file_ = nullptr;
+    std::string buffer_;
 };

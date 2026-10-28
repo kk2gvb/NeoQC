@@ -3,6 +3,7 @@
 #include "trimming/pe_overlap.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <optional>
 #include <stdexcept>
@@ -16,6 +17,22 @@ struct AdapterMatch {
     std::size_t length = 0;
     std::size_t order = 0;
 };
+
+const std::array<char, 256>& normalizedBases() {
+    static const std::array<char, 256> bases = [] {
+        std::array<char, 256> result{};
+        for (std::size_t index = 0; index < result.size(); ++index) {
+            result[index] = static_cast<char>(std::toupper(
+                static_cast<unsigned char>(index)));
+        }
+        return result;
+    }();
+    return bases;
+}
+
+char normalizedBase(char base) noexcept {
+    return normalizedBases()[static_cast<unsigned char>(base)];
+}
 
 void requireSynchronizedRead(const FastqRecord& record) {
     if (record.sequence.size() != record.quality.size()) {
@@ -39,8 +56,7 @@ std::optional<std::size_t> adapterMismatches(const FastqRecord& record,
     const std::size_t allowedMismatches = overlapLength / 8;
     std::size_t mismatches = 0;
     for (std::size_t index = 0; index < overlapLength; ++index) {
-        if (PeOverlapAnalyzer::normalizedBase(record.sequence[position + index])
-            != PeOverlapAnalyzer::normalizedBase(adapter[index])) {
+        if (normalizedBase(record.sequence[position + index]) != adapter[index]) {
             ++mismatches;
             if (mismatches > allowedMismatches) {
                 return std::nullopt;
@@ -50,18 +66,46 @@ std::optional<std::size_t> adapterMismatches(const FastqRecord& record,
     return mismatches;
 }
 
-std::optional<AdapterMatch> findAdapterMatch(const FastqRecord& record,
-                                             const TrimConfig& config) {
-    if (record.sequence.size() < config.min_adapter_match) {
-        return std::nullopt;
+// A matching alignment with at most N mismatches has an exact block when it
+// is split into N + 1 non-empty blocks.  This rejects many negative
+// alignments before the full comparison, but cannot reject a match accepted by
+// adapterMismatches().
+bool hasExactPigeonholeBlock(const FastqRecord& record,
+                             std::size_t position,
+                             const std::string& adapter,
+                             std::size_t overlapLength) {
+    const std::size_t allowedMismatches = overlapLength / 8;
+    if (allowedMismatches == 0) {
+        return true;
     }
 
-    std::vector<std::string> adapters;
-    if (!config.adapter_sequence.empty()) {
-        adapters.push_back(config.adapter_sequence);
+    const std::size_t blockCount = allowedMismatches + 1;
+    const std::size_t baseBlockLength = overlapLength / blockCount;
+    const std::size_t largerBlockCount = overlapLength % blockCount;
+    std::size_t offset = 0;
+    for (std::size_t block = 0; block < blockCount; ++block) {
+        const std::size_t blockLength = baseBlockLength
+            + (block < largerBlockCount ? 1 : 0);
+        std::size_t index = 0;
+        for (; index < blockLength; ++index) {
+            if (normalizedBase(record.sequence[position + offset + index])
+                != adapter[offset + index]) {
+                break;
+            }
+        }
+        if (index == blockLength) {
+            return true;
+        }
+        offset += blockLength;
     }
-    for (const AdapterConfigEntry& adapter : config.adapters) {
-        adapters.push_back(adapter.sequence);
+    return false;
+}
+
+std::optional<AdapterMatch> findAdapterMatch(const FastqRecord& record,
+                                             const TrimConfig& config,
+                                             const std::vector<std::string>& adapters) {
+    if (record.sequence.size() < config.min_adapter_match) {
+        return std::nullopt;
     }
 
     std::optional<AdapterMatch> best;
@@ -75,6 +119,9 @@ std::optional<AdapterMatch> findAdapterMatch(const FastqRecord& record,
              ++position) {
             const std::size_t length = std::min(
                 adapter.size(), record.sequence.size() - position);
+            if (!hasExactPigeonholeBlock(record, position, adapter, length)) {
+                continue;
+            }
             const auto mismatches = adapterMismatches(
                 record, position, adapter, length);
             if (!mismatches.has_value()) {
@@ -124,6 +171,22 @@ void applyAdapterTrim(FastqRecord& record,
 AdapterTrimmer::AdapterTrimmer(TrimConfig config)
     : config_(std::move(config))
 {
+    adapters_.reserve(config_.adapters.size()
+        + (config_.adapter_sequence.empty() ? 0 : 1));
+    const auto prepare = [this](const std::string& sequence) {
+        std::string adapter;
+        adapter.reserve(sequence.size());
+        for (const char base : sequence) {
+            adapter.push_back(normalizedBase(base));
+        }
+        adapters_.push_back(std::move(adapter));
+    };
+    if (!config_.adapter_sequence.empty()) {
+        prepare(config_.adapter_sequence);
+    }
+    for (const AdapterConfigEntry& adapter : config_.adapters) {
+        prepare(adapter.sequence);
+    }
 }
 
 const TrimConfig& AdapterTrimmer::getConfig() const noexcept {
@@ -150,7 +213,8 @@ void AdapterTrimmer::trim(FastqRecord& record, TrimResult& result) const {
         throw std::invalid_argument("Adapter trimming requires min_adapter_match greater than zero");
     }
 
-    const std::optional<AdapterMatch> match = findAdapterMatch(record, config_);
+    const std::optional<AdapterMatch> match = findAdapterMatch(
+        record, config_, adapters_);
     if (match.has_value()) {
         applyAdapterTrim(record, match->position, result);
     }

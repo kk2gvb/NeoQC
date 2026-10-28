@@ -139,6 +139,8 @@ public:
 
     // Поиск адаптеров в записи
     void analyzeAdapters(const FastqRecord& record);
+    // Exhaustive string-search implementation retained for differential tests.
+    void analyzeAdaptersReference(const FastqRecord& record);
 
     // Получить итоговую статистику
     QualityStats getStats() const;
@@ -171,6 +173,9 @@ public:
     // Объединение статистики с другим анализатором (для параллельной обработки)
     // -----------------------------------------------------------------------
     void merge(const QualityAnalyzer& other);
+    void reserveDuplicationEntries(std::size_t count);
+    void mergeDuplicationCounts(QualityAnalyzer& other);
+    std::size_t getDuplicationEntryCount() const noexcept;
 
     std::vector<DuplicationEntry> getDuplicationEntries() const;
     
@@ -220,5 +225,10 @@ private:
 
     std::vector<uint64_t> perSequenceQualityDistribution;
     std::vector<uint64_t> perSequenceQualityDistributionTruncate;
+
+    // Exact 12-mer lookup for Adapter Content. Configurations outside this
+    // compact representation remain on the reference string-search path.
+    std::unordered_map<uint32_t, uint64_t> adapterKmerMasks;
+    std::vector<std::size_t> adapterFallbackIndices;
 
 };

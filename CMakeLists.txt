@@ -144,6 +144,13 @@ add_executable(neoqc_fastq_writer_test
 target_include_directories(neoqc_fastq_writer_test PRIVATE include)
 target_link_libraries(neoqc_fastq_writer_test PRIVATE ZLIB::ZLIB)
 
+add_executable(neoqc_fastq_reader_test
+    tests/test_fastq_reader.cpp
+    src/fastq_reader.cpp
+)
+target_include_directories(neoqc_fastq_reader_test PRIVATE include)
+target_link_libraries(neoqc_fastq_reader_test PRIVATE ZLIB::ZLIB)
+
 add_executable(neoqc_advanced_trimming_test
     tests/trimming/test_advanced_trimming.cpp
     src/adapter_config.cpp
@@ -185,6 +192,9 @@ add_test(NAME test_poly_tail_trimmer
 
 add_test(NAME test_fastq_writer
          COMMAND neoqc_fastq_writer_test)
+
+add_test(NAME test_fastq_reader
+         COMMAND neoqc_fastq_reader_test)
 
 add_test(NAME test_advanced_trimming
          COMMAND neoqc_advanced_trimming_test)

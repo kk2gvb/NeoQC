@@ -28,6 +28,10 @@ public:
     std::optional<PeOverlap> find(const FastqRecord& r1,
                                   const FastqRecord& r2) const;
 
+    // Exhaustive implementation retained as a correctness oracle for tests.
+    std::optional<PeOverlap> findReference(const FastqRecord& r1,
+                                           const FastqRecord& r2) const;
+
     static char normalizedBase(char base) noexcept;
     static char complement(char base) noexcept;
     static std::string reverseComplement(const std::string& sequence);

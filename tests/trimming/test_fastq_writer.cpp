@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <iostream>
+#include <string>
 
 namespace {
 
@@ -46,9 +47,72 @@ int main() {
         && actual2.header == expected2.header
         && actual2.sequence == expected2.sequence
         && actual2.quality == expected2.quality;
-    std::filesystem::remove(path);
     if (!valid) {
         std::cerr << "gzip FASTQ round-trip failed\n";
+        return 1;
+    }
+
+    const std::filesystem::path bufferedPath =
+        std::filesystem::temp_directory_path() / "neoqc_fastq_writer_buffered_test.fastq.gz";
+    {
+        FastqWriter writer(bufferedPath);
+        for (std::size_t index = 0; index < 5003; ++index) {
+            const std::string id = std::to_string(index);
+            writer.write(makeRecord("@ORDER_" + id, "ACGTACGT", "IIIIIIII"));
+        }
+        writer.close();
+    }
+    FastqReader bufferedReader(bufferedPath.string());
+    for (std::size_t index = 0; index < 5003; ++index) {
+        FastqRecord actual;
+        const std::string id = std::to_string(index);
+        if (!bufferedReader.readNext(actual)
+            || actual.header != "@ORDER_" + id
+            || actual.sequence != "ACGTACGT"
+            || actual.separator != "+ original metadata"
+            || actual.quality != "IIIIIIII") {
+            std::cerr << "buffered gzip FASTQ order or formatting failed\n";
+            return 1;
+        }
+    }
+    FastqRecord bufferedEnd;
+    if (bufferedReader.readNext(bufferedEnd)) {
+        std::cerr << "buffered gzip FASTQ had unexpected extra records\n";
+        return 1;
+    }
+
+    const std::filesystem::path emptyPath =
+        std::filesystem::temp_directory_path() / "neoqc_fastq_writer_empty_test.fastq.gz";
+    {
+        FastqWriter writer(emptyPath);
+        writer.close();
+    }
+    gzFile empty = gzopen(emptyPath.string().c_str(), "rb");
+    char byte = 0;
+    const bool emptyOutput = empty != nullptr && gzread(empty, &byte, 1) == 0;
+    if (empty != nullptr) {
+        gzclose(empty);
+    }
+
+    const std::filesystem::path fullPath("/dev/full");
+    bool propagatedWriteError = false;
+    if (std::filesystem::exists(fullPath)) {
+        try {
+            FastqWriter writer(fullPath);
+            writer.write(expected1);
+            writer.close();
+        } catch (const std::runtime_error&) {
+            propagatedWriteError = true;
+        }
+    } else {
+        propagatedWriteError = true;
+    }
+
+    std::filesystem::remove(path);
+    std::filesystem::remove(bufferedPath);
+    std::filesystem::remove(emptyPath);
+    if (!emptyOutput || !propagatedWriteError) {
+        std::cerr << "buffered gzip FASTQ empty output or error propagation failed\n";
         return 1;
     }
     return 0;

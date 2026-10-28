@@ -1,6 +1,5 @@
 #include "../include/fastq_reader.h"
 #include <stdexcept>
-#include <algorithm>
 #include <sstream>
 #include <cstring>
 
@@ -17,54 +16,53 @@ FastqReader::~FastqReader() {
     }
 }
 
-void FastqReader::trimNewlines(std::string& s) {
-    while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) {
-        s.pop_back();
-    }
-}
-
 bool FastqReader::readLine(std::string& line) {
     line.clear();
-    const int BUFFER_SIZE = 8192;
-    char buffer[BUFFER_SIZE];
 
     while (true) {
-        if (gzgets(fileHandle, buffer, BUFFER_SIZE) == nullptr)
-        {
-            // Нормальный конец файла
-            if (gzeof(fileHandle))
-            {
-                return !line.empty();
+        if (inputPosition_ == inputEnd_) {
+            const int bytesRead = gzread(
+                fileHandle,
+                inputBuffer_.data(),
+                static_cast<unsigned int>(inputBuffer_.size()));
+            if (bytesRead <= 0) {
+                if (gzeof(fileHandle)) {
+                    return !line.empty();
+                }
+                int errorNumber = Z_OK;
+                const char* message = gzerror(fileHandle, &errorNumber);
+                throw std::runtime_error(
+                    "Gzip read error in " + filename + ": "
+                    + (message != nullptr ? message : "unknown gzip error"));
             }
+            inputPosition_ = 0;
+            inputEnd_ = static_cast<std::size_t>(bytesRead);
 
-            int errnum = Z_OK;
-            const char* errmsg = gzerror(fileHandle, &errnum);
-
-            throw std::runtime_error(
-                "Gzip read error in " + filename + ": " + errmsg);
+            int errorNumber = Z_OK;
+            const char* message = gzerror(fileHandle, &errorNumber);
+            if (errorNumber != Z_OK && errorNumber != Z_STREAM_END) {
+                throw std::runtime_error(
+                    "Gzip read error in " + filename + ": "
+                    + (message != nullptr ? message : "unknown gzip error"));
+            }
         }
 
-        line += buffer;
-
-        int errnum = 0;
-        const char* errmsg = gzerror(fileHandle, &errnum);
-
-        if (errnum != Z_OK && errnum != Z_STREAM_END)
-        {
-            throw std::runtime_error(
-                "Gzip read error in " + filename + ": " + errmsg);
-        }
-
-        // Проверяем, есть ли в строке перевод строки
-        if (line.find('\n') != std::string::npos) {
-            trimNewlines(line);
-            return true;
-        }
-
-        // Если буфер переполнен — продолжаем читать
-        if (std::strlen(buffer) == BUFFER_SIZE - 1) {
+        const char* begin = inputBuffer_.data() + inputPosition_;
+        const std::size_t available = inputEnd_ - inputPosition_;
+        const auto* newline = static_cast<const char*>(
+            std::memchr(begin, '\n', available));
+        if (newline == nullptr) {
+            line.append(begin, available);
+            inputPosition_ = inputEnd_;
             continue;
         }
+
+        line.append(begin, static_cast<std::size_t>(newline - begin));
+        inputPosition_ += static_cast<std::size_t>(newline - begin) + 1;
+        while (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        return true;
     }
 }
 
@@ -241,5 +239,3 @@ std::size_t FastqReader::getReadCount() const {
 const std::string& FastqReader::getFilename() const {
     return filename;
 }
-
-
