@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <string>
 #include <cstdint>
 #include <chrono>
@@ -45,10 +47,10 @@ private:
     // Возвращает false, если достигнут конец файла
     bool readLine(std::string& line);
 
-    // Удаляет \r и \n в конце строки
-    static void trimNewlines(std::string& s);
-
     gzFile fileHandle = nullptr;
     std::string filename;
     std::uint64_t readCount = 0;
+    std::array<char, 64 * 1024> inputBuffer_{};
+    std::size_t inputPosition_ = 0;
+    std::size_t inputEnd_ = 0;
 };

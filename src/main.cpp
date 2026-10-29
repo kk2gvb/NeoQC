@@ -1208,87 +1208,6 @@ void writeAnalysisReports(
     }
 }
 
-std::vector<DuplicationEntry> mergeSortedDuplicationEntries(
-    const std::vector<DuplicationEntry>& a,
-    const std::vector<DuplicationEntry>& b)
-{
-    std::vector<DuplicationEntry> result;
-    result.reserve(a.size() + b.size());
-
-    std::size_t i = 0;
-    std::size_t j = 0;
-
-    while (i < a.size() && j < b.size())
-    {
-        if (a[i].key.words < b[j].key.words)
-        {
-            result.push_back(a[i]);
-            ++i;
-        }
-        else if (b[j].key.words < a[i].key.words)
-        {
-            result.push_back(b[j]);
-            ++j;
-        }
-        else
-        {
-            result.push_back({
-                a[i].key,
-                a[i].count + b[j].count
-            });
-
-            ++i;
-            ++j;
-        }
-    }
-
-    while (i < a.size())
-    {
-        result.push_back(a[i]);
-        ++i;
-    }
-
-    while (j < b.size())
-    {
-        result.push_back(b[j]);
-        ++j;
-    }
-
-    return result;
-}
-
-std::vector<DuplicationEntry> mergeDuplicationEntriesTree(
-    std::vector<std::vector<DuplicationEntry>> entries)
-{
-    if (entries.empty())
-        return {};
-
-    while (entries.size() > 1)
-    {
-        std::vector<std::vector<DuplicationEntry>> next;
-        next.reserve((entries.size() + 1) / 2);
-
-        for (std::size_t i = 0; i < entries.size(); i += 2)
-        {
-            if (i + 1 < entries.size())
-            {
-                next.push_back(
-                    mergeSortedDuplicationEntries(
-                        entries[i],
-                        entries[i + 1]));
-            }
-            else
-            {
-                next.push_back(std::move(entries[i]));
-            }
-        }
-
-        entries = std::move(next);
-    }
-
-    return std::move(entries[0]);
-}
-
 void createDirectoryOrThrow(const fs::path& path) {
     std::error_code error;
     fs::create_directories(path, error);
@@ -1299,29 +1218,16 @@ void createDirectoryOrThrow(const fs::path& path) {
     }
 }
 
-std::vector<DuplicationEntry> collectMergedDuplicationEntries(
-    const std::vector<QualityAnalyzer>& analyzers)
-{
-    std::vector<std::vector<DuplicationEntry>> entries;
-    entries.reserve(analyzers.size());
-    for (const auto& analyzer : analyzers) {
-        entries.push_back(analyzer.getDuplicationEntries());
-    }
-    for (auto& localEntries : entries) {
-        std::sort(
-            localEntries.begin(),
-            localEntries.end(),
-            [](const DuplicationEntry& left, const DuplicationEntry& right) {
-                return left.key.words < right.key.words;
-            });
-    }
-    return mergeDuplicationEntriesTree(std::move(entries));
-}
-
 void mergeAnalyzers(QualityAnalyzer& destination,
-                    const std::vector<QualityAnalyzer>& sources) {
+                    std::vector<QualityAnalyzer>& sources) {
+    std::size_t expectedEntries = 0;
     for (const auto& source : sources) {
+        expectedEntries += source.getDuplicationEntryCount();
+    }
+    destination.reserveDuplicationEntries(expectedEntries);
+    for (auto& source : sources) {
         destination.merge(source);
+        destination.mergeDuplicationCounts(source);
     }
 }
 
@@ -1395,14 +1301,12 @@ AnalysisResult processOneFileWithTrimming(
         result.trimmingStats.merge(trimmer.getStats());
     }
 
-    const auto beforeEntries = collectMergedDuplicationEntries(beforeAnalyzers);
-    const auto afterEntries = collectMergedDuplicationEntries(afterAnalyzers);
     const QualityStats beforeStats = beforeAnalyzer.getStats();
     const QualityStats afterStats = afterAnalyzer.getStats();
     const DuplicationStats beforeDuplication =
-        beforeAnalyzer.getDuplicationStats(beforeEntries);
+        beforeAnalyzer.getDuplicationStats();
     const DuplicationStats afterDuplication =
-        afterAnalyzer.getDuplicationStats(afterEntries);
+        afterAnalyzer.getDuplicationStats();
 
     printConsoleSummary(beforeStats, readName + " BEFORE", skipAdapters);
     printConsoleSummary(afterStats, readName + " AFTER", skipAdapters);
@@ -1497,41 +1401,15 @@ AnalysisResult processOneFile(const std::string& path,
         }
     }
 
-    for (auto& localAnalyzer : localAnalyzers)
-    {
-        analyzer.merge(localAnalyzer);
-    }
+    mergeAnalyzers(analyzer, localAnalyzers);
     for (const auto& localTrimmer : localTrimmers)
     {
         result.trimmingStats.merge(localTrimmer.getStats());
     }
 
-    std::vector<std::vector<DuplicationEntry>> entries;
-
-    entries.reserve(localAnalyzers.size());
-
-    for (const auto& localAnalyzer : localAnalyzers)
-    {
-        entries.push_back(localAnalyzer.getDuplicationEntries());
-    }
-
-    for (auto& localEntries : entries)
-    {
-        std::sort(
-            localEntries.begin(),
-            localEntries.end(),
-            [](const DuplicationEntry& a,
-            const DuplicationEntry& b)
-            {
-                return a.key.words < b.key.words;
-            });
-    }
-
-    std::vector<DuplicationEntry> mergedEntries = mergeDuplicationEntriesTree(std::move(entries));
-
     QualityStats stats = analyzer.getStats();
 
-    const DuplicationStats duplicationStats = analyzer.getDuplicationStats(mergedEntries);
+    const DuplicationStats duplicationStats = analyzer.getDuplicationStats();
 
     printConsoleSummary(stats, readName, skipAdapters);
     {
@@ -1659,10 +1537,6 @@ AnalysisResult processPairedFilesWithTrimming(
         result.trimmingStats.merge(trimmer.getStats());
     }
 
-    const auto beforeEntriesR1 = collectMergedDuplicationEntries(beforeAnalyzersR1);
-    const auto beforeEntriesR2 = collectMergedDuplicationEntries(beforeAnalyzersR2);
-    const auto afterEntriesR1 = collectMergedDuplicationEntries(afterAnalyzersR1);
-    const auto afterEntriesR2 = collectMergedDuplicationEntries(afterAnalyzersR2);
     const QualityStats beforeStatsR1 = beforeAnalyzerR1.getStats();
     const QualityStats beforeStatsR2 = beforeAnalyzerR2.getStats();
     const QualityStats afterStatsR1 = afterAnalyzerR1.getStats();
@@ -1675,7 +1549,7 @@ AnalysisResult processPairedFilesWithTrimming(
 
     writeAnalysisReports(
         beforeStatsR1,
-        beforeAnalyzerR1.getDuplicationStats(beforeEntriesR1),
+        beforeAnalyzerR1.getDuplicationStats(),
         beforeAnalyzerR1,
         r1Path,
         beforeDir.string(),
@@ -1684,7 +1558,7 @@ AnalysisResult processPairedFilesWithTrimming(
         skipAdapters);
     writeAnalysisReports(
         beforeStatsR2,
-        beforeAnalyzerR2.getDuplicationStats(beforeEntriesR2),
+        beforeAnalyzerR2.getDuplicationStats(),
         beforeAnalyzerR2,
         r2Path,
         beforeDir.string(),
@@ -1693,7 +1567,7 @@ AnalysisResult processPairedFilesWithTrimming(
         skipAdapters);
     writeAnalysisReports(
         afterStatsR1,
-        afterAnalyzerR1.getDuplicationStats(afterEntriesR1),
+        afterAnalyzerR1.getDuplicationStats(),
         afterAnalyzerR1,
         trimmedR1Path.string(),
         afterDir.string(),
@@ -1702,7 +1576,7 @@ AnalysisResult processPairedFilesWithTrimming(
         skipAdapters);
     writeAnalysisReports(
         afterStatsR2,
-        afterAnalyzerR2.getDuplicationStats(afterEntriesR2),
+        afterAnalyzerR2.getDuplicationStats(),
         afterAnalyzerR2,
         trimmedR2Path.string(),
         afterDir.string(),
@@ -1805,81 +1679,12 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
         }
     }
 
-    for (auto& localAnalyzer : localAnalyzersR1)
-    {
-        analyzerR1.merge(localAnalyzer);
-    }
-
-    for (auto& localAnalyzer : localAnalyzersR2)
-    {
-        analyzerR2.merge(localAnalyzer);
-    }
+    mergeAnalyzers(analyzerR1, localAnalyzersR1);
+    mergeAnalyzers(analyzerR2, localAnalyzersR2);
     for (const auto& localTrimmer : localTrimmers)
     {
         result.trimmingStats.merge(localTrimmer.getStats());
     }
-
-    std::vector<std::vector<DuplicationEntry>> entriesR1(
-        localAnalyzersR1.size());
-
-    std::vector<std::vector<DuplicationEntry>> entriesR2(
-        localAnalyzersR2.size());
-
-    #pragma omp parallel for schedule(static)
-    for (int i = 0;
-        i < static_cast<int>(localAnalyzersR1.size());
-        ++i)
-    {
-        entriesR1[i] =
-            localAnalyzersR1[i].getDuplicationEntries();
-    }
-
-    #pragma omp parallel for schedule(static)
-    for (int i = 0;
-        i < static_cast<int>(localAnalyzersR2.size());
-        ++i)
-    {
-        entriesR2[i] =
-            localAnalyzersR2[i].getDuplicationEntries();
-    }
-
-    #pragma omp parallel for schedule(static)
-    for (int i = 0;
-        i < static_cast<int>(entriesR1.size());
-        ++i)
-    {
-        auto& entries = entriesR1[i];
-
-        std::sort(
-            entries.begin(),
-            entries.end(),
-            [](const DuplicationEntry& a,
-            const DuplicationEntry& b)
-            {
-                return a.key.words < b.key.words;
-            });
-    }
-
-    #pragma omp parallel for schedule(static)
-    for (int i = 0;
-        i < static_cast<int>(entriesR2.size());
-        ++i)
-    {
-        auto& entries = entriesR2[i];
-
-        std::sort(
-            entries.begin(),
-            entries.end(),
-            [](const DuplicationEntry& a,
-            const DuplicationEntry& b)
-            {
-                return a.key.words < b.key.words;
-            });
-    }
-
-    std::vector<DuplicationEntry> mergedR1 = mergeDuplicationEntriesTree(std::move(entriesR1));
-
-    std::vector<DuplicationEntry> mergedR2 = mergeDuplicationEntriesTree(std::move(entriesR2));
 
     std::cout << "R1: total reads = "
               << analyzerR1.getTotalReads()
@@ -1892,8 +1697,8 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
     QualityStats statsR1 = analyzerR1.getStats();
     QualityStats statsR2 = analyzerR2.getStats();
         
-    const DuplicationStats duplicationStatsR1 = analyzerR1.getDuplicationStats(mergedR1);
-    const DuplicationStats duplicationStatsR2 = analyzerR2.getDuplicationStats(mergedR2);
+    const DuplicationStats duplicationStatsR1 = analyzerR1.getDuplicationStats();
+    const DuplicationStats duplicationStatsR2 = analyzerR2.getDuplicationStats();
 
     printConsoleSummary(statsR1, "R1", skipAdapters);
     printConsoleSummary(statsR2, "R2", skipAdapters);

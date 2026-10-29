@@ -6,6 +6,12 @@
 #include <stdexcept>
 #include <string>
 
+namespace {
+
+constexpr std::size_t WRITE_BUFFER_SIZE = 1U << 20;
+
+}  // namespace
+
 FastqWriter::FastqWriter(const std::filesystem::path& path)
     : path_(path)
     , file_(gzopen(path.string().c_str(), "wb"))
@@ -14,10 +20,19 @@ FastqWriter::FastqWriter(const std::filesystem::path& path)
         throw std::runtime_error(
             "Cannot open trimmed FASTQ for writing: " + path_.string());
     }
+    buffer_.reserve(WRITE_BUFFER_SIZE);
 }
 
 FastqWriter::~FastqWriter() {
     if (file_ != nullptr) {
+        if (!buffer_.empty()) {
+            try {
+                writeBytes(buffer_.data(), buffer_.size());
+            } catch (...) {
+                // Destructors cannot report write failures; close() remains
+                // the API which reports them to the caller.
+            }
+        }
         gzclose(file_);
     }
 }
@@ -48,16 +63,31 @@ void FastqWriter::write(const FastqRecord& record) {
             "Cannot write FASTQ record with different sequence and quality lengths");
     }
 
-    const std::string serialized = record.header + '\n'
-        + record.sequence + '\n'
-        + record.separator + '\n'
-        + record.quality + '\n';
-    writeBytes(serialized.data(), serialized.size());
+    const std::size_t serializedSize = record.header.size()
+        + record.sequence.size() + record.separator.size() + record.quality.size() + 4;
+    buffer_.reserve(buffer_.size() + serializedSize);
+    buffer_.append(record.header);
+    buffer_.push_back('\n');
+    buffer_.append(record.sequence);
+    buffer_.push_back('\n');
+    buffer_.append(record.separator);
+    buffer_.push_back('\n');
+    buffer_.append(record.quality);
+    buffer_.push_back('\n');
+
+    if (buffer_.size() >= WRITE_BUFFER_SIZE) {
+        writeBytes(buffer_.data(), buffer_.size());
+        buffer_.clear();
+    }
 }
 
 void FastqWriter::close() {
     if (file_ == nullptr) {
         return;
+    }
+    if (!buffer_.empty()) {
+        writeBytes(buffer_.data(), buffer_.size());
+        buffer_.clear();
     }
     gzFile handle = file_;
     file_ = nullptr;

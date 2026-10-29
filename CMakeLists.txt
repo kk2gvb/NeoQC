@@ -16,6 +16,53 @@ message(STATUS "QC ruleset SHA-256: ${NEOQC_RULESET_SHA256}")
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Plotting and report generation use an isolated Python environment.  Bootstrap
+# it during configuration so a normal `./build.sh` provides all runtime and
+# test dependencies without requiring the caller to activate the environment.
+find_package(Python3 3 REQUIRED COMPONENTS Interpreter)
+
+set(NEOQC_VENV_DIR "${CMAKE_SOURCE_DIR}/venv" CACHE PATH
+    "Path to the NeoQC Python virtual environment")
+set(NEOQC_REQUIREMENTS_FILE "${CMAKE_SOURCE_DIR}/requirements.txt")
+if(NOT EXISTS "${NEOQC_REQUIREMENTS_FILE}")
+    message(FATAL_ERROR "Python requirements file not found: ${NEOQC_REQUIREMENTS_FILE}")
+endif()
+
+if(WIN32)
+    set(NEOQC_PYTHON_EXECUTABLE "${NEOQC_VENV_DIR}/Scripts/python.exe")
+else()
+    set(NEOQC_PYTHON_EXECUTABLE "${NEOQC_VENV_DIR}/bin/python3")
+endif()
+
+if(NOT EXISTS "${NEOQC_PYTHON_EXECUTABLE}")
+    message(STATUS "Creating NeoQC Python environment: ${NEOQC_VENV_DIR}")
+    execute_process(
+        COMMAND "${Python3_EXECUTABLE}" -m venv "${NEOQC_VENV_DIR}"
+        RESULT_VARIABLE NEOQC_VENV_RESULT
+        OUTPUT_VARIABLE NEOQC_VENV_OUTPUT
+        ERROR_VARIABLE NEOQC_VENV_ERROR
+    )
+    if(NOT NEOQC_VENV_RESULT EQUAL 0)
+        message(FATAL_ERROR
+            "Cannot create NeoQC Python environment at ${NEOQC_VENV_DIR}.\n"
+            "${NEOQC_VENV_OUTPUT}${NEOQC_VENV_ERROR}")
+    endif()
+endif()
+
+message(STATUS "Installing NeoQC Python dependencies")
+execute_process(
+    COMMAND "${NEOQC_PYTHON_EXECUTABLE}" -m pip install
+            --disable-pip-version-check --requirement "${NEOQC_REQUIREMENTS_FILE}"
+    RESULT_VARIABLE NEOQC_PIP_RESULT
+    OUTPUT_VARIABLE NEOQC_PIP_OUTPUT
+    ERROR_VARIABLE NEOQC_PIP_ERROR
+)
+if(NOT NEOQC_PIP_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "Cannot install NeoQC Python dependencies from ${NEOQC_REQUIREMENTS_FILE}.\n"
+        "${NEOQC_PIP_OUTPUT}${NEOQC_PIP_ERROR}")
+endif()
+
 # Release-сборка по умолчанию
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -56,6 +103,7 @@ target_compile_definitions(neoqc PRIVATE
     NEOQC_VERSION="${PROJECT_VERSION}"
     NEOQC_RULESET_SHA256="${NEOQC_RULESET_SHA256}"
     NEOQC_PLOT_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/scripts/plot_results.py"
+    NEOQC_PYTHON_EXECUTABLE="${NEOQC_PYTHON_EXECUTABLE}"
     NEOQC_ADAPTER_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/adapters/neoqc-standard-v1.tsv"
 )
 
@@ -144,6 +192,13 @@ add_executable(neoqc_fastq_writer_test
 target_include_directories(neoqc_fastq_writer_test PRIVATE include)
 target_link_libraries(neoqc_fastq_writer_test PRIVATE ZLIB::ZLIB)
 
+add_executable(neoqc_fastq_reader_test
+    tests/test_fastq_reader.cpp
+    src/fastq_reader.cpp
+)
+target_include_directories(neoqc_fastq_reader_test PRIVATE include)
+target_link_libraries(neoqc_fastq_reader_test PRIVATE ZLIB::ZLIB)
+
 add_executable(neoqc_advanced_trimming_test
     tests/trimming/test_advanced_trimming.cpp
     src/adapter_config.cpp
@@ -186,6 +241,9 @@ add_test(NAME test_poly_tail_trimmer
 add_test(NAME test_fastq_writer
          COMMAND neoqc_fastq_writer_test)
 
+add_test(NAME test_fastq_reader
+         COMMAND neoqc_fastq_reader_test)
+
 add_test(NAME test_advanced_trimming
          COMMAND neoqc_advanced_trimming_test)
 
@@ -194,39 +252,38 @@ add_test(NAME test_trim_help
 set_tests_properties(test_trim_help PROPERTIES
     PASS_REGULAR_EXPRESSION "--trim[ ]+Enable the trimming pipeline")
 
-find_package(Python3 COMPONENTS Interpreter)
-if(Python3_Interpreter_FOUND)
+if(NEOQC_PYTHON_EXECUTABLE)
     add_test(NAME test_qc_report
-             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_qc_report.py)
+             COMMAND ${NEOQC_PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_qc_report.py)
     set_tests_properties(test_qc_report PROPERTIES
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
     add_test(NAME test_trimming_report
-             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_trimming_report.py)
+             COMMAND ${NEOQC_PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_trimming_report.py)
     set_tests_properties(test_trimming_report PROPERTIES
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
     add_test(NAME test_qc_rules
-             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_qc_rules.py)
+             COMMAND ${NEOQC_PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_qc_rules.py)
     set_tests_properties(test_qc_rules PROPERTIES
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
     add_test(NAME test_trimming_pipeline
-             COMMAND ${Python3_EXECUTABLE}
+             COMMAND ${NEOQC_PYTHON_EXECUTABLE}
                      ${CMAKE_SOURCE_DIR}/tests/test_trimming_pipeline.py
                      $<TARGET_FILE:neoqc>)
     set_tests_properties(test_trimming_pipeline PROPERTIES
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
     execute_process(
-        COMMAND ${Python3_EXECUTABLE} -c "import matplotlib"
+        COMMAND ${NEOQC_PYTHON_EXECUTABLE} -c "import matplotlib"
         RESULT_VARIABLE MATPLOTLIB_IMPORT_STATUS
         OUTPUT_QUIET
         ERROR_QUIET
     )
     if(MATPLOTLIB_IMPORT_STATUS EQUAL 0)
         add_test(NAME test_plot_results
-                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_plot_results.py)
+                 COMMAND ${NEOQC_PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_plot_results.py)
         set_tests_properties(test_plot_results PROPERTIES
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     else()

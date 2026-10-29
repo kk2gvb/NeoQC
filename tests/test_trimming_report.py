@@ -190,6 +190,20 @@ class TrimmingReportTest(unittest.TestCase):
             self.assertNotIn('src="http', document)
             self.assertNotIn('href="http', document)
 
+    def test_missing_summary_files_use_the_trimming_run_sample_id(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="neoqc-trimming-report-") as temporary:
+            root = Path(temporary)
+            make_result(root)
+            for stage in ("before", "after"):
+                (root / "qc" / stage / "sample_R1_summary.txt").unlink()
+
+            report = generate_trimming_report(root)
+
+            self.assertIn(
+                f"NeoQC trimming report — {root.name}",
+                report.read_text(encoding="utf-8"),
+            )
+
     def test_cli_writes_a_requested_output_path(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neoqc-trimming-report-cli-") as temporary:
             root = Path(temporary)

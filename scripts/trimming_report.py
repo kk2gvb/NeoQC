@@ -108,6 +108,24 @@ def _nested(data: Mapping[str, object], key: str) -> Mapping[str, object]:
     return value if isinstance(value, Mapping) else {}
 
 
+def _sample_id_from_run_manifest(manifest: Mapping[str, object] | None) -> str | None:
+    """Return the authoritative sample ID recorded for the trimming run."""
+    sample_id = _nested(manifest or {}, "run").get("sample_id")
+    return sample_id.strip() if isinstance(sample_id, str) and sample_id.strip() else None
+
+
+def _with_root_sample_id_for_missing_summaries(
+    model: qc.QcReportModel, root_sample_id: str
+) -> qc.QcReportModel:
+    """Avoid treating ``before`` and ``after`` directory names as sample IDs.
+
+    ``qc.load_report_model`` uses its input directory name if no summary file is
+    available.  That is a suitable fallback for a standalone QC report, but it
+    makes the two stages of one trimming run look like different samples.
+    """
+    return replace(model, sample_id=root_sample_id) if not model.basic_statistics else model
+
+
 def _render_statistics(before: qc.QcReportModel, after: qc.QcReportModel) -> str:
     before_stats, after_stats = _by_read(before), _by_read(after)
     reads = tuple(read for read in ("R1", "R2") if read in before.reads or read in after.reads)
@@ -546,6 +564,9 @@ def generate_trimming_report(result_dir: Path, output_path: Path | None = None) 
     after = qc.load_report_model(after_dir, after_plots)
     trimming_stats = _load_json_object(result_dir / "trimming_report.json")
     run_manifest = _load_json_object(result_dir / "run_manifest.json")
+    root_sample_id = _sample_id_from_run_manifest(run_manifest) or result_dir.name
+    before = _with_root_sample_id_for_missing_summaries(before, root_sample_id)
+    after = _with_root_sample_id_for_missing_summaries(after, root_sample_id)
     trimmed_dir = result_dir / "trimmed"
     output_fastqs = {
         read: path.relative_to(result_dir)

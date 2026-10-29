@@ -27,23 +27,14 @@ python3 --version
 
 ## 3. Python-окружение
 
-Рекомендуется использовать отдельное виртуальное окружение:
+При первой конфигурации CMake автоматически создаёт `venv/` в корне
+репозитория и устанавливает зависимости из `requirements.txt`. Активировать
+виртуальное окружение не нужно: NeoQC и CTest используют его автоматически.
+
+При необходимости проверить установленную версию Matplotlib напрямую:
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-
-Если в репозитории присутствует `requirements.txt`:
-
-```bash
-pip install -r requirements.txt
-```
-
-Проверка Matplotlib:
-
-```bash
-python -c "import matplotlib; print(matplotlib.__version__)"
+./venv/bin/python3 -c "import matplotlib; print(matplotlib.__version__)"
 ```
 
 ## 4. Сборка
@@ -99,11 +90,6 @@ find tests/data -maxdepth 1 -type f | sort
 git clone https://github.com/kk2gvb/NeoQC.git
 cd NeoQC
 
-python3 -m venv venv
-source venv/bin/activate
-
-pip install -r requirements.txt
-
 ./build.sh
 
 ctest --test-dir build --output-on-failure
@@ -111,7 +97,8 @@ ctest --test-dir build --output-on-failure
 ./build/neoqc --help
 ```
 
-Если `requirements.txt` отсутствует в конкретной ревизии, необходимо установить Python-зависимости, используемые скриптами проекта.
+Файл `requirements.txt` обязателен: CMake использует его для автоматической
+установки Python-зависимостей.
 
 ## 9. Обновление сборки
 
@@ -144,20 +131,18 @@ ctest --test-dir build --output-on-failure
 
 Установите пакет разработки zlib и повторите конфигурацию CMake.
 
-### Не найден Python или Matplotlib
+### Не найден Python, venv или Matplotlib
 
 Проверьте:
 
 ```bash
 python3 --version
-python3 -c "import matplotlib"
+cmake -S . -B build
 ```
 
-При необходимости:
-
-```bash
-source venv/bin/activate
-```
+На этапе конфигурации CMake покажет причину, если не удалось создать `venv/`
+или установить зависимости. После успешной конфигурации проверка выполняется
+без активации окружения: `./venv/bin/python3 -c "import matplotlib"`.
 
 ## 11. Релизная проверка
 

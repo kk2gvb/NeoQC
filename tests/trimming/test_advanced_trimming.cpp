@@ -11,6 +11,7 @@
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 
@@ -35,6 +36,93 @@ TrimConfig peConfig() {
     config.overlap_diff_limit = 2;
     config.overlap_diff_percent_limit = 25;
     return config;
+}
+
+bool sameOverlap(const std::optional<PeOverlap>& left,
+                 const std::optional<PeOverlap>& right) {
+    if (left.has_value() != right.has_value()) {
+        return false;
+    }
+    return !left.has_value()
+        || (left->r1_start == right->r1_start
+            && left->r2_reverse_start == right->r2_reverse_start
+            && left->length == right->length
+            && left->mismatches == right->mismatches);
+}
+
+bool checkOverlapDifferential(const FastqRecord& r1,
+                              const FastqRecord& r2,
+                              const TrimConfig& config,
+                              const std::string& label) {
+    const PeOverlapAnalyzer analyzer(config);
+    return check(sameOverlap(analyzer.findReference(r1, r2), analyzer.find(r1, r2)),
+                 "optimized overlap differs from exhaustive reference: " + label);
+}
+
+bool testOverlapDifferential() {
+    TrimConfig config = peConfig();
+    const auto paired = [](const std::string& r1, const std::string& r2Reverse) {
+        return std::pair{
+            record("@DIFF/1", r1),
+            record("@DIFF/2", PeOverlapAnalyzer::reverseComplement(r2Reverse))};
+    };
+
+    const std::vector<std::pair<FastqRecord, FastqRecord>> cases = {
+        paired("ACGTACGT", "ACGTACGT"),              // full overlap
+        paired("AAAACCCC", "TCCCGGGG"),              // one mismatch
+        paired("ACGTACGT", "ACGTTCGT"),              // threshold boundary
+        paired("ACGTACGT", "TCGTTCGT"),              // over threshold
+        paired("AAAAAAAAAAAA", "AAAAAAAAAAAA"),      // no overlap
+        paired("ACGTACGTACGT", "ACGTACGT"),          // R1 longer
+        paired("ACGTACGT", "ACGTACGTACGT"),          // R2 longer
+        paired("AAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAA"), // repetitive/homopolymer
+        paired("ACGTNNNNACGT", "ACGTNNNNACGT"),      // N bases
+        paired("acgtacgtACGT", "ACGTacgtacgt"),      // lowercase
+        paired("ACG", "ACG"),                        // below min overlap
+        paired("ACGTAC", "GTACGGGG"),                // partial/read-through candidate
+    };
+    for (const auto& [r1, r2] : cases) {
+        if (!checkOverlapDifferential(r1, r2, config, "explicit case")) {
+            return false;
+        }
+    }
+
+    TrimConfig zeroMismatch = config;
+    zeroMismatch.overlap_diff_limit = 0;
+    zeroMismatch.overlap_diff_percent_limit = 0;
+    const auto minOverlap = paired("ACGT", "ACGT");
+    if (!checkOverlapDifferential(
+            minOverlap.first, minOverlap.second, zeroMismatch, "minimum overlap")) {
+        return false;
+    }
+
+    std::mt19937_64 random(0x4e454f51434f564cULL);
+    constexpr char bases[] = "ACGTNacgtn";
+    std::uniform_int_distribution<std::size_t> length(1, 32);
+    std::uniform_int_distribution<std::size_t> base(0, sizeof(bases) - 2);
+    std::uniform_int_distribution<std::size_t> mismatchLimit(0, 8);
+    std::uniform_int_distribution<std::size_t> percentLimit(0, 100);
+    for (std::size_t index = 0; index < 100000; ++index) {
+        const std::size_t r1Length = length(random);
+        const std::size_t r2Length = length(random);
+        std::string r1Sequence(r1Length, 'A');
+        std::string r2Sequence(r2Length, 'A');
+        for (char& nucleotide : r1Sequence) nucleotide = bases[base(random)];
+        for (char& nucleotide : r2Sequence) nucleotide = bases[base(random)];
+
+        TrimConfig randomConfig = config;
+        randomConfig.min_overlap = 1 + random() % std::min(r1Length, r2Length);
+        randomConfig.overlap_diff_limit = mismatchLimit(random);
+        randomConfig.overlap_diff_percent_limit = percentLimit(random);
+        if (!checkOverlapDifferential(
+                record("@RANDOM/1", r1Sequence),
+                record("@RANDOM/2", r2Sequence),
+                randomConfig,
+                "random pair " + std::to_string(index))) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool testOverlapCoordinatesAndCorrection() {
@@ -339,6 +427,7 @@ bool testQualityBoundaries() {
 
 int main() {
     return testOverlapCoordinatesAndCorrection()
+        && testOverlapDifferential()
         && testMerge()
         && testUmi()
         && testAdapterConfig()

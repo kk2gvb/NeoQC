@@ -1,12 +1,15 @@
 #include "../include/quality_analyzer.h"
 #include "gc_model.h"
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <iostream>
+#include <numeric>
 #include <utility>
 
 namespace {
 constexpr size_t kAdapterDetectionKmerLength = 12;
+constexpr uint32_t kAdapterKmerMask = (uint32_t{1} << (2 * kAdapterDetectionKmerLength)) - 1;
 constexpr std::array<const char*, 16> kDuplicationLabels = {
     "1", "2", "3", "4", "5", "6", "7", "8", "9",
     ">10", ">50", ">100", ">500", ">1k", ">5k", ">10k+"
@@ -21,6 +24,35 @@ std::size_t duplicationSlot(uint64_t duplicationLevel) {
     if (duplicationLevel > 50) return 10;
     if (duplicationLevel > 10) return 9;
     return static_cast<std::size_t>(duplicationLevel - 1);
+}
+
+bool encodeAdapterKmer(const std::string& sequence, uint32_t& encoded) {
+    if (sequence.size() != kAdapterDetectionKmerLength) {
+        return false;
+    }
+    encoded = 0;
+    for (const char base : sequence) {
+        uint32_t code = 0;
+        switch (base) {
+            case 'A': code = 0; break;
+            case 'C': code = 1; break;
+            case 'G': code = 2; break;
+            case 'T': code = 3; break;
+            default: return false;
+        }
+        encoded = (encoded << 2) | code;
+    }
+    return true;
+}
+
+bool encodeAdapterBase(char base, uint32_t& encoded) {
+    switch (base) {
+        case 'A': encoded = 0; return true;
+        case 'C': encoded = 1; return true;
+        case 'G': encoded = 2; return true;
+        case 'T': encoded = 3; return true;
+        default: return false;
+    }
 }
 
 uint64_t duplicationBaseCode(char base) {
@@ -219,6 +251,11 @@ QualityAnalyzer::QualityAnalyzer(
     ReadDirection direction,
     const std::vector<AdapterConfigEntry>& adapterConfig)
 {
+    // A worker receives several thousand records in its first batch. Reserve
+    // only that modest initial working set, then let the table grow normally
+    // for unusually diverse files.
+    sequenceCounts.max_load_factor(0.8f);
+    sequenceCounts.reserve(8192);
     adapters.clear();
 
     for (const auto& entry : adapterConfig) {
@@ -251,6 +288,21 @@ QualityAnalyzer::QualityAnalyzer(
     }
 
     adapterPosCounts.resize(adapters.size());
+
+    if (adapters.size() <= 64) {
+        adapterKmerMasks.reserve(adapters.size());
+        for (std::size_t aid = 0; aid < adapters.size(); ++aid) {
+            uint32_t encoded = 0;
+            if (encodeAdapterKmer(adapters[aid].detectionSequence, encoded)) {
+                adapterKmerMasks[encoded] |= uint64_t{1} << aid;
+            } else {
+                adapterFallbackIndices.push_back(aid);
+            }
+        }
+    } else {
+        adapterFallbackIndices.resize(adapters.size());
+        std::iota(adapterFallbackIndices.begin(), adapterFallbackIndices.end(), 0);
+    }
 }
 
 BaseValidationError QualityAnalyzer::processRecord(const FastqRecord& record) {
@@ -389,7 +441,43 @@ void QualityAnalyzer::analyzeAdapters(const FastqRecord& record) {
     const std::string& seq = record.sequence;
     bool foundInRead = false;
 
-    for (size_t aid = 0; aid < adapters.size(); ++aid) {
+    uint64_t foundMask = 0;
+    uint32_t rollingKmer = 0;
+    std::size_t validLength = 0;
+    for (std::size_t index = 0; index < seq.size(); ++index) {
+        uint32_t base = 0;
+        if (!encodeAdapterBase(seq[index], base)) {
+            rollingKmer = 0;
+            validLength = 0;
+            continue;
+        }
+        rollingKmer = ((rollingKmer << 2) | base) & kAdapterKmerMask;
+        ++validLength;
+        if (validLength < kAdapterDetectionKmerLength) {
+            continue;
+        }
+
+        const auto matchingKmers = adapterKmerMasks.find(rollingKmer);
+        if (matchingKmers == adapterKmerMasks.end()) {
+            continue;
+        }
+        uint64_t newMatches = matchingKmers->second & ~foundMask;
+        while (newMatches != 0) {
+            const std::size_t aid = std::countr_zero(newMatches);
+            const std::size_t position = index + 1 - kAdapterDetectionKmerLength;
+            if (adapterPosCounts[aid].size() < seq.size()) {
+                adapterPosCounts[aid].resize(seq.size(), 0);
+            }
+            for (std::size_t j = position; j < seq.size(); ++j) {
+                adapterPosCounts[aid][j]++;
+            }
+            foundInRead = true;
+            newMatches &= newMatches - 1;
+        }
+        foundMask |= matchingKmers->second;
+    }
+
+    for (const std::size_t aid : adapterFallbackIndices) {
         const std::string& detectionSequence = adapters[aid].detectionSequence;
         const size_t position = seq.find(detectionSequence);
 
@@ -410,6 +498,29 @@ void QualityAnalyzer::analyzeAdapters(const FastqRecord& record) {
         foundInRead = true;
     }
 
+    if (foundInRead) {
+        readsWithAdapter++;
+    }
+}
+
+void QualityAnalyzer::analyzeAdaptersReference(const FastqRecord& record) {
+    const std::string& seq = record.sequence;
+    bool foundInRead = false;
+
+    for (std::size_t aid = 0; aid < adapters.size(); ++aid) {
+        const std::string& detectionSequence = adapters[aid].detectionSequence;
+        const std::size_t position = seq.find(detectionSequence);
+        if (position == std::string::npos) {
+            continue;
+        }
+        if (adapterPosCounts[aid].size() < seq.size()) {
+            adapterPosCounts[aid].resize(seq.size(), 0);
+        }
+        for (std::size_t j = position; j < seq.size(); ++j) {
+            adapterPosCounts[aid][j]++;
+        }
+        foundInRead = true;
+    }
     if (foundInRead) {
         readsWithAdapter++;
     }
@@ -699,6 +810,26 @@ std::vector<DuplicationEntry> QualityAnalyzer::getDuplicationEntries() const
     }
 
     return entries;
+}
+
+void QualityAnalyzer::reserveDuplicationEntries(std::size_t count) {
+    sequenceCounts.reserve(count);
+}
+
+std::size_t QualityAnalyzer::getDuplicationEntryCount() const noexcept {
+    return sequenceCounts.size();
+}
+
+void QualityAnalyzer::mergeDuplicationCounts(QualityAnalyzer& other) {
+    for (auto iterator = other.sequenceCounts.begin();
+         iterator != other.sequenceCounts.end();) {
+        auto node = other.sequenceCounts.extract(iterator++);
+        const auto inserted = sequenceCounts.insert(std::move(node));
+        if (!inserted.inserted) {
+            inserted.position->second += inserted.node.mapped();
+        }
+    }
+    other.sequenceCounts.rehash(0);
 }
 
 

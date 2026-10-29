@@ -3,10 +3,14 @@
 #include "trimming/quality_trimmer.h"
 #include "trimming/trimmer.h"
 
+#include <algorithm>
+#include <cctype>
 #include <initializer_list>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -60,6 +64,138 @@ bool checkResult(const TrimResult& result,
         && check(result.adapter_found == adapter, message + ": adapter marker")
         && check(result.adapter_position == adapterPosition,
                  message + ": adapter position");
+}
+
+struct ReferenceAdapterMatch {
+    std::size_t position = 0;
+    std::size_t mismatches = 0;
+    std::size_t length = 0;
+    std::size_t order = 0;
+};
+
+char normalizeReferenceBase(char base) {
+    return static_cast<char>(std::toupper(static_cast<unsigned char>(base)));
+}
+
+std::optional<ReferenceAdapterMatch> findReferenceAdapterMatch(
+    const FastqRecord& record,
+    const TrimConfig& config) {
+    std::vector<std::string> adapters;
+    if (!config.adapter_sequence.empty()) {
+        adapters.push_back(config.adapter_sequence);
+    }
+    for (const AdapterConfigEntry& adapter : config.adapters) {
+        adapters.push_back(adapter.sequence);
+    }
+
+    std::optional<ReferenceAdapterMatch> best;
+    for (std::size_t order = 0; order < adapters.size(); ++order) {
+        const std::string& adapter = adapters[order];
+        if (adapter.size() < config.min_adapter_match) {
+            continue;
+        }
+        for (std::size_t position = 0;
+             position + config.min_adapter_match <= record.sequence.size();
+             ++position) {
+            const std::size_t length = std::min(
+                adapter.size(), record.sequence.size() - position);
+            const std::size_t allowed = length / 8;
+            std::size_t mismatches = 0;
+            for (std::size_t index = 0; index < length; ++index) {
+                if (normalizeReferenceBase(record.sequence[position + index])
+                    != normalizeReferenceBase(adapter[index])
+                    && ++mismatches > allowed) {
+                    break;
+                }
+            }
+            if (mismatches > allowed) {
+                continue;
+            }
+            const ReferenceAdapterMatch candidate{position, mismatches, length, order};
+            if (!best.has_value()
+                || candidate.position < best->position
+                || (candidate.position == best->position
+                    && candidate.length > best->length)
+                || (candidate.position == best->position
+                    && candidate.length == best->length
+                    && candidate.mismatches < best->mismatches)
+                || (candidate.position == best->position
+                    && candidate.length == best->length
+                    && candidate.mismatches == best->mismatches
+                    && candidate.order < best->order)) {
+                best = candidate;
+            }
+        }
+    }
+    return best;
+}
+
+TrimResult referenceTrim(FastqRecord& record, const TrimConfig& config) {
+    TrimResult result;
+    result.original_length = record.sequence.size();
+    result.final_length = record.sequence.size();
+    const auto match = findReferenceAdapterMatch(record, config);
+    if (!match.has_value()) {
+        return result;
+    }
+    const std::size_t removed = record.sequence.size() - match->position;
+    record.sequence.resize(match->position);
+    record.quality.resize(match->position);
+    result.adapter_found = removed != 0;
+    result.adapter_position = match->position;
+    result.trimmed_tail = removed;
+    result.final_length = record.sequence.size();
+    return result;
+}
+
+bool testOptimizedAdapterMatchesReference() {
+    TrimConfig config;
+    config.enabled = true;
+    config.adapter_trimming = true;
+    config.adapter_sequence = "ACGTACGTACGTACGT";
+    config.adapters = {{"second", "TTTTTTTTTTTTTTTT"},
+                       {"tie", "ACGTACGTACGTACGT"}};
+
+    const std::vector<std::string> sequences = {
+        "GGGGGGGGGGGGGGGGGGGG",             // adapter absent
+        "GGGGACGTACGTACGTACGT",             // exact adapter
+        "GGGGACGTACGT",                     // partial adapter
+        "AACGTACGTACGTACGTGGGG",            // adapter near beginning
+        "GGGGGGGGGGGGACGTACGTACGTACGT",     // adapter near end
+        "GGGGACGTTCGTACGTTCGT",             // mismatch boundary
+        "GGGGACGTTCGTTCGTTCGT",             // mismatch over threshold
+        "GGGGTTTTTTTTTTTTTTTTACGTACGTACGTACGT", // multiple adapters/positions
+        "ggggacgtacgtacgtacgt",             // lowercase sequence
+        "ACGTA",                            // short read
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAA"       // repetitive sequence
+    };
+
+    for (const std::string& sequence : sequences) {
+        FastqRecord expected = makeRecord(sequence);
+        FastqRecord actual = expected;
+        const TrimResult expectedResult = referenceTrim(expected, config);
+        const TrimResult actualResult = AdapterTrimmer(config).trim(actual);
+        if (!check(actual.sequence == expected.sequence
+                   && actual.quality == expected.quality
+                   && actualResult.adapter_found == expectedResult.adapter_found
+                   && actualResult.adapter_position == expectedResult.adapter_position
+                   && actualResult.trimmed_tail == expectedResult.trimmed_tail
+                   && actualResult.final_length == expectedResult.final_length,
+                   "optimized adapter matching must equal reference for " + sequence)) {
+            return false;
+        }
+    }
+
+    TrimConfig repetitiveConfig = config;
+    repetitiveConfig.adapter_sequence = "AAAAAAAAAAAAAAAA";
+    repetitiveConfig.adapters.clear();
+    FastqRecord expected = makeRecord("AAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    FastqRecord actual = expected;
+    const TrimResult expectedResult = referenceTrim(expected, repetitiveConfig);
+    const TrimResult actualResult = AdapterTrimmer(repetitiveConfig).trim(actual);
+    return check(actual.sequence == expected.sequence
+                 && actualResult.adapter_position == expectedResult.adapter_position,
+                 "optimized adapter matching must preserve repetitive-read behavior");
 }
 
 std::string reverseComplement(const std::string& sequence) {
@@ -279,9 +415,22 @@ bool testPairedOverlap() {
     config.overlap_diff_limit = 1;
     config.overlap_diff_percent_limit = 20;
 
-    Trimmer trimmer(config);
     FastqRecord r1 = makeRecord(insert + "AAAA");
     FastqRecord r2 = makeRecord(reverseInsert + "CCCC");
+    Trimmer defaultTrimmer(config);
+    const auto defaultResults = defaultTrimmer.trimPair(r1, r2);
+    if (!checkRecord(r1, insert + "AAAA", "default adapter trimming R1")
+        || !checkRecord(r2, reverseInsert + "CCCC", "default adapter trimming R2")
+        || !check(!defaultResults.first.adapter_found
+                  && !defaultResults.second.adapter_found,
+                  "adapter trimming must not implicitly search PE overlap")) {
+        return false;
+    }
+
+    config.overlap_correction = true;
+    Trimmer trimmer(config);
+    r1 = makeRecord(insert + "AAAA");
+    r2 = makeRecord(reverseInsert + "CCCC");
     const auto results = trimmer.trimPair(r1, r2);
     if (!checkRecord(r1, insert, "paired short insert R1")
         || !checkRecord(r2, reverseInsert, "paired short insert R2")
@@ -404,6 +553,7 @@ int main() {
     return testSlidingWindow()
         && testSlidingStats()
         && testAdapterMatching()
+        && testOptimizedAdapterMatchesReference()
         && testAdapterStats()
         && testPairedOverlap()
         ? 0 : 1;

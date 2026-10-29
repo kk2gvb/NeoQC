@@ -4,6 +4,8 @@
 #include "trimming/trim_result.h"
 
 #include <optional>
+#include <string>
+#include <vector>
 
 struct FastqRecord;
 struct PeOverlap;
@@ -30,4 +32,7 @@ public:
 
 private:
     TrimConfig config_;
+    // Normalized once at construction, so the matching hot loop only
+    // normalizes bases from the incoming read.
+    std::vector<std::string> adapters_;
 };
