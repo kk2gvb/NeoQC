@@ -11,6 +11,10 @@ namespace fs = std::filesystem;
 #define NEOQC_PLOT_SCRIPT "scripts/plot_results.py"
 #endif
 
+#ifndef NEOQC_PYTHON_EXECUTABLE
+#define NEOQC_PYTHON_EXECUTABLE "python3"
+#endif
+
 namespace {
 
 std::string shellQuote(const std::string& value) {
@@ -31,23 +35,24 @@ std::string shellQuote(const std::string& value) {
 bool PlotRunner::checkDependencies() {
     // Keep this command in sync with the interpreter used in runAll().
     // Redirecting its traceback lets us show one concise, actionable message.
+    const std::string python = shellQuote(NEOQC_PYTHON_EXECUTABLE);
     const int returnCode = std::system(
-        "python3 -c \"import matplotlib\" >/dev/null 2>&1");
+        (python + " -c \"import matplotlib\" >/dev/null 2>&1").c_str());
     if (returnCode == 0) {
         return true;
     }
 
     const fs::path scriptPath = NEOQC_PLOT_SCRIPT;
     const fs::path projectDir = scriptPath.parent_path().parent_path();
-    const fs::path virtualEnv = projectDir / "venv";
     const fs::path requirements = projectDir / "requirements.txt";
 
     std::cerr
         << "Error: --plot requires Python 3 with the matplotlib package.\n"
-        << "Activate the project virtual environment, then install dependencies:\n"
-        << "  source " << (virtualEnv / "bin" / "activate") << "\n"
-        << "  python3 -m pip install -r " << requirements << "\n"
-        << "Run NeoQC again after activation.\n";
+        << "Reconfigure the project to create its virtual environment and install dependencies:\n"
+        << "  cmake -S " << projectDir << " -B " << (projectDir / "build") << "\n"
+        << "Or install them directly:\n"
+        << "  " << shellQuote(NEOQC_PYTHON_EXECUTABLE)
+        << " -m pip install -r " << requirements << "\n";
     return false;
 }
 
@@ -86,7 +91,7 @@ PlotRunResult PlotRunner::runAll(const std::string& resultDir,
         return result;
     }
 
-    std::string command = "python3 " + shellQuote(scriptPath.string()) + " "
+    std::string command = shellQuote(NEOQC_PYTHON_EXECUTABLE) + " " + shellQuote(scriptPath.string()) + " "
                         + shellQuote(resultDir) + " " + shellQuote(plotDir)
                         + " --formats";
     if (options.generateSvg) command += " svg";

@@ -176,6 +176,7 @@ class PlotResultsTest(unittest.TestCase):
                 self.assertTrue((root / "plots" / stage / "plots_manifest.json").is_file())
                 self.assertTrue((root / "qc" / stage / "qc_evaluation.json").is_file())
                 self.assertTrue((root / "qc" / stage / "neoqc_qc_report.html").is_file())
+            self.assertTrue((root / "neoqc_trimming_report.html").is_file())
 
     def test_complete_r1_r2_svg_contract(self) -> None:
         with tempfile.TemporaryDirectory(prefix="neo qc plots ") as temporary:
