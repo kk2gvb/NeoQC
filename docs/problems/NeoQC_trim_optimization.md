@@ -80,9 +80,9 @@ R1/R2 × before/after.
 
 ### P0. Paired-end overlap search для каждой пары
 
-При включённом adapter trimming `Trimmer::trimPairDetailed()` безусловно
-вызывает `PeOverlapAnalyzer::find()` для каждой пары. Алгоритм перебирает
-каждый допустимый shift и посимвольно сравнивает overlap.
+До исправления adapter trimming неявно вызывал `PeOverlapAnalyzer::find()` для
+каждой пары. Алгоритм перебирает каждый допустимый shift и посимвольно
+сравнивает overlap.
 
 Для измеренного образца (R1=101, R2=87, `min_overlap=30`) это 129 кандидатов
 на пару и до 7 917 сравнений bases на пару в худшем случае. Дополнительно на
@@ -91,7 +91,12 @@ R1/R2 × before/after.
 Риск: десятки миллионов пар превращают даже короткие посимвольные циклы в
 основную CPU-нагрузку.
 
-Текущий код:
+Решение: обычный adapter trimming теперь не запускает поиск перекрытия.
+`PeOverlapAnalyzer::find()` вызывается только при явно заданных
+`--overlap-correction` или `--merge`; read-through trimming через overlap не
+входит в `--full-trim`.
+
+Код:
 
 - `src/trimming/trimmer.cpp:81-85`;
 - `src/trimming/pe_overlap.cpp:80-132`.
@@ -181,10 +186,10 @@ fixture-наборе; отдельный microbenchmark adapter-negative reads �
 Нужно сначала зафиксировать требуемую семантику: применяется ли overlap только
 для read-through adapter trim, либо также для correction/merge.
 
-Для read-through можно отсеивать большинство пар дешёвым seed-фильтром и
-подтверждать только немногочисленные кандидаты. Для correction/merge возможны
-индексированный поиск сдвига или битовое кодирование bases. Полный exhaustive
-поиск следует оставить как reference implementation для тестов.
+Этот этап относится только к явно запрошенным correction/merge. Для этих
+режимов можно отсеивать большинство пар дешёвым seed-фильтром и подтверждать
+только немногочисленные кандидаты. Полный exhaustive поиск следует оставить
+как reference implementation для тестов.
 
 Критерий готовности: совпадение найденного `PeOverlap` с reference на
 положительных, отрицательных и пограничных fixtures; измеримое сокращение

@@ -79,8 +79,10 @@ PairTrimResult Trimmer::trimPairDetailed(FastqRecord& r1, FastqRecord& r2) {
     output.r2 = qualityTrimmer_.trim(r2);
 
     std::optional<PeOverlap> overlap;
-    if (r1Ready && (config_.adapter_trimming || config_.overlap_correction
-                    || config_.merge_reads)) {
+    // Adapter trimming is performed independently on each mate. Finding an
+    // R1/R2 overlap is intentionally opt-in because it is expensive and is
+    // only needed for explicitly requested correction or merging.
+    if (r1Ready && (config_.overlap_correction || config_.merge_reads)) {
         overlap = overlapAnalyzer_.find(r1, r2);
     }
     if (r1Ready && config_.overlap_correction && overlap.has_value()) {

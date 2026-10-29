@@ -415,9 +415,22 @@ bool testPairedOverlap() {
     config.overlap_diff_limit = 1;
     config.overlap_diff_percent_limit = 20;
 
-    Trimmer trimmer(config);
     FastqRecord r1 = makeRecord(insert + "AAAA");
     FastqRecord r2 = makeRecord(reverseInsert + "CCCC");
+    Trimmer defaultTrimmer(config);
+    const auto defaultResults = defaultTrimmer.trimPair(r1, r2);
+    if (!checkRecord(r1, insert + "AAAA", "default adapter trimming R1")
+        || !checkRecord(r2, reverseInsert + "CCCC", "default adapter trimming R2")
+        || !check(!defaultResults.first.adapter_found
+                  && !defaultResults.second.adapter_found,
+                  "adapter trimming must not implicitly search PE overlap")) {
+        return false;
+    }
+
+    config.overlap_correction = true;
+    Trimmer trimmer(config);
+    r1 = makeRecord(insert + "AAAA");
+    r2 = makeRecord(reverseInsert + "CCCC");
     const auto results = trimmer.trimPair(r1, r2);
     if (!checkRecord(r1, insert, "paired short insert R1")
         || !checkRecord(r2, reverseInsert, "paired short insert R2")
