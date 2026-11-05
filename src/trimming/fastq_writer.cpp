@@ -14,7 +14,7 @@ constexpr std::size_t WRITE_BUFFER_SIZE = 1U << 20;
 
 FastqWriter::FastqWriter(const std::filesystem::path& path)
     : path_(path)
-    , file_(gzopen(path.string().c_str(), "wb"))
+    , file_(gzopen(path.string().c_str(), "wb1"))
 {
     if (file_ == nullptr) {
         throw std::runtime_error(

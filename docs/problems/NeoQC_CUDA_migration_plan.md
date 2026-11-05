@@ -1,792 +1,187 @@
-# NeoQC — окончательный план CUDA-миграции и оптимизации
-
-## 1. Цель
-
-Добавить в NeoQC второй вычислительный backend — CUDA — без удаления существующей реализации OpenMP.
-
-Итоговая модель:
-
-```text
-                    NeoQC
-                      │
-                --compute
-                 /        \
-              omp          cuda
-               │             │
-          CPU / OMP      OMP + CUDA
-               │             │
-               └──────┬──────┘
-                      │
-                common results
-                      │
-             QC / TSV / JSON / plots
-```
-
-### Режимы
-
-#### `--compute omp`
-
-Существующая реализация NeoQC:
-
-```text
-FASTQ
-  ↓
-OpenMP / CPU
-  ↓
-merge
-  ↓
-results
-```
-
-Этот режим сохраняется как основной fallback и reference implementation.
-
-#### `--compute cuda`
-
-Гибридный режим:
-
-```text
-FASTQ
-  ↓
-OpenMP / CPU
-  ├── reading
-  ├── decompression
-  ├── batch preparation
-  └── CPU-only operations
-          ↓
-        CUDA
-  ├── тяжелые массово-параллельные расчеты
-  └── GPU reductions
-          ↓
-        OMP / CPU
-  ├── final aggregation
-  ├── QC evaluation
-  └── output
-```
-
-Важно: выбор `cuda` **не означает перенос всего проекта на GPU**. В CUDA-режиме OpenMP продолжает использоваться для CPU-частей pipeline.
-
----
-
-# 2. Ограничения проекта
-
-## 2.1. K-mer
-
-**K-mer counting в NeoQC не входит.**
-
-Ранее было принято решение не добавлять эту метрику. Поэтому:
-
-- K-mer не является функциональностью NeoQC;
-- K-mer не является CUDA-задачей;
-- K-mer отсутствует в таблицах миграции;
-- K-mer не должен появляться в итоговом pipeline.
-
-## 2.2. Существующие CLI-режимы
-
-Существующие параметры NeoQC не изменяются:
-
-```text
---r1
---r2
---sample-id
---out
---plot
---skip-adapters
---timing
---samples
-```
-
-Добавляется только выбор вычислительного backend:
-
-```text
---compute omp
---compute cuda
-```
-
-Точное имя флага можно окончательно определить при реализации.
-
----
-
-# 3. Полная карта компонентов NeoQC
-
-| Компонент / операция | Сейчас | `omp` | `cuda` | Стратегия |
-|---|---|---:|---:|---|
-| CLI | CPU | OMP/CPU | OMP/CPU | Оставить |
-| Sample sheet parsing | CPU | OMP/CPU | OMP/CPU | Оставить |
-| Sample sheet validation | CPU | OMP/CPU | OMP/CPU | Оставить |
-| FASTQ reading | CPU | OMP/CPU | OMP/CPU | Оставить |
-| gzip/decompression | CPU | OMP/CPU | OMP/CPU | Оставить на первом этапе |
-| Batch preparation | CPU | OMP/CPU | OMP/CPU | Оставить |
-| Read representation | C++ structures | OMP/CPU | Host + Device buffers | Переделать для CUDA |
-| Per-base quality | OMP | OMP | CUDA | **P0: переносить** |
-| Per-cycle quality | OMP | OMP | CUDA | **P0: переносить** |
-| N content | OMP | OMP | CUDA | **P0: переносить** |
-| GC statistics | OMP | OMP | CUDA | **P0: переносить** |
-| Per-sequence quality | OMP | OMP | CUDA | **P1: переносить** |
-| Per-sequence GC | OMP | OMP | CUDA | **P1: переносить** |
-| Adapter statistics | OMP | OMP | CUDA/OMP | **P2: точечный перенос** |
-| Sequence duplication | OMP | OMP | CUDA/OMP | **P2: отдельное проектирование** |
-| Local statistics | OMP thread-local | OMP | GPU counters/reduction | Переделать |
-| Merge | OMP/CPU | OMP/CPU | OMP/CPU + GPU reduction | **Отдельно оптимизировать** |
-| Final statistics | CPU | OMP/CPU | OMP/CPU | Оставить |
-| QC evaluation | Python/CPU | CPU | CPU | Оставить |
-| TSV generation | CPU | CPU | CPU | Оставить |
-| JSON generation | CPU | CPU | CPU | Оставить |
-| Plot generation | Python | CPU | CPU | Оставить |
-| K-mer counting | Нет | Нет | Нет | **Не добавлять** |
-
----
-
-# 4. Что точно оставить на OMP/CPU
-
-Следующие операции не являются приоритетом CUDA-миграции.
-
-## 4.1. Ввод-вывод
-
-```text
-FASTQ reading
-gzip/decompression
-file handling
-```
-
-Причина: это преимущественно I/O и подготовка данных. Перенос на GPU сам по себе не означает ускорение.
-
-## 4.2. Управление pipeline
-
-```text
-CLI
-sample sheet
-configuration
-orchestration
-error handling
-```
-
-GPU здесь не требуется.
-
-## 4.3. Формирование результатов
-
-```text
-TSV
-JSON
-summary
-QC evaluation
-plot generation
-```
-
-Эти операции работают с относительно небольшим объемом уже агрегированных данных.
-
-## 4.4. Другие небольшие CPU-операции
-
-Любая операция остается на OMP/CPU, если профилирование показывает, что:
-
-```text
-GPU kernel + H2D + D2H
-```
-
-дороже самой CPU-операции.
-
----
-
-# 5. Что точечно переделывать на CUDA
-
-## P0 — основной кандидат
-
-### 5.1. Per-base / Per-cycle quality
-
-Причины для CUDA:
-
-- обрабатываются огромные количества bases;
-- операции над reads хорошо распараллеливаются;
-- результат можно представить компактными счетчиками;
-- возможен GPU reduction.
-
-Целевая схема:
-
-```text
-reads
-  ↓
-CUDA threads
-  ↓
-quality counters
-  ↓
-reduction
-  ↓
-compact result
-```
-
-### 5.2. N content
-
-Аналогично:
-
-```text
-base == 'N'
-    ↓
-parallel counting
-    ↓
-per-cycle counters
-```
-
-### 5.3. GC statistics
-
-```text
-G/C detection
-    ↓
-parallel counting
-    ↓
-per-cycle / per-sequence aggregation
-```
-
----
-
-# 6. P1 — следующие CUDA-кандидаты
-
-## 6.1. Per-sequence quality
-
-Перенос после стабилизации P0.
-
-Особое внимание:
-
-- histogram;
-- размеры структур;
-- reduction;
-- различия результатов OMP/CUDA.
-
-## 6.2. Per-sequence GC
-
-Переносить после общей инфраструктуры batch и reduction.
-
----
-
-# 7. P2 — сложные операции
-
-## 7.1. Adapter statistics
-
-Возможна CUDA-реализация, но сначала определить:
-
-- какие операции выполняются для каждого read;
-- какие структуры используются;
-- есть ли branching;
-- как выполняется aggregation;
-- насколько велика стоимость передачи данных.
-
-Цель — не переносить весь adapter pipeline автоматически, а перенести именно тяжелую часть.
-
-## 7.2. Sequence duplication
-
-Это отдельная задача.
-
-Причина:
-
-```text
-duplication
-    ↓
-большое количество последовательностей
-    ↓
-hash/map structures
-    ↓
-aggregation / merge
-```
-
-GPU-реализация может потребовать принципиально другой структуры данных.
-
-Поэтому сначала:
-
-1. профилирование;
-2. анализ памяти;
-3. анализ текущего merge;
-4. оценка GPU-варианта;
-5. только затем реализация CUDA.
-
----
-
-# 8. Проблема `Killed`
-
-Это отдельный P0.
-
-Наблюдаемая ситуация:
-
-```text
-Processed 100%
-      ↓
-работа с reads завершена
-      ↓
-merge / aggregation / finalization
-      ↓
-Killed
-```
-
-Пока нельзя утверждать, что причиной является именно `merge()`.
-
-Возможные точки:
-
-```text
-last batch
-    ↓
-temporary allocations
-    ↓
-merge
-    ↓
-duplication merge
-    ↓
-sorting
-    ↓
-final statistics
-    ↓
-output preparation
-```
-
-## 8.1. Сначала подтвердить OOM
-
-Запуск:
+# NeoQC — план оптимизации OpenMP и внедрения CUDA с учётом тримминга
+
+**База анализа:** `kk2gvb/NeoQC`, ветка `optimization_and_cuda`, коммит `ac17564b7996995feee2946e94d30998ec8026f8` (29.10.2026).  
+**Статус:** технический план; ускорение и OOM не подтверждены локальными замерами в рамках данного анализа.  
+**Цель:** сохранить OpenMP-выполнение и все режимы NeoQC, добавить гибридный `--compute cuda` для ускорения доказанных вычислительных bottleneck без изменения семантики тримминга и QC.
+
+## 1. Текущая архитектура
+
+### QC-only (single/paired)
+
+1. `FastqReader` читает FASTQ/FASTQ.GZ, формирует batch размером 100 000 записей/пар.
+2. `src/main.cpp::processBatchParallel` / `processPairedBatchParallel` распределяет записи по OpenMP threads.
+3. У каждого потока свой `QualityAnalyzer`, включая собственную точную карту дупликаций `unordered_map<DuplicationKey,uint64_t>`.
+4. После EOF `mergeAnalyzers`: резервирование итоговой карты, сложение метрик, перенос узлов дупликации. Далее сводки, TSV и отчёты.
+
+### С триммингом (`--trim`, `--full-trim`)
+
+1. `processTrimmedBatchParallel()` / `processTrimmedPairedBatchParallel()` выполняют **QC before → trimming → QC after** в одном OpenMP проходе по batch. Не нужно снова перечитывать исходные FASTQ.
+2. В PE режиме одновременно поддерживаются **четыре набора** thread-local `QualityAnalyzer`: R1/R2 × before/after.
+3. `Trimmer::trimPairDetailed()` применяет UMI, quality trimming, затем (только по явно запрошенным параметрам) overlap/correction, adapter trimming, polyG/polyX, min-length; опционально merge reads. Точный порядок см. в коде `src/trimming/trimmer.cpp`.
+4. После OpenMP цикла `FastqWriter` последовательно записывает прошедшие reads в `.fastq.gz`; затем все наборы статистик объединяются и формируется before/after QC.
+5. `--full-trim` задаёт профиль адаптеры + quality (Q20, window 4) + polyG/polyX + minimum length 50; **не** включает по умолчанию overlap correction, merge или UMI.
+6. `--skip-adapters` относится к adapter-content QC, а **не** к отключению adapter trimming внутри `--full-trim`.
+
+Ключевые файлы:
+- `src/main.cpp` — CLI, batch OpenMP, тримминг+QC, merge, вывод.
+- `src/quality_analyzer.cpp`, `include/quality_analyzer.h` — QC, точная 50-nt duplication, thread-local stats.
+- `src/trimming/trimmer.cpp`, `src/trimming/adapter_trimmer.cpp` — оркестрация тримминга и поиск адаптеров.
+- `src/trimming/pe_overlap.cpp`, `src/trimming/pe_processor.cpp` — overlap/correction/merge.
+- `src/trimming/quality_trimmer.cpp`, `poly_tail_trimmer.cpp`, `umi_processor.cpp` — другие операции.
+- `src/trimming/fastq_writer.cpp` — gzip output.
+- `docs/problems/NeoQC_trim_optimization.md` — предыдущая оценка узких мест, требует нового baseline на текущем коммите.
+
+## 2. Правила совместимости
+
+- Два вычислительных режима: `--compute omp` (по умолчанию, старое поведение) и `--compute cuda` (гибрид OpenMP+GPU). Третий serial CPU backend не нужен.
+- CUDA необязательна при сборке; OMP-бинарник должен работать без NVIDIA GPU и CUDA Toolkit.
+- Все параметры `--trim`, `--full-trim`, quality/adapter/overlap/UMI, `--merge`, `--samples`, `--plot`, `--skip-adapters`, `--timing` работают в обоих режимах.
+- `--compute` выбирает **место вычисления**, но не меняет метрики, trimming policy, FASTQ output, порядок reads или формат отчётов.
+- Выбор GPU-подзадач не должен допускать двойного подсчёта метрик. Перед первым kernel нужен контракт частичных результатов.
+- Точная 50-nt duplication должна остаться точной (без sampling и без скрытой смены ключа).
+- В проекте **не добавлять новую метрику k-mer counting**. Уже используемые внутренние k-mer seed/adapter-matching структуры не являются новой QC-метрикой.
+
+## 3. Матрица компонентов: где считать
+
+| Операция | `--compute omp` | Цель для `--compute cuda` | Приоритет и причина |
+|---|---|---|---|
+| CLI, configuration, samples.csv | CPU | CPU | Оставить |
+| FASTQ reading, gzip input, PE-sync | CPU | CPU | Оставить; I/O bottleneck измерять |
+| FASTQ validation | CPU/OMP | CPU/OMP на первом этапе | Сохранить детерминированные ошибки |
+| Batch creation, staging, output lifecycle | CPU | CPU | Оставить; позже bounded pipeline |
+| QC before: per-base quality/histogram | OMP | CUDA | Кандидат 1 после baseline |
+| QC after: per-base quality/histogram | OMP | CUDA | То же, только passed reads |
+| Per-base A/C/G/T/N, readsPerPosition | OMP | CUDA | Вычислять совместно с quality при возможности |
+| Per-sequence quality (rounded/truncated) | OMP | CUDA | После per-base parity |
+| Per-sequence GC, GC FastQC-compatible | OMP | CUDA, только при точной parity | Семантика округления/дробных bins критична |
+| Read lengths, Q20/Q30, total counts | OMP | CUDA либо OMP — по профилю | Считать вместе с основным kernel, если выгодно |
+| Adapter-content QC (before/after) | OMP | Сначала OMP, CUDA только при выгоде | Не путать с удалением адаптеров |
+| Adapter trimming (`AdapterTrimmer`) | OMP | Сначала оптимизация OMP; CUDA — отдельный эксперимент | Поиск по позициям и tie-break |
+| Quality trimming, sliding window | OMP | Возможно CUDA во второй волне | Требует записи trim boundaries/flags |
+| PolyG/PolyX trimming | OMP | Возможно fused CUDA trimming | Не портить последовательность операций |
+| UMI extraction | OMP | OMP | Изменения IDs/metadata, слабый кандидат |
+| PE overlap detection | OMP | Оставить OMP сначала; возможный CUDA candidate | Только opt-in correction/merge; exact parity |
+| Overlap correction и PE merge | OMP | OMP сначала | Структурные изменения пары и качества |
+| Min-length filtering, paired retention | OMP | CPU/OMP как контракт результата | После всех trim-шагов |
+| Duplication (50 nt exact), overrepresented | OMP | Оставить CPU/OMP до решения memory problem | GPU не решает автоматически OOM; hash-таблицы |
+| Per-thread/local results merging | CPU | CPU + компактные GPU reductions | Снизить peak RSS |
+| gzip output trimmed FASTQ | CPU | CPU | Оптимизировать буферизацию/конвейер отдельно |
+| TSV, QC evaluation, HTML/plots | CPU/Python | CPU/Python | Не переносить |
+
+Рекомендуемая **первая реализация CUDA**: метрики QC (до/после тримминга) на подготовленных read batches. **Не начинать** с GPU-адаптеров или GPU-overlap: нужно сначала доказать, что это лучший узкий участок, и избежать дублирования CPU/GPU-обработки.
+
+## 4. Основной риск — RAM/OOM
+
+Код `src/main.cpp::mergeAnalyzers()` сначала суммирует `getDuplicationEntryCount()`, вызывает `reserveDuplicationEntries(sum)`, затем делает `destination.merge(source)` и `destination.mergeDuplicationCounts(source)`. В `src/quality_analyzer.cpp` использован `unordered_map::extract` / `insert` с переносом узлов. Это **уже не наивное полное копирование** всех элементов, но возможно высокое пиковое выделение bucket-array при `reserve(sum)`, особенно когда между потоками много совпадающих ключей. Кроме того, четыре независимых карты `before/after × R1/R2` могут быть большими.
+
+`Killed` после `Processed ...` **не доказывает** OOM и не доказывает, что виноват `merge`. Проверить OOM killer, peak RSS, фазу и окружение (cgroup/container limit); не рекомендовать 'GPU решит память' без измерений.
+
+Проверка на реальном проблемном образце:
 
 ```bash
-/usr/bin/time -v ./build/neoqc ...
+/usr/bin/time -v -o baseline.time.txt \
+  env OMP_NUM_THREADS=20 ./build/neoqc \
+  --r1 <R1.fastq.gz> --r2 <R2.fastq.gz> \
+  --sample-id baseline --out /path/to/baseline \
+  --full-trim --timing --plot
+
+echo "exit=$?"
+journalctl -k --since '30 minutes ago' | grep -iE 'oom|killed process|out of memory'
+# Если запущено в cgroup v2:
+cat /sys/fs/cgroup/memory.events 2>/dev/null
 ```
 
-Проверить:
+Число потоков и доступная RAM для реального теста должны соответствовать проблемной машине. Если падение воспроизводится, отдельно проверить 4, 8, 20 потоков и степень уникальности дупликационных префиксов. Для проверки OOM **важно** иметь реальные kernel/cgroup logs, а не только exit code `137`.
 
-```text
-Maximum resident set size
+### Инструментация P0
+
+Логировать по `std::chrono::steady_clock` и текущему/пиковому RSS:
+- FASTQ read/decode;
+- QC before;
+- `Trimmer::trimPairDetailed` (внутри — adapter/quality/overlap/poly/UMI по отдельному sampling-трассированию, не на каждой записи);
+- QC after;
+- writer + gzip;
+- `mergeAnalyzers` отдельно для R1-before, R2-before, R1-after, R2-after;
+- построение duplication/overrepresented;
+- output/report.
+
+Держать замеры малозатратными: время по batch, sampling внутри hot loops, не `clock_gettime()` на каждый read.
+
+## 5. Этапы с конкретным первым результатом
+
+| Этап | Суть | Результат/acceptance gate | Зависимость |
+|---|---|---|---|
+| **0A — baseline** | Закрепить коммит, 4 режима (QC-only; `--trim`; `--full-trim`; `--full-trim --skip-adapters`), фиксировать cores/RAM/reads | Файл `benchmarks/baseline.md` с wall-time, RSS, thread count, output size, status | Нет |
+| **0B — OOM/merge** | Фазовые timings + RSS; диагностировать `Killed`, четыре duplication maps; проверить `reserve(sum)` | Доказана/отвергнута гипотеза OOM, memory profile, регрессионные тесты | 0A |
+| **0C — trim bottlenecks** | Замерить adapter matching, overlap(opt-in), gzip output; оптимизация без изменения семантики | Сравнение до/после на trimmed FASTQ и `trimming_report.json` | 0A |
+| **1 — CLI/build** | `--compute omp` по умолчанию, optional CMake CUDA; cuda без toolkit даёт понятную ошибку | CPU-only tests проходят, прежняя CLI не ломается | 0A |
+| **2 — QC contracts** | Вынести компактные промежуточные QC counters и согласовать before/after, R1/R2, filtered pairs | CPU reference tests для partial stats и merge; без изменения форматов TSV | 1 |
+| **3 — CUDA MVP** | Packed batch (offset+length+sequence+quality), H2D, первый kernel пер-base quality+N, compact D2H | CUDA vs OMP exact integer equality на synthetic FASTQ | 2 |
+| **4 — CUDA QC before/after** | Два набора метрик без повторного чтения; решить хранение original/trimmed batch или GPU side boundary | Все before/after R1/R2 parity tests; peak RSS ограничен | 3 |
+| **5 — остальные QC** | Per-sequence quality, GC (в том числе FastQC distribution), positions, Q20/Q30 | Численная parity с явно заданной точностью float | 4 |
+| **6 — trimming CUDA feasibility** | Измерить cost adapter/quality/overlap и H2D/D2H; эксперимент с одним hot kernel, не автоматический port | Решение: оставить OMP либо GPU; end-to-end benchmark | 0C, 4 |
+| **7 — pipeline/I/O** | Bounded reader/worker/writer, gzip bulk-buffering и сохранение порядка | Identical decompressed trimmed FASTQ, peak RSS не выше бюджета | 0B, 4 |
+| **8 — benchmark/stabilize** | Single/paired, trim/no-trim, large/high-unique, batch modes; fail-fast при отсутствии GPU | OMP и CUDA сборки, regression suite и реальные speedups | 3–7 |
+
+Этапы 0A–0C желательно делать в отдельных небольших коммитах/PR. Не переписывать `main.cpp` целиком в одном PR.
+
+## 6. Первая задача, которую стоит делать прямо сейчас
+
+### Issue 0A: `Add phase timing and RSS instrumentation for trim pipeline`
+
+**Изменить:** `src/main.cpp` (первый шаг), опционально новый `include/perf_metrics.h`/`src/perf_metrics.cpp`.
+
+**Подзадачи:**
+1. Расширить `--timing`: read, OpenMP batch, write и post-EOF finalize без изменения обычного вывода.
+2. Внутри OpenMP собирать времена QC-before, trim, QC-after как sampled counters; отдельно общий wall time batch, чтобы не складывать thread CPU-times как wall time.
+3. При входе/выходе четырёх `mergeAnalyzers` логировать RSS и число duplication keys.
+4. Поддержать CSV/TSV benchmark log или компактный текстовый summary по окончании, даже в OMP режиме.
+5. Тест: обычные QC результаты и outputs должны быть идентичны запуску без timing; `ctest --test-dir build --output-on-failure`.
+6. Прогнать 1 небольшой fixture и 1 реальный проблемный dataset; записать аппаратную конфигурацию, команду, `time -v`, OOM/cgroup logs.
+
+**Definition of done:** известна фаза максимума RSS и процент wall time, приходящийся на `trim`, `QC`, gzip write и finalize. После этого выбирается узкий участок. Никакой CUDA в этой задаче нет.
+
+### Issue 0B: `Reduce exact duplication merge peak memory without changing semantics`
+
+Проводить **после** измерений. Проверить эффект `reserve(sum)` на высокой доле межпоточных повторов, переполнение/избыточную ёмкость, память четырёх наборов, а также стоимость `rehash(0)`. Рассмотреть перенос карт по одной и резервацию с учётом фактических distinct (без отключения exact metric). Тестировать полное совпадение duplication TSV/JSON.
+
+### Issue 1: `Introduce optional OMP/CUDA backend selection`
+
+После стабильного baseline и memory диагностики. Добавить `--compute omp|cuda`, optional CUDA compile; при режиме `omp` старый поток вычислений нетронут. Не делать фиктивный CUDA backend, который всё равно считает всё на CPU без сообщения пользователю.
+
+## 7. CUDA архитектура, минимально необходимая
+
+```
+Reader (CPU) -> paired ReadBatch (bounded)
+  |                        |
+  |    --compute omp       |    --compute cuda (hybrid)
+  v                        v
+OpenMP: before QC       CUDA: before QC compact counters
+OpenMP: trim            OpenMP: trim (at first)
+OpenMP: after QC        CUDA: after QC on passing pairs
+  |                        |
+  +-------- partial QC stats + exact duplication CPU maps ------+
+                               |
+                      compact merge and reports
 ```
 
-После падения:
+Не дублировать GPU QC и `QualityAnalyzer::processRecord()` для одних и тех же счётчиков. Для duplication можно предусмотреть отдельный CPU-проход по batch/коротким ключам, а GPU использовать только для выбранных QC counters. Это требует декомпозиции `processRecord` на независимые части. Общий интерфейс должен работать на batch и возвращать **частичные статистики**; не требуется немедленно оборачивать весь `QualityAnalyzer` в virtual class.
 
-```bash
-dmesg -T | grep -i -E 'oom|killed process|out of memory'
-```
+Для GPU данные следует упаковать в SoA/flat buffers: sequence bytes, qualities, offsets, lengths, flags passed, mate IDs, исходные/итоговые границы. Нельзя пересылать `std::string`/`unordered_map` на GPU как есть. Сначала предпочесть один host copy и один или несколько kernels; пиковую RAM и VRAM контролировать, не удерживая две лишние полные копии больших batch.
 
-или:
+Варианты архитектуры before/after:
+- **MVP:** копирование двух packed representations для QC-before и QC-after после CPU-тримминга; просто, но дополнительная копия и больший peak RSS. Проверить на ограниченном batch.
+- **Следующий этап:** GPU-тримминг, возвращающий границы/flags, только если end-to-end benchmark подтверждает эффективность и полное соблюдение контракта.
 
-```bash
-journalctl -k | grep -i -E 'oom|killed process'
-```
+## 8. Приоритеты и запреты
 
-## 8.2. Что искать в коде
+1. **Сейчас:** замеры/OOM/merge → устранение измеренного CPU bottleneck тримминга или memory problem.
+2. **Затем:** optional backend + CUDA QC MVP и before/after с доказанной parity.
+3. **Только по результатам профилирования:** оптимизация gzip pipeline, GPU adapter trimming, GPU overlap.
+4. **Не делать:** K-mer counting metric, GPU I/O ради GPU, скрытую подмену точной duplication approximation, отключение before/after QC ради скорости, сравнение только CUDA kernel-time вместо полного wall time.
 
-Проверить:
+## 9. Проверочная матрица
 
-- хранение всех reads;
-- большие `std::vector`;
-- `unordered_map` / `map`;
-- thread-local analyzers;
-- временные копии;
-- `merge()` с созданием второго большого объекта;
-- duplication structures;
-- sorting;
-- преобразование результатов;
-- одновременное существование local + global + temporary structures.
+Для всех существенных изменений обязательны single-end/paired-end, clean/dirty, mixed-length/short, адаптерные positive/negative, N/GC/Phred boundaries, `--trim`, `--full-trim`, `--overlap-correction`, `--merge`, UMI, `--skip-adapters`, `--plot`, `--samples`. Для QC — integer counts **exact match**, FP — явная tolerance по согласованной семантике, FASTQ — полное совпадение sequence+quality+order (при сравнении gzip сначала распаковать), reports — неизменные значения и структура.
 
-## 8.3. Цель оптимизации merge
-
-Нежелательно:
-
-```text
-local results
-     ↓
-создание огромного temporary result
-     ↓
-copy
-     ↓
-merge
-```
-
-Предпочтительно:
-
-```text
-local result
-     ↓
-incremental merge
-     ↓
-global result
-     ↓
-release local result
-```
-
-Если возможно, merge должен быть потоковым/инкрементальным.
-
----
-
-# 9. Архитектура данных для CUDA
-
-Текущие C++-структуры, содержащие `std::string` и другие сложные объекты, не следует напрямую передавать GPU.
-
-Нужен общий batch:
-
-```cpp
-struct ReadBatch {
-    std::vector<char> sequences;
-    std::vector<char> qualities;
-    std::vector<uint32_t> offsets;
-    std::vector<uint32_t> lengths;
-};
-```
-
-Для CUDA:
-
-```text
-ReadBatch
-   ↓
-Host buffers
-   ↓
-Device buffers
-```
-
-Например:
-
-```text
-sequence_data
-quality_data
-offsets
-lengths
-```
-
-Это позволяет использовать один логический batch для обоих режимов.
-
----
-
-# 10. Общая backend-архитектура
-
-Целевая модель:
-
-```text
-                     NeoQC
-                       │
-                 --compute
-                  /       \
-               omp         cuda
-                │            │
-                ▼            ▼
-             OMP path    hybrid path
-                │            │
-                │       ┌────┴─────┐
-                │       │          │
-                │      OMP       CUDA
-                │       │          │
-                └───────┴──────────┘
-                        │
-                  common results
-                        │
-                QC / reports
-```
-
-Лучше выделить общий интерфейс вычислительного backend.
-
-Например концептуально:
-
-```cpp
-class IAnalyzerBackend {
-public:
-    virtual void processBatch(const ReadBatch& batch) = 0;
-    virtual QualityStats getResults() = 0;
-    virtual ~IAnalyzerBackend() = default;
-};
-```
-
-Реализации:
-
-```text
-OMPBackend
-CudaBackend
-```
-
-При этом `CudaBackend` внутри может использовать OMP для CPU-частей.
-
----
-
-# 11. CUDA kernel strategy
-
-Не переносить OpenMP-код буквально.
-
-Текущая модель:
-
-```text
-OMP thread
-    ↓
-local QualityAnalyzer
-    ↓
-processRecord()
-    ↓
-merge()
-```
-
-CUDA-модель:
-
-```text
-GPU threads
-    ↓
-compact counters
-    ↓
-parallel reduction
-    ↓
-small result
-    ↓
-CPU/OMP
-```
-
-Цель:
-
-> как можно больше вычислений выполнять на GPU и как можно меньше промежуточных данных возвращать на CPU.
-
----
-
-# 12. Reduction
-
-Reduction является одной из ключевых задач CUDA-миграции.
-
-Нежелательно:
-
-```text
-каждый GPU thread
-    ↓
-большой analyzer
-    ↓
-Device → Host
-    ↓
-огромный набор результатов
-    ↓
-CPU merge
-```
-
-Предпочтительно:
-
-```text
-GPU threads
-     ↓
-local counters
-     ↓
-block reduction
-     ↓
-global reduction
-     ↓
-compact result
-     ↓
-CPU
-```
-
-Это одновременно:
-
-- снижает объем D2H;
-- снижает число объектов;
-- уменьшает CPU merge;
-- потенциально снижает пиковое потребление RAM.
-
----
-
-# 13. Batch size
-
-Необходимо отдельно протестировать размеры batch:
-
-```text
-10k
-50k
-100k
-250k
-500k
-1M reads
-```
-
-Для каждого измерять:
-
-| Показатель | Измерять |
-|---|---:|
-| Total time | Да |
-| OMP time | Да |
-| CUDA kernel time | Да |
-| H2D | Да |
-| D2H | Да |
-| Merge | Да |
-| RAM | Да |
-| VRAM | Да |
-| GPU utilization | Да |
-
-Оптимальный batch выбирается по совокупности производительности и памяти.
-
----
-
-# 14. Передача данных
-
-Измерять отдельно:
-
-```text
-T_total =
-    T_read
-  + T_prepare
-  + T_H2D
-  + T_kernel
-  + T_D2H
-  + T_merge
-  + T_output
-```
-
-Нельзя оценивать CUDA только по времени kernel.
-
-Например:
-
-```text
-kernel = 1 s
-H2D + D2H = 8 s
-```
-
-не означает ускорение всего NeoQC.
-
----
-
-# 15. Пошаговая миграция
-
-## P0 — диагностика текущей реализации
-
-- [ ] Запустить `/usr/bin/time -v`.
-- [ ] Проверить kernel log на OOM.
-- [ ] Найти точную фазу `Killed`.
-- [ ] Замерить RAM перед merge.
-- [ ] Замерить RAM во время merge.
-- [ ] Замерить RAM после merge.
-- [ ] Исследовать duplication merge.
-- [ ] Найти временные копии.
-- [ ] Найти структуры, удерживающие данные после `Processed 100%`.
-
-## P1 — backend infrastructure
-
-- [ ] Определить `--compute omp`.
-- [ ] Определить `--compute cuda`.
-- [ ] Оставить OMP backend без изменения поведения.
-- [ ] Выделить общий backend interface.
-- [ ] Выделить общий `ReadBatch`.
-- [ ] Подготовить CMake для optional CUDA.
-- [ ] CUDA не должна быть обязательной для OMP-сборки.
-
-## P2 — CUDA foundation
-
-- [ ] Добавить `.cu` / `.cuh`.
-- [ ] Инициализация CUDA.
-- [ ] Проверка устройства.
-- [ ] Host → Device.
-- [ ] Device → Host.
-- [ ] Первый CUDA kernel.
-- [ ] Первый GPU reduction.
-- [ ] Сравнение с OMP.
-
-## P3 — базовые метрики
-
-- [ ] Per-base quality.
-- [ ] Per-cycle quality.
-- [ ] N content.
-- [ ] GC statistics.
-
-После каждого пункта:
-
-```text
-OMP result
-    vs
-CUDA result
-```
-
-## P4 — sequence-level metrics
-
-- [ ] Per-sequence quality.
-- [ ] Per-sequence GC.
-- [ ] Проверка histogram/reduction.
-- [ ] Проверка больших read counts.
-- [ ] Проверка mixed-length reads.
-
-## P5 — сложные метрики
-
-- [ ] Adapter statistics — точечный перенос.
-- [ ] Sequence duplication — отдельное проектирование.
-- [ ] Оценка необходимости GPU merge.
-
-## P6 — memory optimization
-
-- [ ] Уменьшить local result structures.
-- [ ] Уменьшить temporary allocations.
-- [ ] Сделать incremental merge там, где возможно.
-- [ ] Перенести aggregation на GPU там, где это уменьшает объем результатов.
-- [ ] Проверить peak RAM.
-- [ ] Проверить peak VRAM.
-
-## P7 — benchmark
-
-- [ ] OMP benchmark.
-- [ ] CUDA benchmark.
-- [ ] Hybrid benchmark.
-- [ ] Разные batch sizes.
-- [ ] Разные размеры FASTQ.
-- [ ] Слабый компьютер.
-- [ ] Мощный компьютер с NVIDIA GPU.
-
-## P8 — стабилизация
-
-- [ ] Все существующие тесты.
-- [ ] CUDA-specific tests.
-- [ ] Cross-backend regression tests.
-- [ ] Малые FASTQ.
-- [ ] Большие FASTQ.
-- [ ] Single-end.
-- [ ] Paired-end.
-- [ ] Mixed-length reads.
-- [ ] Проверка `--skip-adapters`.
-- [ ] Проверка `--timing`.
-- [ ] Проверка `--samples`.
-- [ ] Проверка запуска без CUDA через `--compute omp`.
-
----
-
-# 16. Критерий завершения
-
-CUDA-миграция считается технически завершенной, когда:
-
-1. `--compute omp` продолжает работать.
-2. `--compute cuda` запускает гибридный OMP+CUDA pipeline.
-3. Существующие CLI-режимы не меняют поведения.
-4. Основные массово-параллельные QC-метрики работают на CUDA.
-5. Результаты CUDA совпадают с OMP в пределах допустимых численных различий.
-6. CUDA не требует переноса I/O и отчетности на GPU.
-7. Пиковое потребление памяти контролируется.
-8. Причина `Killed` установлена и устранена либо точно локализована.
-9. CUDA benchmark измеряет H2D, kernel, D2H и merge отдельно.
-10. Необходимость дальнейшего переноса Adapter/Duplication определяется профилированием, а не предположением.
-11. K-mer counting в проект не добавляется.
-12. На машине без NVIDIA GPU остается полностью рабочий `--compute omp`.
-
----
-
-# 17. Итоговая целевая схема
-
-```text
-                         NeoQC
-                           │
-                     --compute
-                     /          \
-                  omp            cuda
-                   │               │
-                   ▼               ▼
-             ┌──────────┐    ┌──────────────┐
-             │ OMP/CPU  │    │ OMP/CPU      │
-             │          │    │ FASTQ        │
-             │ all QC   │    │ preparation  │
-             │ metrics  │    │ CPU-only     │
-             └────┬─────┘    └──────┬───────┘
-                  │                 │
-                  │                 ▼
-                  │           ┌──────────────┐
-                  │           │    CUDA      │
-                  │           │              │
-                  │           │ quality      │
-                  │           │ GC           │
-                  │           │ N            │
-                  │           │ sequence QC  │
-                  │           │ reductions   │
-                  │           └──────┬───────┘
-                  │                  │
-                  └─────────┬────────┘
-                            ▼
-                     common results
-                            │
-                            ▼
-                    merge / QC evaluation
-                            │
-                     TSV / JSON / plots
-```
-
-Главный принцип проекта:
-
-> **Не «переписать NeoQC на CUDA», а добавить CUDA как второй backend и постепенно перенести на GPU те вычислительные участки, где это дает измеримый выигрыш. OpenMP при этом остается полноценным CPU backend и используется также внутри гибридного CUDA-режима.**
+Исходная ветка: https://github.com/kk2gvb/NeoQC/tree/optimization_and_cuda

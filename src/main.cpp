@@ -17,6 +17,7 @@
 #include <iomanip>
 #include <stdexcept>
 #include <chrono>
+#include <cstdint>
 #include <optional>
 #include <ctime>
 #include <algorithm>
@@ -38,6 +39,157 @@
 
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
+
+double secondsSince(const Clock::time_point& start)
+{
+    return std::chrono::duration<double>(Clock::now() - start).count();
+}
+
+class ScopedElapsedTimer
+{
+public:
+    explicit ScopedElapsedTimer(double& destination)
+        : destination_(destination), start_(Clock::now())
+    {
+    }
+
+    ~ScopedElapsedTimer()
+    {
+        destination_ += secondsSince(start_);
+    }
+
+    ScopedElapsedTimer(const ScopedElapsedTimer&) = delete;
+    ScopedElapsedTimer& operator=(const ScopedElapsedTimer&) = delete;
+
+private:
+    double& destination_;
+    Clock::time_point start_;
+};
+
+struct ThreadStageTiming
+{
+    double qcBefore = 0.0;
+    double trim = 0.0;
+    double qcAfter = 0.0;
+
+    ThreadStageTiming& operator+=(const ThreadStageTiming& other)
+    {
+        qcBefore += other.qcBefore;
+        trim += other.trim;
+        qcAfter += other.qcAfter;
+        return *this;
+    }
+};
+
+struct RssSnapshot
+{
+    std::optional<std::uint64_t> currentBytes;
+    std::optional<std::uint64_t> peakBytes;
+};
+
+struct RssTransition
+{
+    std::optional<RssSnapshot> before;
+    std::optional<RssSnapshot> after;
+};
+
+std::optional<RssSnapshot> readProcessRss()
+{
+#if defined(__linux__)
+    std::ifstream status("/proc/self/status");
+    if (!status)
+    {
+        return std::nullopt;
+    }
+
+    RssSnapshot snapshot;
+    std::string line;
+    while (std::getline(status, line))
+    {
+        const auto separator = line.find(':');
+        if (separator == std::string::npos)
+        {
+            continue;
+        }
+
+        const std::string key = line.substr(0, separator);
+        if (key != "VmRSS" && key != "VmHWM")
+        {
+            continue;
+        }
+
+        std::istringstream valueStream(line.substr(separator + 1));
+        std::uint64_t kibibytes = 0;
+        std::string unit;
+        if (!(valueStream >> kibibytes >> unit) || unit != "kB")
+        {
+            continue;
+        }
+
+        constexpr std::uint64_t kibibyte = 1024;
+        if (key == "VmRSS")
+        {
+            snapshot.currentBytes = kibibytes * kibibyte;
+        }
+        else
+        {
+            snapshot.peakBytes = kibibytes * kibibyte;
+        }
+    }
+
+    if (!snapshot.currentBytes && !snapshot.peakBytes)
+    {
+        return std::nullopt;
+    }
+    return snapshot;
+#else
+    return std::nullopt;
+#endif
+}
+
+struct TimingMemory
+{
+    std::optional<RssSnapshot> beforeMerge;
+    std::optional<RssSnapshot> afterMerge;
+    std::vector<RssTransition> mergeTransitions;
+    std::optional<RssSnapshot> beforeDuplicationStats;
+    std::optional<RssSnapshot> afterDuplicationStats;
+};
+
+struct SampleTiming
+{
+    explicit SampleTiming(int threadCount)
+        : threadStages(static_cast<std::size_t>(threadCount))
+    {
+    }
+
+    double read = 0.0;
+    double parallel = 0.0;
+    double write = 0.0;
+    double merge = 0.0;
+    double stats = 0.0;
+    double reports = 0.0;
+    double plots = 0.0;
+    double total = 0.0;
+    std::vector<ThreadStageTiming> threadStages;
+    TimingMemory memory;
+    Clock::time_point started = Clock::now();
+
+    void addThreadStages(int threadId, const ThreadStageTiming& stages)
+    {
+        threadStages[static_cast<std::size_t>(threadId)] += stages;
+    }
+
+    ThreadStageTiming accumulatedThreadStages() const
+    {
+        ThreadStageTiming totalStages;
+        for (const auto& stages : threadStages)
+        {
+            totalStages += stages;
+        }
+        return totalStages;
+    }
+};
 
 struct AnalysisResult {
     QualityStats r1Stats;
@@ -65,6 +217,7 @@ struct Args {
     std::string samples;
     bool        plot = false;
     bool        skipAdapters = false;
+    bool        timing = false;
     bool        trimmingOptionSpecified = false;
     bool        adapterConfigSpecified = false;
     std::string adapterConfig;
@@ -140,17 +293,18 @@ Args parseArgs(int argc, char* argv[]) {
             return parsed;
         };
 
-        if      (arg == "--r1")        args.r1       = needValue("--r1");
-        else if (arg == "--r2")        args.r2       = needValue("--r2");
-        else if (arg == "--sample-id") args.sampleId = needValue("--sample-id");
-        else if (arg == "--out")       args.outDir   = needValue("--out");
-        else if (arg == "--samples")   args.samples  = needValue("--samples");
-        else if (arg == "--plot")      args.plot     = true;
+        if      (arg == "--r1")            args.r1       = needValue("--r1");
+        else if (arg == "--r2")            args.r2       = needValue("--r2");
+        else if (arg == "--sample-id")     args.sampleId = needValue("--sample-id");
+        else if (arg == "--out")           args.outDir   = needValue("--out");
+        else if (arg == "--samples")       args.samples  = needValue("--samples");
+        else if (arg == "--plot")          args.plot     = true;
         else if (arg == "--skip-adapters") args.skipAdapters = true;
-        else if (arg == "--trim")      args.trimConfig.enabled = true;
-        else if (arg == "--full-trim") applyFullTrimProfile(args);
-        else if (arg == "--trim-front") args.trimConfig.trim_front = parseSize(arg);
-        else if (arg == "--trim-tail")  args.trimConfig.trim_tail = parseSize(arg);
+        else if (arg == "--timing")        args.timing = true;
+        else if (arg == "--trim")          args.trimConfig.enabled = true;
+        else if (arg == "--full-trim")     applyFullTrimProfile(args);
+        else if (arg == "--trim-front")    args.trimConfig.trim_front = parseSize(arg);
+        else if (arg == "--trim-tail")     args.trimConfig.trim_tail = parseSize(arg);
         else if (arg == "--cut-front") {
             args.trimmingOptionSpecified = true;
             args.trimConfig.cut_front = true;
@@ -290,11 +444,11 @@ void printUsage(const char* progName) {
         "NeoQC — FASTQ quality analysis\n\n"
         "Usage:\n"
         "  single-end:\n"
-        "    " << progName << " --r1 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters] [--trim | --full-trim]\n\n"
+        "    " << progName << " --r1 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters] [--timing] [--trim | --full-trim]\n\n"
         "  paired-end:\n"
-        "    " << progName << " --r1 <file> --r2 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters] [--trim | --full-trim]\n\n"
+        "    " << progName << " --r1 <file> --r2 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters] [--timing] [--trim | --full-trim]\n\n"
         "  validate sample sheet:\n"
-        "    " << progName << " --samples <samples.csv> [--out <dir>] [--plot] [--skip-adapters] [--trim | --full-trim]\n\n"
+        "    " << progName << " --samples <samples.csv> [--out <dir>] [--plot] [--skip-adapters] [--timing] [--trim | --full-trim]\n\n"
         "Options:\n"
         "  --r1 <file>       Path to R1 FASTQ (plain or .gz)\n"
         "  --r2 <file>       Path to R2 FASTQ (optional, for paired-end)\n"
@@ -302,7 +456,8 @@ void printUsage(const char* progName) {
         "  --out <dir>       Output directory (created if missing); enables batch QC with --samples\n"
         "  --samples <file>  Validate a CSV table; combine with --out to run batch QC\n"
         "  --plot            Build plots via plot_results.py (optional)\n"
-        "  --skip-adapters   Disable QC adapter search (for performance measurements)\n\n"
+        "  --skip-adapters   Disable QC adapter search (for performance measurements)\n"
+        "  --timing          Print per-sample performance and RSS diagnostics\n\n"
         "Trimming options (require --trim or --full-trim):\n"
         "  --trim                 Enable the trimming pipeline, FASTQ output, and before/after QC\n"
         "  --full-trim            Standard profile: adapters, quality trimming, polyG/polyX, min length 50\n"
@@ -417,33 +572,67 @@ BaseValidationError processRecord(
     return error;
 }
 
-void processBatchParallel(
+template <bool CollectTiming>
+void processBatchParallelImpl(
     std::vector<QualityAnalyzer>& analyzers,
     std::vector<FastqRecord>& batch,
     bool skipAdapters,
-    std::vector<Trimmer>* trimmers = nullptr)
+    std::vector<Trimmer>* trimmers,
+    SampleTiming* timing)
 {
-    std::vector<BaseValidationError> validationErrors(
-        analyzers.size());
+    std::vector<BaseValidationError> validationErrors(analyzers.size());
 
-    #pragma omp parallel for schedule(static)
-    for (int i = 0; i < static_cast<int>(batch.size()); ++i)
+    #pragma omp parallel
     {
         const int threadId = omp_get_thread_num();
+        ThreadStageTiming localStages;
 
-        if (trimmers != nullptr)
+        #pragma omp for schedule(static)
+        for (int i = 0; i < static_cast<int>(batch.size()); ++i)
         {
-            (*trimmers)[threadId].trim(batch[i]);
+            if (trimmers != nullptr)
+            {
+                if constexpr (CollectTiming)
+                {
+                    const auto trimStart = Clock::now();
+                    (*trimmers)[threadId].trim(batch[i]);
+                    localStages.trim += secondsSince(trimStart);
+                }
+                else
+                {
+                    (*trimmers)[threadId].trim(batch[i]);
+                }
+            }
+
+            BaseValidationError error;
+            if constexpr (CollectTiming)
+            {
+                const auto qcStart = Clock::now();
+                error = processRecord(analyzers[threadId], batch[i], skipAdapters);
+                const double elapsed = secondsSince(qcStart);
+                if (trimmers == nullptr)
+                {
+                    localStages.qcBefore += elapsed;
+                }
+                else
+                {
+                    localStages.qcAfter += elapsed;
+                }
+            }
+            else
+            {
+                error = processRecord(analyzers[threadId], batch[i], skipAdapters);
+            }
+
+            if (error.found)
+            {
+                validationErrors[threadId] = error;
+            }
         }
 
-        BaseValidationError error = processRecord(
-            analyzers[threadId],
-            batch[i],
-            skipAdapters);
-
-        if (error.found)
+        if constexpr (CollectTiming)
         {
-            validationErrors[threadId] = error;
+            timing->addThreadStages(threadId, localStages);
         }
     }
 
@@ -452,50 +641,106 @@ void processBatchParallel(
         if (error.found)
         {
             std::ostringstream oss;
-
             oss << "FASTQ validation error:\n"
                 << "record: " << error.recordNumber
                 << "\n"
-                << "reason: invalid base '"
-                << error.base
-                << "' at position "
-                << (error.position + 1);
-
+                << "reason: invalid base '" << error.base
+                << "' at position " << (error.position + 1);
             throw std::runtime_error(oss.str());
         }
     }
 }
 
-void processPairedBatchParallel(
+void processBatchParallel(
+    std::vector<QualityAnalyzer>& analyzers,
+    std::vector<FastqRecord>& batch,
+    bool skipAdapters,
+    std::vector<Trimmer>* trimmers = nullptr,
+    SampleTiming* timing = nullptr)
+{
+    if (timing == nullptr)
+    {
+        processBatchParallelImpl<false>(
+            analyzers, batch, skipAdapters, trimmers, nullptr);
+        return;
+    }
+
+    ScopedElapsedTimer wallTimer(timing->parallel);
+    processBatchParallelImpl<true>(
+        analyzers, batch, skipAdapters, trimmers, timing);
+}
+
+template <bool CollectTiming>
+void processPairedBatchParallelImpl(
     std::vector<QualityAnalyzer>& analyzersR1,
     std::vector<QualityAnalyzer>& analyzersR2,
     std::vector<FastqRecord>& batchR1,
     std::vector<FastqRecord>& batchR2,
     bool skipAdapters,
-    std::vector<Trimmer>* trimmers = nullptr)
+    std::vector<Trimmer>* trimmers,
+    SampleTiming* timing)
 {
     std::vector<BaseValidationError> validationErrors(analyzersR1.size());
 
-    #pragma omp parallel for schedule(static)
-    for (int i = 0; i < static_cast<int>(batchR1.size()); ++i)
+    #pragma omp parallel
     {
         const int threadId = omp_get_thread_num();
+        ThreadStageTiming localStages;
 
-        if (trimmers != nullptr)
+        #pragma omp for schedule(static)
+        for (int i = 0; i < static_cast<int>(batchR1.size()); ++i)
         {
-            (*trimmers)[threadId].trimPair(batchR1[i], batchR2[i]);
+            if (trimmers != nullptr)
+            {
+                if constexpr (CollectTiming)
+                {
+                    const auto trimStart = Clock::now();
+                    (*trimmers)[threadId].trimPair(batchR1[i], batchR2[i]);
+                    localStages.trim += secondsSince(trimStart);
+                }
+                else
+                {
+                    (*trimmers)[threadId].trimPair(batchR1[i], batchR2[i]);
+                }
+            }
+
+            BaseValidationError error;
+            if constexpr (CollectTiming)
+            {
+                const auto qcStart = Clock::now();
+                error = processRecord(analyzersR1[threadId], batchR1[i], skipAdapters);
+                if (!error.found)
+                {
+                    error = processRecord(analyzersR2[threadId], batchR2[i], skipAdapters);
+                }
+                const double elapsed = secondsSince(qcStart);
+                if (trimmers == nullptr)
+                {
+                    localStages.qcBefore += elapsed;
+                }
+                else
+                {
+                    localStages.qcAfter += elapsed;
+                }
+            }
+            else
+            {
+                error = processRecord(analyzersR1[threadId], batchR1[i], skipAdapters);
+                if (!error.found)
+                {
+                    error = processRecord(analyzersR2[threadId], batchR2[i], skipAdapters);
+                }
+            }
+
+            if (error.found)
+            {
+                validationErrors[threadId] = error;
+            }
         }
 
-        BaseValidationError error = processRecord(
-            analyzersR1[threadId], batchR1[i], skipAdapters);
-        if (!error.found)
+        if constexpr (CollectTiming)
         {
-            error = processRecord(
-                analyzersR2[threadId], batchR2[i], skipAdapters);
-        }
-        if (error.found)
-        {
-            validationErrors[threadId] = error;
+            timing->addThreadStages(threadId, localStages);
         }
     }
 
@@ -513,35 +758,240 @@ void processPairedBatchParallel(
     }
 }
 
+void processPairedBatchParallel(
+    std::vector<QualityAnalyzer>& analyzersR1,
+    std::vector<QualityAnalyzer>& analyzersR2,
+    std::vector<FastqRecord>& batchR1,
+    std::vector<FastqRecord>& batchR2,
+    bool skipAdapters,
+    std::vector<Trimmer>* trimmers = nullptr,
+    SampleTiming* timing = nullptr)
+{
+    if (timing == nullptr)
+    {
+        processPairedBatchParallelImpl<false>(
+            analyzersR1, analyzersR2, batchR1, batchR2, skipAdapters,
+            trimmers, nullptr);
+        return;
+    }
+
+    ScopedElapsedTimer wallTimer(timing->parallel);
+    processPairedBatchParallelImpl<true>(
+        analyzersR1, analyzersR2, batchR1, batchR2, skipAdapters,
+        trimmers, timing);
+}
+
+template <bool CollectTiming>
+void processTrimmedBatchParallelImpl(
+    std::vector<QualityAnalyzer>& beforeAnalyzers,
+    std::vector<QualityAnalyzer>& afterAnalyzers,
+    std::vector<Trimmer>& trimmers,
+    std::vector<FastqRecord>& batch,
+    std::vector<TrimResult>& trimResults,
+    bool skipAdapters,
+    SampleTiming* timing)
+{
+    trimResults.resize(batch.size());
+    std::vector<BaseValidationError> validationErrors(beforeAnalyzers.size());
+
+    #pragma omp parallel
+    {
+        const int threadId = omp_get_thread_num();
+        ThreadStageTiming localStages;
+
+        #pragma omp for schedule(static)
+        for (int i = 0; i < static_cast<int>(batch.size()); ++i)
+        {
+            BaseValidationError error;
+            if constexpr (CollectTiming)
+            {
+                const auto qcBeforeStart = Clock::now();
+                error = processRecord(beforeAnalyzers[threadId], batch[i], skipAdapters);
+                localStages.qcBefore += secondsSince(qcBeforeStart);
+            }
+            else
+            {
+                error = processRecord(beforeAnalyzers[threadId], batch[i], skipAdapters);
+            }
+
+            if (!error.found)
+            {
+                if constexpr (CollectTiming)
+                {
+                    const auto trimStart = Clock::now();
+                    trimResults[i] = trimmers[threadId].trim(batch[i]);
+                    localStages.trim += secondsSince(trimStart);
+                }
+                else
+                {
+                    trimResults[i] = trimmers[threadId].trim(batch[i]);
+                }
+
+                if (trimResults[i].passed)
+                {
+                    if constexpr (CollectTiming)
+                    {
+                        const auto qcAfterStart = Clock::now();
+                        error = processRecord(afterAnalyzers[threadId], batch[i], skipAdapters);
+                        localStages.qcAfter += secondsSince(qcAfterStart);
+                    }
+                    else
+                    {
+                        error = processRecord(afterAnalyzers[threadId], batch[i], skipAdapters);
+                    }
+                }
+            }
+
+            if (error.found)
+            {
+                validationErrors[threadId] = error;
+            }
+        }
+
+        if constexpr (CollectTiming)
+        {
+            timing->addThreadStages(threadId, localStages);
+        }
+    }
+
+    for (const auto& error : validationErrors)
+    {
+        if (error.found)
+        {
+            std::ostringstream message;
+            message << "FASTQ validation error:\n"
+                    << "record: " << error.recordNumber
+                    << "\nreason: invalid base '" << error.base
+                    << "' at position " << (error.position + 1);
+            throw std::runtime_error(message.str());
+        }
+    }
+}
+
 void processTrimmedBatchParallel(
     std::vector<QualityAnalyzer>& beforeAnalyzers,
     std::vector<QualityAnalyzer>& afterAnalyzers,
     std::vector<Trimmer>& trimmers,
     std::vector<FastqRecord>& batch,
     std::vector<TrimResult>& trimResults,
-    bool skipAdapters)
+    bool skipAdapters,
+    SampleTiming* timing = nullptr)
 {
-    trimResults.resize(batch.size());
-    std::vector<BaseValidationError> validationErrors(beforeAnalyzers.size());
+    if (timing == nullptr)
+    {
+        processTrimmedBatchParallelImpl<false>(
+            beforeAnalyzers, afterAnalyzers, trimmers, batch, trimResults,
+            skipAdapters, nullptr);
+        return;
+    }
 
-    #pragma omp parallel for schedule(static)
-    for (int i = 0; i < static_cast<int>(batch.size()); ++i)
+    ScopedElapsedTimer wallTimer(timing->parallel);
+    processTrimmedBatchParallelImpl<true>(
+        beforeAnalyzers, afterAnalyzers, trimmers, batch, trimResults,
+        skipAdapters, timing);
+}
+
+template <bool CollectTiming>
+void processTrimmedPairedBatchParallelImpl(
+    std::vector<QualityAnalyzer>& beforeAnalyzersR1,
+    std::vector<QualityAnalyzer>& beforeAnalyzersR2,
+    std::vector<QualityAnalyzer>& afterAnalyzersR1,
+    std::vector<QualityAnalyzer>& afterAnalyzersR2,
+    std::vector<Trimmer>& trimmers,
+    std::vector<FastqRecord>& batchR1,
+    std::vector<FastqRecord>& batchR2,
+    std::vector<TrimResult>& trimResultsR1,
+    std::vector<TrimResult>& trimResultsR2,
+    std::vector<std::optional<FastqRecord>>& mergedRecords,
+    bool skipAdapters,
+    SampleTiming* timing)
+{
+    trimResultsR1.resize(batchR1.size());
+    trimResultsR2.resize(batchR2.size());
+    mergedRecords.resize(batchR1.size());
+    std::vector<BaseValidationError> validationErrors(beforeAnalyzersR1.size());
+
+    #pragma omp parallel
     {
         const int threadId = omp_get_thread_num();
-        BaseValidationError error = processRecord(
-            beforeAnalyzers[threadId], batch[i], skipAdapters);
-        if (!error.found)
+        ThreadStageTiming localStages;
+
+        #pragma omp for schedule(static)
+        for (int i = 0; i < static_cast<int>(batchR1.size()); ++i)
         {
-            trimResults[i] = trimmers[threadId].trim(batch[i]);
-            if (trimResults[i].passed)
+            BaseValidationError error;
+            if constexpr (CollectTiming)
             {
-                error = processRecord(
-                    afterAnalyzers[threadId], batch[i], skipAdapters);
+                const auto qcBeforeStart = Clock::now();
+                error = processRecord(beforeAnalyzersR1[threadId], batchR1[i], skipAdapters);
+                if (!error.found)
+                {
+                    error = processRecord(beforeAnalyzersR2[threadId], batchR2[i], skipAdapters);
+                }
+                localStages.qcBefore += secondsSince(qcBeforeStart);
+            }
+            else
+            {
+                error = processRecord(beforeAnalyzersR1[threadId], batchR1[i], skipAdapters);
+                if (!error.found)
+                {
+                    error = processRecord(beforeAnalyzersR2[threadId], batchR2[i], skipAdapters);
+                }
+            }
+
+            if (!error.found)
+            {
+                if constexpr (CollectTiming)
+                {
+                    const auto trimStart = Clock::now();
+                    PairTrimResult results =
+                        trimmers[threadId].trimPairDetailed(batchR1[i], batchR2[i]);
+                    trimResultsR1[i] = std::move(results.r1);
+                    trimResultsR2[i] = std::move(results.r2);
+                    mergedRecords[i] = std::move(results.merged);
+                    localStages.trim += secondsSince(trimStart);
+                }
+                else
+                {
+                    PairTrimResult results =
+                        trimmers[threadId].trimPairDetailed(batchR1[i], batchR2[i]);
+                    trimResultsR1[i] = std::move(results.r1);
+                    trimResultsR2[i] = std::move(results.r2);
+                    mergedRecords[i] = std::move(results.merged);
+                }
+
+                if (trimResultsR1[i].passed && trimResultsR2[i].passed)
+                {
+                    if constexpr (CollectTiming)
+                    {
+                        const auto qcAfterStart = Clock::now();
+                        error = processRecord(afterAnalyzersR1[threadId], batchR1[i], skipAdapters);
+                        if (!error.found)
+                        {
+                            error = processRecord(afterAnalyzersR2[threadId], batchR2[i], skipAdapters);
+                        }
+                        localStages.qcAfter += secondsSince(qcAfterStart);
+                    }
+                    else
+                    {
+                        error = processRecord(afterAnalyzersR1[threadId], batchR1[i], skipAdapters);
+                        if (!error.found)
+                        {
+                            error = processRecord(afterAnalyzersR2[threadId], batchR2[i], skipAdapters);
+                        }
+                    }
+                }
+            }
+
+            if (error.found)
+            {
+                validationErrors[threadId] = error;
             }
         }
-        if (error.found)
+
+        if constexpr (CollectTiming)
         {
-            validationErrors[threadId] = error;
+            timing->addThreadStages(threadId, localStages);
         }
     }
 
@@ -570,60 +1020,23 @@ void processTrimmedPairedBatchParallel(
     std::vector<TrimResult>& trimResultsR1,
     std::vector<TrimResult>& trimResultsR2,
     std::vector<std::optional<FastqRecord>>& mergedRecords,
-    bool skipAdapters)
+    bool skipAdapters,
+    SampleTiming* timing = nullptr)
 {
-    trimResultsR1.resize(batchR1.size());
-    trimResultsR2.resize(batchR2.size());
-    mergedRecords.resize(batchR1.size());
-    std::vector<BaseValidationError> validationErrors(beforeAnalyzersR1.size());
-
-    #pragma omp parallel for schedule(static)
-    for (int i = 0; i < static_cast<int>(batchR1.size()); ++i)
+    if (timing == nullptr)
     {
-        const int threadId = omp_get_thread_num();
-        BaseValidationError error = processRecord(
-            beforeAnalyzersR1[threadId], batchR1[i], skipAdapters);
-        if (!error.found)
-        {
-            error = processRecord(
-                beforeAnalyzersR2[threadId], batchR2[i], skipAdapters);
-        }
-        if (!error.found)
-        {
-            PairTrimResult results =
-                trimmers[threadId].trimPairDetailed(batchR1[i], batchR2[i]);
-            trimResultsR1[i] = std::move(results.r1);
-            trimResultsR2[i] = std::move(results.r2);
-            mergedRecords[i] = std::move(results.merged);
-            if (trimResultsR1[i].passed && trimResultsR2[i].passed)
-            {
-                error = processRecord(
-                    afterAnalyzersR1[threadId], batchR1[i], skipAdapters);
-                if (!error.found)
-                {
-                    error = processRecord(
-                        afterAnalyzersR2[threadId], batchR2[i], skipAdapters);
-                }
-            }
-        }
-        if (error.found)
-        {
-            validationErrors[threadId] = error;
-        }
+        processTrimmedPairedBatchParallelImpl<false>(
+            beforeAnalyzersR1, beforeAnalyzersR2, afterAnalyzersR1,
+            afterAnalyzersR2, trimmers, batchR1, batchR2, trimResultsR1,
+            trimResultsR2, mergedRecords, skipAdapters, nullptr);
+        return;
     }
 
-    for (const auto& error : validationErrors)
-    {
-        if (error.found)
-        {
-            std::ostringstream message;
-            message << "FASTQ validation error:\n"
-                    << "record: " << error.recordNumber
-                    << "\nreason: invalid base '" << error.base
-                    << "' at position " << (error.position + 1);
-            throw std::runtime_error(message.str());
-        }
-    }
+    ScopedElapsedTimer wallTimer(timing->parallel);
+    processTrimmedPairedBatchParallelImpl<true>(
+        beforeAnalyzersR1, beforeAnalyzersR2, afterAnalyzersR1,
+        afterAnalyzersR2, trimmers, batchR1, batchR2, trimResultsR1,
+        trimResultsR2, mergedRecords, skipAdapters, timing);
 }
 
 bool readPairedBatch(
@@ -1231,13 +1644,56 @@ void mergeAnalyzers(QualityAnalyzer& destination,
     }
 }
 
+void mergeAnalyzersWithTiming(
+    QualityAnalyzer& destination,
+    std::vector<QualityAnalyzer>& sources,
+    SampleTiming* timing)
+{
+    if (timing == nullptr)
+    {
+        mergeAnalyzers(destination, sources);
+        return;
+    }
+
+    RssTransition transition;
+    transition.before = readProcessRss();
+    if (!timing->memory.beforeMerge)
+    {
+        timing->memory.beforeMerge = transition.before;
+    }
+    {
+        ScopedElapsedTimer mergeTimer(timing->merge);
+        mergeAnalyzers(destination, sources);
+    }
+    transition.after = readProcessRss();
+    timing->memory.afterMerge = transition.after;
+    timing->memory.mergeTransitions.push_back(std::move(transition));
+}
+
+void markBeforeDuplicationStats(SampleTiming* timing)
+{
+    if (timing != nullptr)
+    {
+        timing->memory.beforeDuplicationStats = readProcessRss();
+    }
+}
+
+void markAfterDuplicationStats(SampleTiming* timing)
+{
+    if (timing != nullptr)
+    {
+        timing->memory.afterDuplicationStats = readProcessRss();
+    }
+}
+
 AnalysisResult processOneFileWithTrimming(
     const std::string& path,
     const std::string& readName,
     const std::string& outDir,
     const std::string& sampleId,
     bool skipAdapters,
-    const TrimConfig& trimConfig)
+    const TrimConfig& trimConfig,
+    SampleTiming* timing)
 {
     AnalysisResult result;
     const fs::path root(outDir);
@@ -1273,17 +1729,38 @@ AnalysisResult processOneFileWithTrimming(
     std::vector<FastqRecord> batch;
     std::vector<TrimResult> trimResults;
     std::size_t count = 0;
-    while (reader.readBatch(batch, BATCH_SIZE)) {
+    while (true) {
+        bool hasBatch = false;
+        if (timing != nullptr) {
+            ScopedElapsedTimer readTimer(timing->read);
+            hasBatch = reader.readBatch(batch, BATCH_SIZE);
+        } else {
+            hasBatch = reader.readBatch(batch, BATCH_SIZE);
+        }
+        if (!hasBatch) {
+            break;
+        }
+
         processTrimmedBatchParallel(
             beforeAnalyzers,
             afterAnalyzers,
             trimmers,
             batch,
             trimResults,
-            skipAdapters);
-        for (std::size_t i = 0; i < batch.size(); ++i) {
-            if (trimResults[i].passed) {
-                writer.write(batch[i]);
+            skipAdapters,
+            timing);
+        if (timing != nullptr) {
+            ScopedElapsedTimer writeTimer(timing->write);
+            for (std::size_t i = 0; i < batch.size(); ++i) {
+                if (trimResults[i].passed) {
+                    writer.write(batch[i]);
+                }
+            }
+        } else {
+            for (std::size_t i = 0; i < batch.size(); ++i) {
+                if (trimResults[i].passed) {
+                    writer.write(batch[i]);
+                }
             }
         }
         count += batch.size();
@@ -1291,43 +1768,84 @@ AnalysisResult processOneFileWithTrimming(
             std::cout << "Processed " << count << " reads...\n";
         }
     }
-    writer.close();
+    if (timing != nullptr) {
+        ScopedElapsedTimer writeTimer(timing->write);
+        writer.close();
+    } else {
+        writer.close();
+    }
 
     QualityAnalyzer beforeAnalyzer;
     QualityAnalyzer afterAnalyzer;
-    mergeAnalyzers(beforeAnalyzer, beforeAnalyzers);
-    mergeAnalyzers(afterAnalyzer, afterAnalyzers);
+    mergeAnalyzersWithTiming(beforeAnalyzer, beforeAnalyzers, timing);
+    mergeAnalyzersWithTiming(afterAnalyzer, afterAnalyzers, timing);
     for (const auto& trimmer : trimmers) {
         result.trimmingStats.merge(trimmer.getStats());
     }
 
-    const QualityStats beforeStats = beforeAnalyzer.getStats();
-    const QualityStats afterStats = afterAnalyzer.getStats();
-    const DuplicationStats beforeDuplication =
-        beforeAnalyzer.getDuplicationStats();
-    const DuplicationStats afterDuplication =
-        afterAnalyzer.getDuplicationStats();
+    QualityStats beforeStats;
+    QualityStats afterStats;
+    DuplicationStats beforeDuplication;
+    DuplicationStats afterDuplication;
+    if (timing != nullptr) {
+        ScopedElapsedTimer statsTimer(timing->stats);
+        beforeStats = beforeAnalyzer.getStats();
+        afterStats = afterAnalyzer.getStats();
+        markBeforeDuplicationStats(timing);
+        beforeDuplication = beforeAnalyzer.getDuplicationStats();
+        afterDuplication = afterAnalyzer.getDuplicationStats();
+        markAfterDuplicationStats(timing);
+    } else {
+        beforeStats = beforeAnalyzer.getStats();
+        afterStats = afterAnalyzer.getStats();
+        beforeDuplication = beforeAnalyzer.getDuplicationStats();
+        afterDuplication = afterAnalyzer.getDuplicationStats();
+    }
 
-    printConsoleSummary(beforeStats, readName + " BEFORE", skipAdapters);
-    printConsoleSummary(afterStats, readName + " AFTER", skipAdapters);
-    writeAnalysisReports(
-        beforeStats,
-        beforeDuplication,
-        beforeAnalyzer,
-        path,
-        beforeDir.string(),
-        sampleId,
-        readName,
-        skipAdapters);
-    writeAnalysisReports(
-        afterStats,
-        afterDuplication,
-        afterAnalyzer,
-        trimmedPath.string(),
-        afterDir.string(),
-        sampleId,
-        readName,
-        skipAdapters);
+    if (timing != nullptr) {
+        ScopedElapsedTimer reportTimer(timing->reports);
+        printConsoleSummary(beforeStats, readName + " BEFORE", skipAdapters);
+        printConsoleSummary(afterStats, readName + " AFTER", skipAdapters);
+        writeAnalysisReports(
+            beforeStats,
+            beforeDuplication,
+            beforeAnalyzer,
+            path,
+            beforeDir.string(),
+            sampleId,
+            readName,
+            skipAdapters);
+        writeAnalysisReports(
+            afterStats,
+            afterDuplication,
+            afterAnalyzer,
+            trimmedPath.string(),
+            afterDir.string(),
+            sampleId,
+            readName,
+            skipAdapters);
+    } else {
+        printConsoleSummary(beforeStats, readName + " BEFORE", skipAdapters);
+        printConsoleSummary(afterStats, readName + " AFTER", skipAdapters);
+        writeAnalysisReports(
+            beforeStats,
+            beforeDuplication,
+            beforeAnalyzer,
+            path,
+            beforeDir.string(),
+            sampleId,
+            readName,
+            skipAdapters);
+        writeAnalysisReports(
+            afterStats,
+            afterDuplication,
+            afterAnalyzer,
+            trimmedPath.string(),
+            afterDir.string(),
+            sampleId,
+            readName,
+            skipAdapters);
+    }
 
     result.r1Stats = beforeStats;
     result.r1AfterStats = afterStats;
@@ -1342,10 +1860,11 @@ AnalysisResult processOneFile(const std::string& path,
                             const std::string& outDir,
                             const std::string& sampleId,
                             bool skipAdapters,
-                            const TrimConfig* trimConfig = nullptr) {
+                            const TrimConfig* trimConfig = nullptr,
+                            SampleTiming* timing = nullptr) {
     if (trimConfig != nullptr) {
         return processOneFileWithTrimming(
-            path, readName, outDir, sampleId, skipAdapters, *trimConfig);
+            path, readName, outDir, sampleId, skipAdapters, *trimConfig, timing);
     }
     AnalysisResult result;
     beginDuplicationArtifacts(outDir, readName, path);
@@ -1383,13 +1902,29 @@ AnalysisResult processOneFile(const std::string& path,
 
     size_t count = 0;
 
-    while (reader.readBatch(batch, BATCH_SIZE))
+    while (true)
     {
+        bool hasBatch = false;
+        if (timing != nullptr)
+        {
+            ScopedElapsedTimer readTimer(timing->read);
+            hasBatch = reader.readBatch(batch, BATCH_SIZE);
+        }
+        else
+        {
+            hasBatch = reader.readBatch(batch, BATCH_SIZE);
+        }
+        if (!hasBatch)
+        {
+            break;
+        }
+
         processBatchParallel(
             localAnalyzers,
             batch,
             skipAdapters,
-            trimConfig != nullptr ? &localTrimmers : nullptr);
+            trimConfig != nullptr ? &localTrimmers : nullptr,
+            timing);
 
         count += batch.size();
 
@@ -1401,27 +1936,54 @@ AnalysisResult processOneFile(const std::string& path,
         }
     }
 
-    mergeAnalyzers(analyzer, localAnalyzers);
+    mergeAnalyzersWithTiming(analyzer, localAnalyzers, timing);
     for (const auto& localTrimmer : localTrimmers)
     {
         result.trimmingStats.merge(localTrimmer.getStats());
     }
 
-    QualityStats stats = analyzer.getStats();
-
-    const DuplicationStats duplicationStats = analyzer.getDuplicationStats();
-
-    printConsoleSummary(stats, readName, skipAdapters);
+    QualityStats stats;
+    DuplicationStats duplicationStats;
+    if (timing != nullptr)
     {
-    writeAnalysisReports(
-        stats,
-        duplicationStats,
-        analyzer,
-        path,
-        outDir,
-        sampleId,
-        readName,
-        skipAdapters);
+        ScopedElapsedTimer statsTimer(timing->stats);
+        stats = analyzer.getStats();
+        markBeforeDuplicationStats(timing);
+        duplicationStats = analyzer.getDuplicationStats();
+        markAfterDuplicationStats(timing);
+    }
+    else
+    {
+        stats = analyzer.getStats();
+        duplicationStats = analyzer.getDuplicationStats();
+    }
+
+    if (timing != nullptr)
+    {
+        ScopedElapsedTimer reportTimer(timing->reports);
+        printConsoleSummary(stats, readName, skipAdapters);
+        writeAnalysisReports(
+            stats,
+            duplicationStats,
+            analyzer,
+            path,
+            outDir,
+            sampleId,
+            readName,
+            skipAdapters);
+    }
+    else
+    {
+        printConsoleSummary(stats, readName, skipAdapters);
+        writeAnalysisReports(
+            stats,
+            duplicationStats,
+            analyzer,
+            path,
+            outDir,
+            sampleId,
+            readName,
+            skipAdapters);
     }
 
     result.r1Stats = stats;
@@ -1435,7 +1997,8 @@ AnalysisResult processPairedFilesWithTrimming(
     const std::string& outDir,
     const std::string& sampleId,
     bool skipAdapters,
-    const TrimConfig& trimConfig)
+    const TrimConfig& trimConfig,
+    SampleTiming* timing)
 {
     AnalysisResult result;
     const fs::path root(outDir);
@@ -1490,9 +2053,20 @@ AnalysisResult processPairedFilesWithTrimming(
     std::vector<TrimResult> trimResultsR2;
     std::vector<std::optional<FastqRecord>> mergedRecords;
     std::size_t count = 0;
-    while (readPairedBatch(
-        readerR1, readerR2, batchR1, batchR2, BATCH_SIZE))
-    {
+    while (true) {
+        bool hasBatch = false;
+        if (timing != nullptr) {
+            ScopedElapsedTimer readTimer(timing->read);
+            hasBatch = readPairedBatch(
+                readerR1, readerR2, batchR1, batchR2, BATCH_SIZE);
+        } else {
+            hasBatch = readPairedBatch(
+                readerR1, readerR2, batchR1, batchR2, BATCH_SIZE);
+        }
+        if (!hasBatch) {
+            break;
+        }
+
         processTrimmedPairedBatchParallel(
             beforeAnalyzersR1,
             beforeAnalyzersR2,
@@ -1504,13 +2078,27 @@ AnalysisResult processPairedFilesWithTrimming(
             trimResultsR1,
             trimResultsR2,
             mergedRecords,
-            skipAdapters);
-        for (std::size_t i = 0; i < batchR1.size(); ++i) {
-            if (trimResultsR1[i].passed && trimResultsR2[i].passed) {
-                writerR1.write(batchR1[i]);
-                writerR2.write(batchR2[i]);
-                if (mergedWriter != nullptr && mergedRecords[i].has_value()) {
-                    mergedWriter->write(*mergedRecords[i]);
+            skipAdapters,
+            timing);
+        if (timing != nullptr) {
+            ScopedElapsedTimer writeTimer(timing->write);
+            for (std::size_t i = 0; i < batchR1.size(); ++i) {
+                if (trimResultsR1[i].passed && trimResultsR2[i].passed) {
+                    writerR1.write(batchR1[i]);
+                    writerR2.write(batchR2[i]);
+                    if (mergedWriter != nullptr && mergedRecords[i].has_value()) {
+                        mergedWriter->write(*mergedRecords[i]);
+                    }
+                }
+            }
+        } else {
+            for (std::size_t i = 0; i < batchR1.size(); ++i) {
+                if (trimResultsR1[i].passed && trimResultsR2[i].passed) {
+                    writerR1.write(batchR1[i]);
+                    writerR2.write(batchR2[i]);
+                    if (mergedWriter != nullptr && mergedRecords[i].has_value()) {
+                        mergedWriter->write(*mergedRecords[i]);
+                    }
                 }
             }
         }
@@ -1519,70 +2107,102 @@ AnalysisResult processPairedFilesWithTrimming(
             std::cout << "Processed " << count << " paired reads...\n";
         }
     }
-    writerR1.close();
-    writerR2.close();
-    if (mergedWriter != nullptr) {
-        mergedWriter->close();
+    if (timing != nullptr) {
+        ScopedElapsedTimer writeTimer(timing->write);
+        writerR1.close();
+        writerR2.close();
+        if (mergedWriter != nullptr) {
+            mergedWriter->close();
+        }
+    } else {
+        writerR1.close();
+        writerR2.close();
+        if (mergedWriter != nullptr) {
+            mergedWriter->close();
+        }
     }
 
     QualityAnalyzer beforeAnalyzerR1(ReadDirection::R1);
     QualityAnalyzer beforeAnalyzerR2(ReadDirection::R2);
     QualityAnalyzer afterAnalyzerR1(ReadDirection::R1);
     QualityAnalyzer afterAnalyzerR2(ReadDirection::R2);
-    mergeAnalyzers(beforeAnalyzerR1, beforeAnalyzersR1);
-    mergeAnalyzers(beforeAnalyzerR2, beforeAnalyzersR2);
-    mergeAnalyzers(afterAnalyzerR1, afterAnalyzersR1);
-    mergeAnalyzers(afterAnalyzerR2, afterAnalyzersR2);
+    mergeAnalyzersWithTiming(beforeAnalyzerR1, beforeAnalyzersR1, timing);
+    mergeAnalyzersWithTiming(beforeAnalyzerR2, beforeAnalyzersR2, timing);
+    mergeAnalyzersWithTiming(afterAnalyzerR1, afterAnalyzersR1, timing);
+    mergeAnalyzersWithTiming(afterAnalyzerR2, afterAnalyzersR2, timing);
     for (const auto& trimmer : trimmers) {
         result.trimmingStats.merge(trimmer.getStats());
     }
 
-    const QualityStats beforeStatsR1 = beforeAnalyzerR1.getStats();
-    const QualityStats beforeStatsR2 = beforeAnalyzerR2.getStats();
-    const QualityStats afterStatsR1 = afterAnalyzerR1.getStats();
-    const QualityStats afterStatsR2 = afterAnalyzerR2.getStats();
+    QualityStats beforeStatsR1;
+    QualityStats beforeStatsR2;
+    QualityStats afterStatsR1;
+    QualityStats afterStatsR2;
+    DuplicationStats beforeDuplicationR1;
+    DuplicationStats beforeDuplicationR2;
+    DuplicationStats afterDuplicationR1;
+    DuplicationStats afterDuplicationR2;
+    if (timing != nullptr) {
+        ScopedElapsedTimer statsTimer(timing->stats);
+        beforeStatsR1 = beforeAnalyzerR1.getStats();
+        beforeStatsR2 = beforeAnalyzerR2.getStats();
+        afterStatsR1 = afterAnalyzerR1.getStats();
+        afterStatsR2 = afterAnalyzerR2.getStats();
+        markBeforeDuplicationStats(timing);
+        beforeDuplicationR1 = beforeAnalyzerR1.getDuplicationStats();
+        beforeDuplicationR2 = beforeAnalyzerR2.getDuplicationStats();
+        afterDuplicationR1 = afterAnalyzerR1.getDuplicationStats();
+        afterDuplicationR2 = afterAnalyzerR2.getDuplicationStats();
+        markAfterDuplicationStats(timing);
+    } else {
+        beforeStatsR1 = beforeAnalyzerR1.getStats();
+        beforeStatsR2 = beforeAnalyzerR2.getStats();
+        afterStatsR1 = afterAnalyzerR1.getStats();
+        afterStatsR2 = afterAnalyzerR2.getStats();
+        beforeDuplicationR1 = beforeAnalyzerR1.getDuplicationStats();
+        beforeDuplicationR2 = beforeAnalyzerR2.getDuplicationStats();
+        afterDuplicationR1 = afterAnalyzerR1.getDuplicationStats();
+        afterDuplicationR2 = afterAnalyzerR2.getDuplicationStats();
+    }
 
-    printConsoleSummary(beforeStatsR1, "R1 BEFORE", skipAdapters);
-    printConsoleSummary(beforeStatsR2, "R2 BEFORE", skipAdapters);
-    printConsoleSummary(afterStatsR1, "R1 AFTER", skipAdapters);
-    printConsoleSummary(afterStatsR2, "R2 AFTER", skipAdapters);
+    if (timing != nullptr) {
+        ScopedElapsedTimer reportTimer(timing->reports);
+        printConsoleSummary(beforeStatsR1, "R1 BEFORE", skipAdapters);
+        printConsoleSummary(beforeStatsR2, "R2 BEFORE", skipAdapters);
+        printConsoleSummary(afterStatsR1, "R1 AFTER", skipAdapters);
+        printConsoleSummary(afterStatsR2, "R2 AFTER", skipAdapters);
 
-    writeAnalysisReports(
-        beforeStatsR1,
-        beforeAnalyzerR1.getDuplicationStats(),
-        beforeAnalyzerR1,
-        r1Path,
-        beforeDir.string(),
-        sampleId,
-        "R1",
-        skipAdapters);
-    writeAnalysisReports(
-        beforeStatsR2,
-        beforeAnalyzerR2.getDuplicationStats(),
-        beforeAnalyzerR2,
-        r2Path,
-        beforeDir.string(),
-        sampleId,
-        "R2",
-        skipAdapters);
-    writeAnalysisReports(
-        afterStatsR1,
-        afterAnalyzerR1.getDuplicationStats(),
-        afterAnalyzerR1,
-        trimmedR1Path.string(),
-        afterDir.string(),
-        sampleId,
-        "R1",
-        skipAdapters);
-    writeAnalysisReports(
-        afterStatsR2,
-        afterAnalyzerR2.getDuplicationStats(),
-        afterAnalyzerR2,
-        trimmedR2Path.string(),
-        afterDir.string(),
-        sampleId,
-        "R2",
-        skipAdapters);
+        writeAnalysisReports(
+            beforeStatsR1, beforeDuplicationR1, beforeAnalyzerR1, r1Path,
+            beforeDir.string(), sampleId, "R1", skipAdapters);
+        writeAnalysisReports(
+            beforeStatsR2, beforeDuplicationR2, beforeAnalyzerR2, r2Path,
+            beforeDir.string(), sampleId, "R2", skipAdapters);
+        writeAnalysisReports(
+            afterStatsR1, afterDuplicationR1, afterAnalyzerR1,
+            trimmedR1Path.string(), afterDir.string(), sampleId, "R1", skipAdapters);
+        writeAnalysisReports(
+            afterStatsR2, afterDuplicationR2, afterAnalyzerR2,
+            trimmedR2Path.string(), afterDir.string(), sampleId, "R2", skipAdapters);
+    } else {
+        printConsoleSummary(beforeStatsR1, "R1 BEFORE", skipAdapters);
+        printConsoleSummary(beforeStatsR2, "R2 BEFORE", skipAdapters);
+        printConsoleSummary(afterStatsR1, "R1 AFTER", skipAdapters);
+        printConsoleSummary(afterStatsR2, "R2 AFTER", skipAdapters);
+
+        writeAnalysisReports(
+            beforeStatsR1, beforeDuplicationR1, beforeAnalyzerR1, r1Path,
+            beforeDir.string(), sampleId, "R1", skipAdapters);
+        writeAnalysisReports(
+            beforeStatsR2, beforeDuplicationR2, beforeAnalyzerR2, r2Path,
+            beforeDir.string(), sampleId, "R2", skipAdapters);
+        writeAnalysisReports(
+            afterStatsR1, afterDuplicationR1, afterAnalyzerR1,
+            trimmedR1Path.string(), afterDir.string(), sampleId, "R1", skipAdapters);
+        writeAnalysisReports(
+            afterStatsR2, afterDuplicationR2, afterAnalyzerR2,
+            trimmedR2Path.string(), afterDir.string(), sampleId, "R2", skipAdapters);
+    }
 
     result.r1Stats = beforeStatsR1;
     result.r2Stats = beforeStatsR2;
@@ -1601,11 +2221,12 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
                                 const std::string& outDir,
                                 const std::string& sampleId,
                                 bool skipAdapters,
-                                const TrimConfig* trimConfig = nullptr)
+                                const TrimConfig* trimConfig = nullptr,
+                                SampleTiming* timing = nullptr)
 {
     if (trimConfig != nullptr) {
         return processPairedFilesWithTrimming(
-            r1Path, r2Path, outDir, sampleId, skipAdapters, *trimConfig);
+            r1Path, r2Path, outDir, sampleId, skipAdapters, *trimConfig, timing);
     }
     AnalysisResult result;
     beginDuplicationArtifacts(outDir, "R1", r1Path);
@@ -1654,20 +2275,33 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
 
     size_t count = 0;
 
-    while (readPairedBatch(
-        readerR1,
-        readerR2,
-        batchR1,
-        batchR2,
-        BATCH_SIZE))
+    while (true)
     {
+        bool hasBatch = false;
+        if (timing != nullptr)
+        {
+            ScopedElapsedTimer readTimer(timing->read);
+            hasBatch = readPairedBatch(
+                readerR1, readerR2, batchR1, batchR2, BATCH_SIZE);
+        }
+        else
+        {
+            hasBatch = readPairedBatch(
+                readerR1, readerR2, batchR1, batchR2, BATCH_SIZE);
+        }
+        if (!hasBatch)
+        {
+            break;
+        }
+
         processPairedBatchParallel(
             localAnalyzersR1,
             localAnalyzersR2,
             batchR1,
             batchR2,
             skipAdapters,
-            trimConfig != nullptr ? &localTrimmers : nullptr);
+            trimConfig != nullptr ? &localTrimmers : nullptr,
+            timing);
 
         count += batchR1.size();
 
@@ -1679,8 +2313,8 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
         }
     }
 
-    mergeAnalyzers(analyzerR1, localAnalyzersR1);
-    mergeAnalyzers(analyzerR2, localAnalyzersR2);
+    mergeAnalyzersWithTiming(analyzerR1, localAnalyzersR1, timing);
+    mergeAnalyzersWithTiming(analyzerR2, localAnalyzersR2, timing);
     for (const auto& localTrimmer : localTrimmers)
     {
         result.trimmingStats.merge(localTrimmer.getStats());
@@ -1694,47 +2328,76 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
               << analyzerR2.getTotalReads()
               << "\n";
 
-    QualityStats statsR1 = analyzerR1.getStats();
-    QualityStats statsR2 = analyzerR2.getStats();
-        
-    const DuplicationStats duplicationStatsR1 = analyzerR1.getDuplicationStats();
-    const DuplicationStats duplicationStatsR2 = analyzerR2.getDuplicationStats();
+    QualityStats statsR1;
+    QualityStats statsR2;
+    DuplicationStats duplicationStatsR1;
+    DuplicationStats duplicationStatsR2;
+    if (timing != nullptr)
+    {
+        ScopedElapsedTimer statsTimer(timing->stats);
+        statsR1 = analyzerR1.getStats();
+        statsR2 = analyzerR2.getStats();
+        markBeforeDuplicationStats(timing);
+        duplicationStatsR1 = analyzerR1.getDuplicationStats();
+        duplicationStatsR2 = analyzerR2.getDuplicationStats();
+        markAfterDuplicationStats(timing);
+    }
+    else
+    {
+        statsR1 = analyzerR1.getStats();
+        statsR2 = analyzerR2.getStats();
+        duplicationStatsR1 = analyzerR1.getDuplicationStats();
+        duplicationStatsR2 = analyzerR2.getDuplicationStats();
+    }
 
-    printConsoleSummary(statsR1, "R1", skipAdapters);
-    printConsoleSummary(statsR2, "R2", skipAdapters);
+    const auto writeReports = [&]()
+    {
+        printConsoleSummary(statsR1, "R1", skipAdapters);
+        printConsoleSummary(statsR2, "R2", skipAdapters);
 
-    auto futureR1 = std::async(
-        std::launch::async,
-        [&]()
-        {
-            writeAnalysisReports(
-                statsR1,
-                duplicationStatsR1,
-                analyzerR1,
-                r1Path,
-                outDir,
-                sampleId,
-                "R1",
-                skipAdapters);
-        });
+        auto futureR1 = std::async(
+            std::launch::async,
+            [&]()
+            {
+                writeAnalysisReports(
+                    statsR1,
+                    duplicationStatsR1,
+                    analyzerR1,
+                    r1Path,
+                    outDir,
+                    sampleId,
+                    "R1",
+                    skipAdapters);
+            });
 
-    auto futureR2 = std::async(
-        std::launch::async,
-        [&]()
-        {
-            writeAnalysisReports(
-                statsR2,
-                duplicationStatsR2,
-                analyzerR2,
-                r2Path,
-                outDir,
-                sampleId,
-                "R2",
-                skipAdapters);
-        });
+        auto futureR2 = std::async(
+            std::launch::async,
+            [&]()
+            {
+                writeAnalysisReports(
+                    statsR2,
+                    duplicationStatsR2,
+                    analyzerR2,
+                    r2Path,
+                    outDir,
+                    sampleId,
+                    "R2",
+                    skipAdapters);
+            });
 
-    futureR1.get();
-    futureR2.get();
+        futureR1.get();
+        futureR2.get();
+    };
+
+    if (timing != nullptr)
+    {
+        ScopedElapsedTimer reportTimer(timing->reports);
+        writeReports();
+    }
+    else
+    {
+        writeReports();
+    }
 
     result.r1Stats = statsR1;
     result.r2Stats = statsR2;
@@ -2137,6 +2800,124 @@ void publishRun(
     }
 }
 
+std::string formatTimingSeconds(double seconds, bool threadTime = false)
+{
+    std::ostringstream output;
+    output << std::fixed << std::setprecision(2) << seconds
+           << (threadTime ? " thread-s" : " s");
+    return output.str();
+}
+
+std::string formatRss(const std::optional<RssSnapshot>& snapshot, bool peak)
+{
+    if (!snapshot)
+    {
+        return "N/A";
+    }
+
+    const std::optional<std::uint64_t>& bytes = peak
+        ? snapshot->peakBytes
+        : snapshot->currentBytes;
+    if (!bytes)
+    {
+        return "N/A";
+    }
+
+    constexpr double gibibyte = 1024.0 * 1024.0 * 1024.0;
+    std::ostringstream output;
+    output << std::fixed << std::setprecision(2)
+           << static_cast<double>(*bytes) / gibibyte << " GiB";
+    return output.str();
+}
+
+void printPerformanceReport(
+    const SampleTiming& timing,
+    bool paired,
+    bool trimming,
+    bool plotted)
+{
+    const auto previousFlags = std::cout.flags();
+    const auto previousPrecision = std::cout.precision();
+    const auto previousFill = std::cout.fill();
+    const ThreadStageTiming threadStages = timing.accumulatedThreadStages();
+    const std::optional<RssSnapshot> currentMemory = readProcessRss();
+
+    auto printWall = [](const std::string& label, double seconds)
+    {
+        std::cout << "  " << std::left << std::setw(24) << label
+                  << std::right << formatTimingSeconds(seconds) << '\n';
+    };
+    auto printMemory = [](const std::string& label, const std::string& value)
+    {
+        std::cout << "  " << std::left << std::setw(31) << label
+                  << std::right << value << '\n';
+    };
+
+    std::cout << "\n=== NeoQC Performance Report ===\n"
+              << "Mode: " << (paired ? "paired-end" : "single-end")
+              << (trimming ? " + trimming" : "") << '\n'
+              << "OpenMP threads: " << timing.threadStages.size() << "\n\n"
+              << "Wall time:\n";
+    printWall("Read FASTQ:", timing.read);
+    printWall("Parallel processing:", timing.parallel);
+    if (trimming)
+    {
+        printWall("Write FASTQ:", timing.write);
+    }
+    printWall("Merge analyzers:", timing.merge);
+    printWall("Statistics:", timing.stats);
+    printWall("Reports:", timing.reports);
+    if (plotted)
+    {
+        printWall("Plots:", timing.plots);
+    }
+
+    std::cout << "\nOpenMP accumulated thread time:\n";
+    std::cout << "  " << std::left << std::setw(24) << "QC before:"
+              << std::right << formatTimingSeconds(threadStages.qcBefore, true) << '\n';
+    if (trimming)
+    {
+        std::cout << "  " << std::left << std::setw(24) << "Trimming:"
+                  << std::right << formatTimingSeconds(threadStages.trim, true) << '\n';
+        std::cout << "  " << std::left << std::setw(24) << "QC after:"
+                  << std::right << formatTimingSeconds(threadStages.qcAfter, true) << '\n';
+    }
+
+    std::cout << "\nMemory:\n";
+    printMemory("RSS before merge:", formatRss(timing.memory.beforeMerge, false));
+    printMemory("RSS after merge:", formatRss(timing.memory.afterMerge, false));
+    if (timing.memory.mergeTransitions.size() > 1)
+    {
+        for (std::size_t index = 0;
+             index < timing.memory.mergeTransitions.size();
+             ++index)
+        {
+            const RssTransition& transition =
+                timing.memory.mergeTransitions[index];
+            const std::string mergeNumber = std::to_string(index + 1);
+            printMemory(
+                "Merge #" + mergeNumber + " before RSS:",
+                formatRss(transition.before, false));
+            printMemory(
+                "Merge #" + mergeNumber + " after RSS:",
+                formatRss(transition.after, false));
+        }
+    }
+    printMemory("RSS before DuplicationStats:",
+                formatRss(timing.memory.beforeDuplicationStats, false));
+    printMemory("RSS after DuplicationStats:",
+                formatRss(timing.memory.afterDuplicationStats, false));
+    printMemory("Current RSS (VmRSS):", formatRss(currentMemory, false));
+    printMemory("Peak RSS (VmHWM):", formatRss(currentMemory, true));
+
+    std::cout << "\nTotal processing time: "
+              << formatTimingSeconds(timing.total) << '\n';
+
+    std::cout.flags(previousFlags);
+    std::cout.precision(previousPrecision);
+    std::cout.fill(previousFill);
+}
+
 AnalysisResult runSampleTransaction(
     const std::string& r1,
     const std::string& r2,
@@ -2144,7 +2925,8 @@ AnalysisResult runSampleTransaction(
     const fs::path& outputDir,
     bool plot,
     bool skipAdapters,
-    const TrimConfig* trimConfig = nullptr)
+    const TrimConfig* trimConfig = nullptr,
+    bool timingEnabled = false)
 {
     const bool paired = !r2.empty();
     if (trimConfig != nullptr
@@ -2156,19 +2938,38 @@ AnalysisResult runSampleTransaction(
     if (trimConfig != nullptr) {
         ensureInputsOutsideOutput(r1, r2, outputDir);
     }
+    std::optional<SampleTiming> timing;
+    if (timingEnabled)
+    {
+        timing.emplace(omp_get_max_threads());
+    }
+    SampleTiming* timingStats = timing ? &*timing : nullptr;
+
     const std::string runId = generateRunId();
     fs::path stagingDir = createStagingDirectory(outputDir, runId);
     try
     {
         AnalysisResult analysis = paired
-            ? processPairedFiles(r1, r2, stagingDir.string(), sampleId, skipAdapters, trimConfig)
-            : processOneFile(r1, "R1", stagingDir.string(), sampleId, skipAdapters, trimConfig);
+            ? processPairedFiles(
+                r1, r2, stagingDir.string(), sampleId, skipAdapters, trimConfig, timingStats)
+            : processOneFile(
+                r1, "R1", stagingDir.string(), sampleId, skipAdapters, trimConfig, timingStats);
 
         if (trimConfig != nullptr && trimConfig->enabled)
         {
-            writeTrimmingReport(
-                stagingDir / "trimming_report.json",
-                analysis.trimmingStats);
+            if (timingStats != nullptr)
+            {
+                ScopedElapsedTimer reportTimer(timingStats->reports);
+                writeTrimmingReport(
+                    stagingDir / "trimming_report.json",
+                    analysis.trimmingStats);
+            }
+            else
+            {
+                writeTrimmingReport(
+                    stagingDir / "trimming_report.json",
+                    analysis.trimmingStats);
+            }
         }
 
         const RunManifest manifest{
@@ -2186,14 +2987,23 @@ AnalysisResult runSampleTransaction(
             .artifacts = {},
         };
         // Plot generation uses the evaluation engine, which is manifest-only.
-        writeRunManifest(stagingDir, manifest);
+        if (timingStats != nullptr)
+        {
+            ScopedElapsedTimer reportTimer(timingStats->reports);
+            writeRunManifest(stagingDir, manifest);
+        }
+        else
+        {
+            writeRunManifest(stagingDir, manifest);
+        }
         if (plot)
         {
             PlotOptions options;
             options.includeAdapters = !skipAdapters;
             options.runManifestPath =
                 (stagingDir / "run_manifest.json").string();
-            if (trimConfig != nullptr) {
+            if (timingStats != nullptr) {
+                ScopedElapsedTimer plotTimer(timingStats->plots);
                 PlotRunner::runAll(
                     stagingDir.string(),
                     (stagingDir / "plots").string(),
@@ -2205,8 +3015,25 @@ AnalysisResult runSampleTransaction(
                     options);
             }
         }
-        writeRunManifest(stagingDir, manifest);
+        if (timingStats != nullptr)
+        {
+            ScopedElapsedTimer reportTimer(timingStats->reports);
+            writeRunManifest(stagingDir, manifest);
+        }
+        else
+        {
+            writeRunManifest(stagingDir, manifest);
+        }
         publishRun(stagingDir, outputDir);
+        if (timingStats != nullptr)
+        {
+            timingStats->total = secondsSince(timingStats->started);
+            printPerformanceReport(
+                *timingStats,
+                paired,
+                trimConfig != nullptr && trimConfig->enabled,
+                plot);
+        }
         return analysis;
     }
     catch (...)
@@ -2433,7 +3260,7 @@ int main(int argc, char* argv[]) {
                 try {
                     AnalysisResult analysis = runSampleTransaction(
                         entry.r1, entry.r2, entry.sampleId, sampleOutDir,
-                        args.plot, args.skipAdapters, activeTrimConfig);
+                        args.plot, args.skipAdapters, activeTrimConfig, args.timing);
                     std::cout << "Result: passed\n";
                     results.push_back({entry, true, std::move(analysis), ""});
                 } catch (const std::exception& e) {
@@ -2502,6 +3329,13 @@ int main(int argc, char* argv[]) {
         std::cout << "Trimming  : enabled\n";
     }
 
+    std::optional<SampleTiming> timing;
+    if (args.timing)
+    {
+        timing.emplace(omp_get_max_threads());
+    }
+    SampleTiming* timingStats = timing ? &*timing : nullptr;
+
     const std::string runId = generateRunId();
 
     fs::path stagingDir;
@@ -2524,7 +3358,8 @@ int main(int argc, char* argv[]) {
                 stagingDir.string(),
                 args.sampleId,
                 args.skipAdapters,
-                activeTrimConfig);
+                activeTrimConfig,
+                timingStats);
         }
         else
         {
@@ -2534,14 +3369,25 @@ int main(int argc, char* argv[]) {
                 stagingDir.string(),
                 args.sampleId,
                 args.skipAdapters,
-                activeTrimConfig);
+                activeTrimConfig,
+                timingStats);
         }
 
         if (activeTrimConfig != nullptr)
         {
-            writeTrimmingReport(
-                stagingDir / "trimming_report.json",
-                analysis.trimmingStats);
+            if (timingStats != nullptr)
+            {
+                ScopedElapsedTimer reportTimer(timingStats->reports);
+                writeTrimmingReport(
+                    stagingDir / "trimming_report.json",
+                    analysis.trimmingStats);
+            }
+            else
+            {
+                writeTrimmingReport(
+                    stagingDir / "trimming_report.json",
+                    analysis.trimmingStats);
+            }
         }
 
         manifest = RunManifest{
@@ -2561,9 +3407,15 @@ int main(int argc, char* argv[]) {
             .artifacts = {},
         };
 
-        writeRunManifest(
-            stagingDir,
-            manifest);
+        if (timingStats != nullptr)
+        {
+            ScopedElapsedTimer reportTimer(timingStats->reports);
+            writeRunManifest(stagingDir, manifest);
+        }
+        else
+        {
+            writeRunManifest(stagingDir, manifest);
+        }
     }
     catch (const std::exception& e)
     {
@@ -2596,7 +3448,8 @@ int main(int argc, char* argv[]) {
             plotOptions.includeAdapters = !args.skipAdapters;
             plotOptions.runManifestPath =
                 (stagingDir / "run_manifest.json").string();
-            if (activeTrimConfig != nullptr) {
+            if (timingStats != nullptr) {
+                ScopedElapsedTimer plotTimer(timingStats->plots);
                 PlotRunner::runAll(
                     stagingDir.string(),
                     (stagingDir / "plots").string(),
@@ -2628,9 +3481,15 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    writeRunManifest(
-        stagingDir,
-        manifest);
+    if (timingStats != nullptr)
+    {
+        ScopedElapsedTimer reportTimer(timingStats->reports);
+        writeRunManifest(stagingDir, manifest);
+    }
+    else
+    {
+        writeRunManifest(stagingDir, manifest);
+    }
 
     try
     {
@@ -2660,15 +3519,27 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    if (timingStats != nullptr)
+    {
+        timingStats->total = secondsSince(timingStats->started);
+        printPerformanceReport(
+            *timingStats,
+            isPaired,
+            activeTrimConfig != nullptr,
+            args.plot);
+    }
 
     const auto end = Clock::now();
 
     const auto elapsed = std::chrono::duration<double>(end - start);
 
-    std::cout << "Done.\n"
-              << "Total processing time: "
-              << elapsed.count()
-              << " s\n";
+    std::cout << "Done.\n";
+    if (!args.timing)
+    {
+        std::cout << "Total processing time: "
+                  << elapsed.count()
+                  << " s\n";
+    }
 
     return 0;
 }
