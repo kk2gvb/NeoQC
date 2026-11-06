@@ -9,6 +9,7 @@
 #include "gc_model.h"
 #include "fastq_reader.h"
 #include "adapter_config.h"
+#include "per_base_metrics.h"
 
 constexpr std::size_t DUPLICATION_PREFIX_LENGTH = 50;
 constexpr double OVERREPRESENTED_SEQUENCE_THRESHOLD = 0.1;
@@ -135,7 +136,13 @@ public:
         const std::vector<AdapterConfigEntry>& adapterConfig);
 
     // Обработка одной FASTQ-записи
-    BaseValidationError processRecord(const FastqRecord& record);
+    BaseValidationError processRecord(
+        const FastqRecord& record,
+        bool collectPerBaseMetrics = true);
+
+    // Adds exact position-level accumulators produced by a backend after the
+    // non-positional QC state has been processed on CPU.
+    void applyPerBaseMetrics(const PerBaseMetrics& metrics);
 
     // Поиск адаптеров в записи
     void analyzeAdapters(const FastqRecord& record);

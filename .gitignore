@@ -7,6 +7,8 @@ plots
 Testing
 ctest.log
 benchmark*
+!scripts/benchmark_cpu_cuda.py
+!scripts/benchmark_config.json
 TODO.md
 __pycache__/
 *.py[cod]

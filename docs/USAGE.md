@@ -476,7 +476,17 @@ NeoQC выполняет **QC, опциональный тримминг и фи
 - определение HLA-генотипа (`HLA typing`);
 - предсказание неоэпитопов (`neoepitope prediction`).
 
-Планы CUDA-ускорения не следует путать с текущим вычислительным путём: в этой версии вычислительное ядро использует CPU и OpenMP.
+По умолчанию вычислительное ядро использует CPU и OpenMP. При сборке с
+`-DNEOQC_ENABLE_CUDA=ON` можно выбрать `--backend cuda`: на GPU выполняются
+`per-base sequence quality` и `per-base sequence content`, а остальные QC-метрики
+и trimming остаются на CPU/OpenMP. CUDA Runtime проверяется до обработки FASTQ;
+при ошибке конкретного batch выводится предупреждение, и его позиционные метрики
+целиком пересчитываются на CPU без двойного учёта.
+
+```bash
+./build.sh --cuda -DCMAKE_CUDA_ARCHITECTURES=86
+./build/neoqc --backend cuda --r1 reads.fastq.gz --sample-id sample01 --out results/sample01 --timing
+```
 
 ## 15. Проверка после сборки
 

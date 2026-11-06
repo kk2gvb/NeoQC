@@ -305,7 +305,9 @@ QualityAnalyzer::QualityAnalyzer(
     }
 }
 
-BaseValidationError QualityAnalyzer::processRecord(const FastqRecord& record) {
+BaseValidationError QualityAnalyzer::processRecord(
+    const FastqRecord& record,
+    bool collectPerBaseMetrics) {
     const std::string& seq = record.sequence;
     const std::string& qual = record.quality;
     size_t len = seq.length();
@@ -327,8 +329,9 @@ BaseValidationError QualityAnalyzer::processRecord(const FastqRecord& record) {
     if (len < minLength) minLength = len;
     if (len > maxLength) maxLength = len;
 
-    // Расширение массивов качества, если нужно
-    if (len > qualitySum.size()) {
+    // Position-level data can be supplied later by CUDA.  All other QC state
+    // is still updated below on CPU.
+    if (collectPerBaseMetrics && len > qualitySum.size()) {
         qualitySum.resize(len, 0);
         qualityCount.resize(len, 0);
         qualityHistogram.resize(len);
@@ -348,15 +351,34 @@ BaseValidationError QualityAnalyzer::processRecord(const FastqRecord& record) {
     size_t gc = 0;
     BaseValidationError validationError;
     for (size_t i = 0; i < len; ++i) {
-        readsPerPosition[i]++;
+        if (collectPerBaseMetrics) {
+            readsPerPosition[i]++;
+        }
         char c = seq[i];
         // Подсчёт оснований
         switch (c) {
-            case 'A': case 'a': countA++; totalBases++; baseCountA[i]++; break;
-            case 'C': case 'c': countC++; totalBases++; totalGC++; baseCountC[i]++; gc++; break;
-            case 'G': case 'g': countG++; totalBases++; totalGC++; baseCountG[i]++; gc++; break;
-            case 'T': case 't': countT++; totalBases++; baseCountT[i]++; break;
-            case 'N': case 'n': countN++; totalBases++; baseCountN[i]++; break;
+            case 'A': case 'a':
+                countA++; totalBases++;
+                if (collectPerBaseMetrics) ++baseCountA[i];
+                break;
+            case 'C': case 'c':
+                countC++; totalBases++; totalGC++;
+                if (collectPerBaseMetrics) ++baseCountC[i];
+                ++gc;
+                break;
+            case 'G': case 'g':
+                countG++; totalBases++; totalGC++;
+                if (collectPerBaseMetrics) ++baseCountG[i];
+                ++gc;
+                break;
+            case 'T': case 't':
+                countT++; totalBases++;
+                if (collectPerBaseMetrics) ++baseCountT[i];
+                break;
+            case 'N': case 'n':
+                countN++; totalBases++;
+                if (collectPerBaseMetrics) ++baseCountN[i];
+                break;
             default:
                 // Перенесно из fastq_reader.h, чтобы выполнять проверку сразу в QualityAnalyzer::processRecord,
                 // а не в FastqReader::readNext и не создавать лишние циклы
@@ -377,10 +399,12 @@ BaseValidationError QualityAnalyzer::processRecord(const FastqRecord& record) {
         if (i < qual.length()) {
             int q = static_cast<int>(qual[i]) - 33; // Phred+33
             if (q >= 0) {
-                qualitySum[i] += q;
-                qualityCount[i]++;
-                if (static_cast<size_t>(q) < qualityHistogram[i].size()) {
-                    qualityHistogram[i][static_cast<size_t>(q)]++;
+                if (collectPerBaseMetrics) {
+                    qualitySum[i] += q;
+                    qualityCount[i]++;
+                    if (static_cast<size_t>(q) < qualityHistogram[i].size()) {
+                        qualityHistogram[i][static_cast<size_t>(q)]++;
+                    }
                 }
                 readQualSum += q;
                 validQualityBases++;
@@ -435,6 +459,45 @@ BaseValidationError QualityAnalyzer::processRecord(const FastqRecord& record) {
             }
 
     return validationError;
+}
+
+void QualityAnalyzer::applyPerBaseMetrics(const PerBaseMetrics& metrics)
+{
+    const std::size_t positions = metrics.readsPerPosition.size();
+    if (positions == 0) {
+        return;
+    }
+
+    if (qualitySum.size() < positions) {
+        qualitySum.resize(positions, 0);
+        qualityCount.resize(positions, 0);
+        qualityHistogram.resize(positions);
+        baseCountA.resize(positions, 0);
+        baseCountC.resize(positions, 0);
+        baseCountG.resize(positions, 0);
+        baseCountT.resize(positions, 0);
+        baseCountN.resize(positions, 0);
+        readsPerPosition.resize(positions, 0);
+    }
+
+    auto add = [](auto& destination, const auto& source) {
+        for (std::size_t index = 0; index < source.size(); ++index) {
+            destination[index] += source[index];
+        }
+    };
+    add(baseCountA, metrics.baseCountA);
+    add(baseCountC, metrics.baseCountC);
+    add(baseCountG, metrics.baseCountG);
+    add(baseCountT, metrics.baseCountT);
+    add(baseCountN, metrics.baseCountN);
+    add(readsPerPosition, metrics.readsPerPosition);
+    add(qualitySum, metrics.qualitySum);
+    add(qualityCount, metrics.qualityCount);
+    for (std::size_t position = 0; position < metrics.qualityHistogram.size(); ++position) {
+        for (std::size_t quality = 0; quality < qualityHistogram[position].size(); ++quality) {
+            qualityHistogram[position][quality] += metrics.qualityHistogram[position][quality];
+        }
+    }
 }
 
 void QualityAnalyzer::analyzeAdapters(const FastqRecord& record) {

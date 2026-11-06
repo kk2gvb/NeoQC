@@ -1,0 +1,8 @@
+{
+  "expected_samples": ["BAI", "CHER", "CHU", "IVA", "KLU", "KUD", "LAP", "SUN", "VOR"],
+  "full_trim_datasets": ["CHU/GED", "BAI/RNA", "LAP/SOM"],
+  "timeout_seconds": 7200,
+  "minimum_free_disk_gib": 20,
+  "comparison_chunk_bytes": 1048576,
+  "excluded_artifacts": ["run_manifest.json"]
+}

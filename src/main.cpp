@@ -3,6 +3,8 @@
 #include "../include/plot_runner.h"
 #include "../include/sample_sheet.h"
 #include "../include/adapter_config.h"
+#include "../include/compute_backend.h"
+#include "../include/cuda/cuda_qc.h"
 #include "../include/trimming/trim_config.h"
 #include "../include/trimming/fastq_writer.h"
 #include "../include/trimming/trim_report.h"
@@ -171,6 +173,9 @@ struct SampleTiming
     double reports = 0.0;
     double plots = 0.0;
     double total = 0.0;
+    CudaQcTiming cudaQc;
+    double cpuRemainingQc = 0.0;
+    bool cudaFallbackUsed = false;
     std::vector<ThreadStageTiming> threadStages;
     TimingMemory memory;
     Clock::time_point started = Clock::now();
@@ -218,6 +223,7 @@ struct Args {
     bool        plot = false;
     bool        skipAdapters = false;
     bool        timing = false;
+    ComputeBackend backend = ComputeBackend::CPU;
     bool        trimmingOptionSpecified = false;
     bool        adapterConfigSpecified = false;
     std::string adapterConfig;
@@ -301,6 +307,7 @@ Args parseArgs(int argc, char* argv[]) {
         else if (arg == "--plot")          args.plot     = true;
         else if (arg == "--skip-adapters") args.skipAdapters = true;
         else if (arg == "--timing")        args.timing = true;
+        else if (arg == "--backend")       args.backend = parseComputeBackend(needValue(arg));
         else if (arg == "--trim")          args.trimConfig.enabled = true;
         else if (arg == "--full-trim")     applyFullTrimProfile(args);
         else if (arg == "--trim-front")    args.trimConfig.trim_front = parseSize(arg);
@@ -444,11 +451,11 @@ void printUsage(const char* progName) {
         "NeoQC — FASTQ quality analysis\n\n"
         "Usage:\n"
         "  single-end:\n"
-        "    " << progName << " --r1 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters] [--timing] [--trim | --full-trim]\n\n"
+        "    " << progName << " --r1 <file> --sample-id <id> --out <dir> [--backend cpu|cuda] [--plot] [--skip-adapters] [--timing] [--trim | --full-trim]\n\n"
         "  paired-end:\n"
-        "    " << progName << " --r1 <file> --r2 <file> --sample-id <id> --out <dir> [--plot] [--skip-adapters] [--timing] [--trim | --full-trim]\n\n"
+        "    " << progName << " --r1 <file> --r2 <file> --sample-id <id> --out <dir> [--backend cpu|cuda] [--plot] [--skip-adapters] [--timing] [--trim | --full-trim]\n\n"
         "  validate sample sheet:\n"
-        "    " << progName << " --samples <samples.csv> [--out <dir>] [--plot] [--skip-adapters] [--timing] [--trim | --full-trim]\n\n"
+        "    " << progName << " --samples <samples.csv> [--out <dir>] [--backend cpu|cuda] [--plot] [--skip-adapters] [--timing] [--trim | --full-trim]\n\n"
         "Options:\n"
         "  --r1 <file>       Path to R1 FASTQ (plain or .gz)\n"
         "  --r2 <file>       Path to R2 FASTQ (optional, for paired-end)\n"
@@ -458,6 +465,8 @@ void printUsage(const char* progName) {
         "  --plot            Build plots via plot_results.py (optional)\n"
         "  --skip-adapters   Disable QC adapter search (for performance measurements)\n"
         "  --timing          Print per-sample performance and RSS diagnostics\n\n"
+        "  --backend <name>  Compute backend: cpu (default) or cuda. CUDA currently runs a\n"
+        "                    diagnostic only; QC remains CPU/OpenMP until GPU QC is implemented\n\n"
         "Trimming options (require --trim or --full-trim):\n"
         "  --trim                 Enable the trimming pipeline, FASTQ output, and before/after QC\n"
         "  --full-trim            Standard profile: adapters, quality trimming, polyG/polyX, min length 50\n"
@@ -559,10 +568,11 @@ std::string normalizeReadId(const std::string& header)
 BaseValidationError processRecord(
     QualityAnalyzer& analyzer,
     const FastqRecord& record,
-    bool skipAdapters)
+    bool skipAdapters,
+    bool collectPerBaseMetrics = true)
 {
     BaseValidationError error =
-        analyzer.processRecord(record);
+        analyzer.processRecord(record, collectPerBaseMetrics);
 
     if (!error.found && !skipAdapters)
     {
@@ -578,7 +588,8 @@ void processBatchParallelImpl(
     std::vector<FastqRecord>& batch,
     bool skipAdapters,
     std::vector<Trimmer>* trimmers,
-    SampleTiming* timing)
+    SampleTiming* timing,
+    bool collectPerBaseMetrics)
 {
     std::vector<BaseValidationError> validationErrors(analyzers.size());
 
@@ -608,7 +619,7 @@ void processBatchParallelImpl(
             if constexpr (CollectTiming)
             {
                 const auto qcStart = Clock::now();
-                error = processRecord(analyzers[threadId], batch[i], skipAdapters);
+                error = processRecord(analyzers[threadId], batch[i], skipAdapters, collectPerBaseMetrics);
                 const double elapsed = secondsSince(qcStart);
                 if (trimmers == nullptr)
                 {
@@ -621,7 +632,7 @@ void processBatchParallelImpl(
             }
             else
             {
-                error = processRecord(analyzers[threadId], batch[i], skipAdapters);
+                error = processRecord(analyzers[threadId], batch[i], skipAdapters, collectPerBaseMetrics);
             }
 
             if (error.found)
@@ -656,18 +667,19 @@ void processBatchParallel(
     std::vector<FastqRecord>& batch,
     bool skipAdapters,
     std::vector<Trimmer>* trimmers = nullptr,
-    SampleTiming* timing = nullptr)
+    SampleTiming* timing = nullptr,
+    bool collectPerBaseMetrics = true)
 {
     if (timing == nullptr)
     {
         processBatchParallelImpl<false>(
-            analyzers, batch, skipAdapters, trimmers, nullptr);
+            analyzers, batch, skipAdapters, trimmers, nullptr, collectPerBaseMetrics);
         return;
     }
 
     ScopedElapsedTimer wallTimer(timing->parallel);
     processBatchParallelImpl<true>(
-        analyzers, batch, skipAdapters, trimmers, timing);
+        analyzers, batch, skipAdapters, trimmers, timing, collectPerBaseMetrics);
 }
 
 template <bool CollectTiming>
@@ -678,7 +690,8 @@ void processPairedBatchParallelImpl(
     std::vector<FastqRecord>& batchR2,
     bool skipAdapters,
     std::vector<Trimmer>* trimmers,
-    SampleTiming* timing)
+    SampleTiming* timing,
+    bool collectPerBaseMetrics)
 {
     std::vector<BaseValidationError> validationErrors(analyzersR1.size());
 
@@ -708,10 +721,10 @@ void processPairedBatchParallelImpl(
             if constexpr (CollectTiming)
             {
                 const auto qcStart = Clock::now();
-                error = processRecord(analyzersR1[threadId], batchR1[i], skipAdapters);
+                error = processRecord(analyzersR1[threadId], batchR1[i], skipAdapters, collectPerBaseMetrics);
                 if (!error.found)
                 {
-                    error = processRecord(analyzersR2[threadId], batchR2[i], skipAdapters);
+                    error = processRecord(analyzersR2[threadId], batchR2[i], skipAdapters, collectPerBaseMetrics);
                 }
                 const double elapsed = secondsSince(qcStart);
                 if (trimmers == nullptr)
@@ -725,10 +738,10 @@ void processPairedBatchParallelImpl(
             }
             else
             {
-                error = processRecord(analyzersR1[threadId], batchR1[i], skipAdapters);
+                error = processRecord(analyzersR1[threadId], batchR1[i], skipAdapters, collectPerBaseMetrics);
                 if (!error.found)
                 {
-                    error = processRecord(analyzersR2[threadId], batchR2[i], skipAdapters);
+                    error = processRecord(analyzersR2[threadId], batchR2[i], skipAdapters, collectPerBaseMetrics);
                 }
             }
 
@@ -765,20 +778,21 @@ void processPairedBatchParallel(
     std::vector<FastqRecord>& batchR2,
     bool skipAdapters,
     std::vector<Trimmer>* trimmers = nullptr,
-    SampleTiming* timing = nullptr)
+    SampleTiming* timing = nullptr,
+    bool collectPerBaseMetrics = true)
 {
     if (timing == nullptr)
     {
         processPairedBatchParallelImpl<false>(
             analyzersR1, analyzersR2, batchR1, batchR2, skipAdapters,
-            trimmers, nullptr);
+            trimmers, nullptr, collectPerBaseMetrics);
         return;
     }
 
     ScopedElapsedTimer wallTimer(timing->parallel);
     processPairedBatchParallelImpl<true>(
         analyzersR1, analyzersR2, batchR1, batchR2, skipAdapters,
-        trimmers, timing);
+        trimmers, timing, collectPerBaseMetrics);
 }
 
 template <bool CollectTiming>
@@ -789,7 +803,8 @@ void processTrimmedBatchParallelImpl(
     std::vector<FastqRecord>& batch,
     std::vector<TrimResult>& trimResults,
     bool skipAdapters,
-    SampleTiming* timing)
+    SampleTiming* timing,
+    bool collectPerBaseMetrics)
 {
     trimResults.resize(batch.size());
     std::vector<BaseValidationError> validationErrors(beforeAnalyzers.size());
@@ -806,12 +821,12 @@ void processTrimmedBatchParallelImpl(
             if constexpr (CollectTiming)
             {
                 const auto qcBeforeStart = Clock::now();
-                error = processRecord(beforeAnalyzers[threadId], batch[i], skipAdapters);
+                error = processRecord(beforeAnalyzers[threadId], batch[i], skipAdapters, collectPerBaseMetrics);
                 localStages.qcBefore += secondsSince(qcBeforeStart);
             }
             else
             {
-                error = processRecord(beforeAnalyzers[threadId], batch[i], skipAdapters);
+                error = processRecord(beforeAnalyzers[threadId], batch[i], skipAdapters, collectPerBaseMetrics);
             }
 
             if (!error.found)
@@ -832,12 +847,12 @@ void processTrimmedBatchParallelImpl(
                     if constexpr (CollectTiming)
                     {
                         const auto qcAfterStart = Clock::now();
-                        error = processRecord(afterAnalyzers[threadId], batch[i], skipAdapters);
+                        error = processRecord(afterAnalyzers[threadId], batch[i], skipAdapters, collectPerBaseMetrics);
                         localStages.qcAfter += secondsSince(qcAfterStart);
                     }
                     else
                     {
-                        error = processRecord(afterAnalyzers[threadId], batch[i], skipAdapters);
+                        error = processRecord(afterAnalyzers[threadId], batch[i], skipAdapters, collectPerBaseMetrics);
                     }
                 }
             }
@@ -875,20 +890,21 @@ void processTrimmedBatchParallel(
     std::vector<FastqRecord>& batch,
     std::vector<TrimResult>& trimResults,
     bool skipAdapters,
-    SampleTiming* timing = nullptr)
+    SampleTiming* timing = nullptr,
+    bool collectPerBaseMetrics = true)
 {
     if (timing == nullptr)
     {
         processTrimmedBatchParallelImpl<false>(
             beforeAnalyzers, afterAnalyzers, trimmers, batch, trimResults,
-            skipAdapters, nullptr);
+            skipAdapters, nullptr, collectPerBaseMetrics);
         return;
     }
 
     ScopedElapsedTimer wallTimer(timing->parallel);
     processTrimmedBatchParallelImpl<true>(
         beforeAnalyzers, afterAnalyzers, trimmers, batch, trimResults,
-        skipAdapters, timing);
+        skipAdapters, timing, collectPerBaseMetrics);
 }
 
 template <bool CollectTiming>
@@ -904,7 +920,8 @@ void processTrimmedPairedBatchParallelImpl(
     std::vector<TrimResult>& trimResultsR2,
     std::vector<std::optional<FastqRecord>>& mergedRecords,
     bool skipAdapters,
-    SampleTiming* timing)
+    SampleTiming* timing,
+    bool collectPerBaseMetrics)
 {
     trimResultsR1.resize(batchR1.size());
     trimResultsR2.resize(batchR2.size());
@@ -923,19 +940,19 @@ void processTrimmedPairedBatchParallelImpl(
             if constexpr (CollectTiming)
             {
                 const auto qcBeforeStart = Clock::now();
-                error = processRecord(beforeAnalyzersR1[threadId], batchR1[i], skipAdapters);
+                error = processRecord(beforeAnalyzersR1[threadId], batchR1[i], skipAdapters, collectPerBaseMetrics);
                 if (!error.found)
                 {
-                    error = processRecord(beforeAnalyzersR2[threadId], batchR2[i], skipAdapters);
+                    error = processRecord(beforeAnalyzersR2[threadId], batchR2[i], skipAdapters, collectPerBaseMetrics);
                 }
                 localStages.qcBefore += secondsSince(qcBeforeStart);
             }
             else
             {
-                error = processRecord(beforeAnalyzersR1[threadId], batchR1[i], skipAdapters);
+                error = processRecord(beforeAnalyzersR1[threadId], batchR1[i], skipAdapters, collectPerBaseMetrics);
                 if (!error.found)
                 {
-                    error = processRecord(beforeAnalyzersR2[threadId], batchR2[i], skipAdapters);
+                    error = processRecord(beforeAnalyzersR2[threadId], batchR2[i], skipAdapters, collectPerBaseMetrics);
                 }
             }
 
@@ -965,19 +982,19 @@ void processTrimmedPairedBatchParallelImpl(
                     if constexpr (CollectTiming)
                     {
                         const auto qcAfterStart = Clock::now();
-                        error = processRecord(afterAnalyzersR1[threadId], batchR1[i], skipAdapters);
+                        error = processRecord(afterAnalyzersR1[threadId], batchR1[i], skipAdapters, collectPerBaseMetrics);
                         if (!error.found)
                         {
-                            error = processRecord(afterAnalyzersR2[threadId], batchR2[i], skipAdapters);
+                            error = processRecord(afterAnalyzersR2[threadId], batchR2[i], skipAdapters, collectPerBaseMetrics);
                         }
                         localStages.qcAfter += secondsSince(qcAfterStart);
                     }
                     else
                     {
-                        error = processRecord(afterAnalyzersR1[threadId], batchR1[i], skipAdapters);
+                        error = processRecord(afterAnalyzersR1[threadId], batchR1[i], skipAdapters, collectPerBaseMetrics);
                         if (!error.found)
                         {
-                            error = processRecord(afterAnalyzersR2[threadId], batchR2[i], skipAdapters);
+                            error = processRecord(afterAnalyzersR2[threadId], batchR2[i], skipAdapters, collectPerBaseMetrics);
                         }
                     }
                 }
@@ -1021,14 +1038,15 @@ void processTrimmedPairedBatchParallel(
     std::vector<TrimResult>& trimResultsR2,
     std::vector<std::optional<FastqRecord>>& mergedRecords,
     bool skipAdapters,
-    SampleTiming* timing = nullptr)
+    SampleTiming* timing = nullptr,
+    bool collectPerBaseMetrics = true)
 {
     if (timing == nullptr)
     {
         processTrimmedPairedBatchParallelImpl<false>(
             beforeAnalyzersR1, beforeAnalyzersR2, afterAnalyzersR1,
             afterAnalyzersR2, trimmers, batchR1, batchR2, trimResultsR1,
-            trimResultsR2, mergedRecords, skipAdapters, nullptr);
+            trimResultsR2, mergedRecords, skipAdapters, nullptr, collectPerBaseMetrics);
         return;
     }
 
@@ -1036,7 +1054,60 @@ void processTrimmedPairedBatchParallel(
     processTrimmedPairedBatchParallelImpl<true>(
         beforeAnalyzersR1, beforeAnalyzersR2, afterAnalyzersR1,
         afterAnalyzersR2, trimmers, batchR1, batchR2, trimResultsR1,
-        trimResultsR2, mergedRecords, skipAdapters, timing);
+        trimResultsR2, mergedRecords, skipAdapters, timing, collectPerBaseMetrics);
+}
+
+void collectCudaPerBaseMetrics(
+    CudaQcProcessor* cudaQc,
+    const std::vector<FastqRecord>& batch,
+    const std::vector<std::uint8_t>* selected,
+    PerBaseMetrics& destination,
+    SampleTiming* timing)
+{
+    if (cudaQc == nullptr) {
+        return;
+    }
+
+    try {
+        destination.merge(cudaQc->process(batch, selected));
+        if (timing != nullptr) {
+            timing->cudaQc += cudaQc->lastTiming();
+        }
+    }
+    catch (const std::exception& error) {
+        // No CUDA data has been merged before process() returns.  Falling back
+        // for this whole batch is therefore transactional and cannot double
+        // count position-level metrics.
+        std::cerr << "Warning: CUDA QC batch failed (" << error.what()
+                  << "). Falling back to CPU per-base QC for this batch.\n";
+        const auto fallbackStarted = Clock::now();
+        destination.merge(collectPerBaseMetricsCpu(batch, selected));
+        if (timing != nullptr) {
+            timing->cpuRemainingQc += secondsSince(fallbackStarted);
+            timing->cudaFallbackUsed = true;
+        }
+    }
+}
+
+std::vector<std::uint8_t> selectedTrimmedReads(
+    const std::vector<TrimResult>& trimResults)
+{
+    std::vector<std::uint8_t> selected(trimResults.size(), 0);
+    for (std::size_t index = 0; index < trimResults.size(); ++index) {
+        selected[index] = trimResults[index].passed ? 1 : 0;
+    }
+    return selected;
+}
+
+std::vector<std::uint8_t> selectedTrimmedPairs(
+    const std::vector<TrimResult>& trimResultsR1,
+    const std::vector<TrimResult>& trimResultsR2)
+{
+    std::vector<std::uint8_t> selected(trimResultsR1.size(), 0);
+    for (std::size_t index = 0; index < trimResultsR1.size(); ++index) {
+        selected[index] = trimResultsR1[index].passed && trimResultsR2[index].passed ? 1 : 0;
+    }
+    return selected;
 }
 
 bool readPairedBatch(
@@ -1693,7 +1764,8 @@ AnalysisResult processOneFileWithTrimming(
     const std::string& sampleId,
     bool skipAdapters,
     const TrimConfig& trimConfig,
-    SampleTiming* timing)
+    SampleTiming* timing,
+    CudaQcProcessor* cudaQc = nullptr)
 {
     AnalysisResult result;
     const fs::path root(outDir);
@@ -1728,6 +1800,8 @@ AnalysisResult processOneFileWithTrimming(
 
     std::vector<FastqRecord> batch;
     std::vector<TrimResult> trimResults;
+    PerBaseMetrics beforePerBaseMetrics;
+    PerBaseMetrics afterPerBaseMetrics;
     std::size_t count = 0;
     while (true) {
         bool hasBatch = false;
@@ -1741,6 +1815,9 @@ AnalysisResult processOneFileWithTrimming(
             break;
         }
 
+        collectCudaPerBaseMetrics(
+            cudaQc, batch, nullptr, beforePerBaseMetrics, timing);
+        const auto cpuQcStarted = Clock::now();
         processTrimmedBatchParallel(
             beforeAnalyzers,
             afterAnalyzers,
@@ -1748,7 +1825,14 @@ AnalysisResult processOneFileWithTrimming(
             batch,
             trimResults,
             skipAdapters,
-            timing);
+            timing,
+            cudaQc == nullptr);
+        if (cudaQc != nullptr && timing != nullptr) {
+            timing->cpuRemainingQc += secondsSince(cpuQcStarted);
+        }
+        const std::vector<std::uint8_t> selected = selectedTrimmedReads(trimResults);
+        collectCudaPerBaseMetrics(
+            cudaQc, batch, &selected, afterPerBaseMetrics, timing);
         if (timing != nullptr) {
             ScopedElapsedTimer writeTimer(timing->write);
             for (std::size_t i = 0; i < batch.size(); ++i) {
@@ -1779,6 +1863,10 @@ AnalysisResult processOneFileWithTrimming(
     QualityAnalyzer afterAnalyzer;
     mergeAnalyzersWithTiming(beforeAnalyzer, beforeAnalyzers, timing);
     mergeAnalyzersWithTiming(afterAnalyzer, afterAnalyzers, timing);
+    if (cudaQc != nullptr) {
+        beforeAnalyzer.applyPerBaseMetrics(beforePerBaseMetrics);
+        afterAnalyzer.applyPerBaseMetrics(afterPerBaseMetrics);
+    }
     for (const auto& trimmer : trimmers) {
         result.trimmingStats.merge(trimmer.getStats());
     }
@@ -1861,10 +1949,11 @@ AnalysisResult processOneFile(const std::string& path,
                             const std::string& sampleId,
                             bool skipAdapters,
                             const TrimConfig* trimConfig = nullptr,
-                            SampleTiming* timing = nullptr) {
+                            SampleTiming* timing = nullptr,
+                            CudaQcProcessor* cudaQc = nullptr) {
     if (trimConfig != nullptr) {
         return processOneFileWithTrimming(
-            path, readName, outDir, sampleId, skipAdapters, *trimConfig, timing);
+            path, readName, outDir, sampleId, skipAdapters, *trimConfig, timing, cudaQc);
     }
     AnalysisResult result;
     beginDuplicationArtifacts(outDir, readName, path);
@@ -1899,6 +1988,7 @@ AnalysisResult processOneFile(const std::string& path,
     }
 
     std::vector<FastqRecord> batch;
+    PerBaseMetrics perBaseMetrics;
 
     size_t count = 0;
 
@@ -1919,12 +2009,18 @@ AnalysisResult processOneFile(const std::string& path,
             break;
         }
 
+        collectCudaPerBaseMetrics(cudaQc, batch, nullptr, perBaseMetrics, timing);
+        const auto cpuQcStarted = Clock::now();
         processBatchParallel(
             localAnalyzers,
             batch,
             skipAdapters,
             trimConfig != nullptr ? &localTrimmers : nullptr,
-            timing);
+            timing,
+            cudaQc == nullptr);
+        if (cudaQc != nullptr && timing != nullptr) {
+            timing->cpuRemainingQc += secondsSince(cpuQcStarted);
+        }
 
         count += batch.size();
 
@@ -1937,6 +2033,9 @@ AnalysisResult processOneFile(const std::string& path,
     }
 
     mergeAnalyzersWithTiming(analyzer, localAnalyzers, timing);
+    if (cudaQc != nullptr) {
+        analyzer.applyPerBaseMetrics(perBaseMetrics);
+    }
     for (const auto& localTrimmer : localTrimmers)
     {
         result.trimmingStats.merge(localTrimmer.getStats());
@@ -1998,7 +2097,8 @@ AnalysisResult processPairedFilesWithTrimming(
     const std::string& sampleId,
     bool skipAdapters,
     const TrimConfig& trimConfig,
-    SampleTiming* timing)
+    SampleTiming* timing,
+    CudaQcProcessor* cudaQc = nullptr)
 {
     AnalysisResult result;
     const fs::path root(outDir);
@@ -2052,6 +2152,10 @@ AnalysisResult processPairedFilesWithTrimming(
     std::vector<TrimResult> trimResultsR1;
     std::vector<TrimResult> trimResultsR2;
     std::vector<std::optional<FastqRecord>> mergedRecords;
+    PerBaseMetrics beforePerBaseMetricsR1;
+    PerBaseMetrics beforePerBaseMetricsR2;
+    PerBaseMetrics afterPerBaseMetricsR1;
+    PerBaseMetrics afterPerBaseMetricsR2;
     std::size_t count = 0;
     while (true) {
         bool hasBatch = false;
@@ -2067,6 +2171,9 @@ AnalysisResult processPairedFilesWithTrimming(
             break;
         }
 
+        collectCudaPerBaseMetrics(cudaQc, batchR1, nullptr, beforePerBaseMetricsR1, timing);
+        collectCudaPerBaseMetrics(cudaQc, batchR2, nullptr, beforePerBaseMetricsR2, timing);
+        const auto cpuQcStarted = Clock::now();
         processTrimmedPairedBatchParallel(
             beforeAnalyzersR1,
             beforeAnalyzersR2,
@@ -2079,7 +2186,14 @@ AnalysisResult processPairedFilesWithTrimming(
             trimResultsR2,
             mergedRecords,
             skipAdapters,
-            timing);
+            timing,
+            cudaQc == nullptr);
+        if (cudaQc != nullptr && timing != nullptr) {
+            timing->cpuRemainingQc += secondsSince(cpuQcStarted);
+        }
+        const std::vector<std::uint8_t> selected = selectedTrimmedPairs(trimResultsR1, trimResultsR2);
+        collectCudaPerBaseMetrics(cudaQc, batchR1, &selected, afterPerBaseMetricsR1, timing);
+        collectCudaPerBaseMetrics(cudaQc, batchR2, &selected, afterPerBaseMetricsR2, timing);
         if (timing != nullptr) {
             ScopedElapsedTimer writeTimer(timing->write);
             for (std::size_t i = 0; i < batchR1.size(); ++i) {
@@ -2130,6 +2244,12 @@ AnalysisResult processPairedFilesWithTrimming(
     mergeAnalyzersWithTiming(beforeAnalyzerR2, beforeAnalyzersR2, timing);
     mergeAnalyzersWithTiming(afterAnalyzerR1, afterAnalyzersR1, timing);
     mergeAnalyzersWithTiming(afterAnalyzerR2, afterAnalyzersR2, timing);
+    if (cudaQc != nullptr) {
+        beforeAnalyzerR1.applyPerBaseMetrics(beforePerBaseMetricsR1);
+        beforeAnalyzerR2.applyPerBaseMetrics(beforePerBaseMetricsR2);
+        afterAnalyzerR1.applyPerBaseMetrics(afterPerBaseMetricsR1);
+        afterAnalyzerR2.applyPerBaseMetrics(afterPerBaseMetricsR2);
+    }
     for (const auto& trimmer : trimmers) {
         result.trimmingStats.merge(trimmer.getStats());
     }
@@ -2222,11 +2342,12 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
                                 const std::string& sampleId,
                                 bool skipAdapters,
                                 const TrimConfig* trimConfig = nullptr,
-                                SampleTiming* timing = nullptr)
+                                SampleTiming* timing = nullptr,
+                                CudaQcProcessor* cudaQc = nullptr)
 {
     if (trimConfig != nullptr) {
         return processPairedFilesWithTrimming(
-            r1Path, r2Path, outDir, sampleId, skipAdapters, *trimConfig, timing);
+            r1Path, r2Path, outDir, sampleId, skipAdapters, *trimConfig, timing, cudaQc);
     }
     AnalysisResult result;
     beginDuplicationArtifacts(outDir, "R1", r1Path);
@@ -2272,6 +2393,8 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
 
     std::vector<FastqRecord> batchR1;
     std::vector<FastqRecord> batchR2;
+    PerBaseMetrics perBaseMetricsR1;
+    PerBaseMetrics perBaseMetricsR2;
 
     size_t count = 0;
 
@@ -2294,6 +2417,9 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
             break;
         }
 
+        collectCudaPerBaseMetrics(cudaQc, batchR1, nullptr, perBaseMetricsR1, timing);
+        collectCudaPerBaseMetrics(cudaQc, batchR2, nullptr, perBaseMetricsR2, timing);
+        const auto cpuQcStarted = Clock::now();
         processPairedBatchParallel(
             localAnalyzersR1,
             localAnalyzersR2,
@@ -2301,7 +2427,11 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
             batchR2,
             skipAdapters,
             trimConfig != nullptr ? &localTrimmers : nullptr,
-            timing);
+            timing,
+            cudaQc == nullptr);
+        if (cudaQc != nullptr && timing != nullptr) {
+            timing->cpuRemainingQc += secondsSince(cpuQcStarted);
+        }
 
         count += batchR1.size();
 
@@ -2315,6 +2445,10 @@ AnalysisResult processPairedFiles(const std::string& r1Path,
 
     mergeAnalyzersWithTiming(analyzerR1, localAnalyzersR1, timing);
     mergeAnalyzersWithTiming(analyzerR2, localAnalyzersR2, timing);
+    if (cudaQc != nullptr) {
+        analyzerR1.applyPerBaseMetrics(perBaseMetricsR1);
+        analyzerR2.applyPerBaseMetrics(perBaseMetricsR2);
+    }
     for (const auto& localTrimmer : localTrimmers)
     {
         result.trimmingStats.merge(localTrimmer.getStats());
@@ -2834,7 +2968,8 @@ void printPerformanceReport(
     const SampleTiming& timing,
     bool paired,
     bool trimming,
-    bool plotted)
+    bool plotted,
+    ComputeBackend effectiveBackend)
 {
     const auto previousFlags = std::cout.flags();
     const auto previousPrecision = std::cout.precision();
@@ -2856,6 +2991,8 @@ void printPerformanceReport(
     std::cout << "\n=== NeoQC Performance Report ===\n"
               << "Mode: " << (paired ? "paired-end" : "single-end")
               << (trimming ? " + trimming" : "") << '\n'
+              << "Compute backend: " << computeBackendName(effectiveBackend)
+              << (timing.cudaFallbackUsed ? " (with CPU batch fallback)" : "") << '\n'
               << "OpenMP threads: " << timing.threadStages.size() << "\n\n"
               << "Wall time:\n";
     printWall("Read FASTQ:", timing.read);
@@ -2881,6 +3018,16 @@ void printPerformanceReport(
                   << std::right << formatTimingSeconds(threadStages.trim, true) << '\n';
         std::cout << "  " << std::left << std::setw(24) << "QC after:"
                   << std::right << formatTimingSeconds(threadStages.qcAfter, true) << '\n';
+    }
+
+    if (effectiveBackend == ComputeBackend::CUDA) {
+        std::cout << "\nCUDA QC:\n";
+        printWall("Packing:", timing.cudaQc.packing);
+        printWall("Host to Device:", timing.cudaQc.hostToDevice);
+        printWall("Kernel:", timing.cudaQc.kernel);
+        printWall("Device to Host:", timing.cudaQc.deviceToHost);
+        printWall("GPU QC total:", timing.cudaQc.total);
+        printWall("CPU remaining QC:", timing.cpuRemainingQc);
     }
 
     std::cout << "\nMemory:\n";
@@ -2926,7 +3073,9 @@ AnalysisResult runSampleTransaction(
     bool plot,
     bool skipAdapters,
     const TrimConfig* trimConfig = nullptr,
-    bool timingEnabled = false)
+    bool timingEnabled = false,
+    ComputeBackend effectiveBackend = ComputeBackend::CPU,
+    CudaQcProcessor* cudaQc = nullptr)
 {
     const bool paired = !r2.empty();
     if (trimConfig != nullptr
@@ -2951,9 +3100,9 @@ AnalysisResult runSampleTransaction(
     {
         AnalysisResult analysis = paired
             ? processPairedFiles(
-                r1, r2, stagingDir.string(), sampleId, skipAdapters, trimConfig, timingStats)
+                r1, r2, stagingDir.string(), sampleId, skipAdapters, trimConfig, timingStats, cudaQc)
             : processOneFile(
-                r1, "R1", stagingDir.string(), sampleId, skipAdapters, trimConfig, timingStats);
+                r1, "R1", stagingDir.string(), sampleId, skipAdapters, trimConfig, timingStats, cudaQc);
 
         if (trimConfig != nullptr && trimConfig->enabled)
         {
@@ -3032,7 +3181,8 @@ AnalysisResult runSampleTransaction(
                 *timingStats,
                 paired,
                 trimConfig != nullptr && trimConfig->enabled,
-                plot);
+                plot,
+                effectiveBackend);
         }
         return analysis;
     }
@@ -3214,6 +3364,30 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    BackendSelection backendSelection;
+    try {
+        backendSelection = selectComputeBackend(args.backend);
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << '\n';
+        return 2;
+    }
+
+    std::unique_ptr<CudaQcProcessor> cudaQc;
+    if (backendSelection.effective == ComputeBackend::CUDA) {
+        try {
+            cudaQc = std::make_unique<CudaQcProcessor>();
+        } catch (const std::exception& e) {
+            std::cerr << "Error: cannot initialize CUDA QC: " << e.what() << '\n';
+            return 2;
+        }
+    }
+
+    if (backendSelection.requested == ComputeBackend::CUDA) {
+        std::cerr << "CUDA: " << backendSelection.diagnostic << '\n'
+                  << "CUDA QC enabled for per-base sequence quality and content. "
+                  << "All remaining QC metrics and trimming stay on CPU/OpenMP.\n";
+    }
+
     // Safe integration point for the future trimming pipeline.  The object
     // only owns configuration and component structure until algorithms exist.
     const Trimmer trimmer(args.trimConfig);
@@ -3260,7 +3434,8 @@ int main(int argc, char* argv[]) {
                 try {
                     AnalysisResult analysis = runSampleTransaction(
                         entry.r1, entry.r2, entry.sampleId, sampleOutDir,
-                        args.plot, args.skipAdapters, activeTrimConfig, args.timing);
+                        args.plot, args.skipAdapters, activeTrimConfig, args.timing,
+                        backendSelection.effective, cudaQc.get());
                     std::cout << "Result: passed\n";
                     results.push_back({entry, true, std::move(analysis), ""});
                 } catch (const std::exception& e) {
@@ -3321,6 +3496,7 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "Sample ID : " << args.sampleId << "\n"
               << "Mode      : " << (isPaired ? "paired-end" : "single-end") << "\n"
+              << "Backend   : " << computeBackendName(backendSelection.effective) << "\n"
               << "R1        : " << args.r1 << "\n";
     if (isPaired) std::cout << "R2        : " << args.r2 << "\n";
     std::cout << "Output    : " << args.outDir << "\n";
@@ -3359,7 +3535,8 @@ int main(int argc, char* argv[]) {
                 args.sampleId,
                 args.skipAdapters,
                 activeTrimConfig,
-                timingStats);
+                timingStats,
+                cudaQc.get());
         }
         else
         {
@@ -3370,7 +3547,8 @@ int main(int argc, char* argv[]) {
                 args.sampleId,
                 args.skipAdapters,
                 activeTrimConfig,
-                timingStats);
+                timingStats,
+                cudaQc.get());
         }
 
         if (activeTrimConfig != nullptr)
@@ -3526,7 +3704,8 @@ int main(int argc, char* argv[]) {
             *timingStats,
             isPaired,
             activeTrimConfig != nullptr,
-            args.plot);
+            args.plot,
+            backendSelection.effective);
     }
 
     const auto end = Clock::now();

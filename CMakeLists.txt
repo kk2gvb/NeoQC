@@ -1,6 +1,33 @@
 cmake_minimum_required(VERSION 3.22)
 project(neoqc VERSION 1.2.0 LANGUAGES CXX)
 
+option(NEOQC_ENABLE_CUDA "Enable CUDA backend" OFF)
+
+# Keep CUDA entirely opt-in so a normal CPU-only configuration does not need a
+# CUDA compiler, headers, or runtime libraries.
+set(NEOQC_CUDA_ENABLED OFF)
+if(NEOQC_ENABLE_CUDA)
+    include(CheckLanguage)
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES 86 CACHE STRING
+            "CUDA architectures to build for")
+    endif()
+
+    check_language(CUDA)
+    if(NOT CMAKE_CUDA_COMPILER)
+        message(FATAL_ERROR
+            "NEOQC_ENABLE_CUDA=ON, but no CUDA compiler was found. "
+            "Install the CUDA Toolkit or configure with -DNEOQC_ENABLE_CUDA=OFF.")
+    endif()
+
+    enable_language(CUDA)
+    find_package(CUDAToolkit REQUIRED COMPONENTS cudart)
+    if(NOT TARGET CUDA::cudart)
+        message(FATAL_ERROR "CUDA Runtime (CUDA::cudart) was not found.")
+    endif()
+    set(NEOQC_CUDA_ENABLED ON)
+endif()
+
 set(NEOQC_RULESET_FILE
     "${CMAKE_SOURCE_DIR}/config/qc_rules/fastqc-compatible-v1.json"
 )
@@ -74,8 +101,11 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native")
 find_package(ZLIB REQUIRED)
 find_package(OpenMP REQUIRED)
 
-add_executable(neoqc
+set(NEOQC_SOURCES
     src/main.cpp
+    src/compute_backend.cpp
+    src/per_base_metrics.cpp
+    src/cuda/cuda_qc_stub.cpp
     src/fastq_reader.cpp
     src/quality_analyzer.cpp
     src/plot_runner.cpp
@@ -94,6 +124,16 @@ add_executable(neoqc
     src/trimming/trim_report.cpp
 )
 
+if(NEOQC_CUDA_ENABLED)
+    list(REMOVE_ITEM NEOQC_SOURCES src/cuda/cuda_qc_stub.cpp)
+    list(APPEND NEOQC_SOURCES
+        src/cuda_backend.cu
+        src/cuda/cuda_qc.cu
+    )
+endif()
+
+add_executable(neoqc ${NEOQC_SOURCES})
+
 target_include_directories(neoqc PRIVATE include)
 target_link_libraries(neoqc PRIVATE
     ZLIB::ZLIB
@@ -107,6 +147,16 @@ target_compile_definitions(neoqc PRIVATE
     NEOQC_ADAPTER_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/adapters/neoqc-standard-v1.tsv"
 )
 
+if(NEOQC_CUDA_ENABLED)
+    target_link_libraries(neoqc PRIVATE CUDA::cudart)
+    target_compile_definitions(neoqc PRIVATE NEOQC_ENABLE_CUDA=1)
+    set_target_properties(neoqc PROPERTIES
+        CUDA_STANDARD 17
+        CUDA_STANDARD_REQUIRED ON
+    )
+    message(STATUS "CUDA backend enabled (architectures: ${CMAKE_CUDA_ARCHITECTURES})")
+endif()
+
 add_executable(neoqc_duplication_test
     tests/test_quality_analyzer_duplication.cpp
     src/quality_analyzer.cpp
@@ -117,6 +167,32 @@ target_include_directories(neoqc_duplication_test PRIVATE include)
 target_compile_definitions(neoqc_duplication_test PRIVATE
     NEOQC_ADAPTER_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/adapters/neoqc-standard-v1.tsv"
 )
+
+add_executable(neoqc_per_base_metrics_test
+    tests/test_per_base_metrics.cpp
+    src/per_base_metrics.cpp
+    src/quality_analyzer.cpp
+    src/gc_model.cpp
+    src/adapter_config.cpp
+)
+target_include_directories(neoqc_per_base_metrics_test PRIVATE include)
+target_compile_definitions(neoqc_per_base_metrics_test PRIVATE
+    NEOQC_ADAPTER_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/adapters/neoqc-standard-v1.tsv"
+)
+
+if(NEOQC_CUDA_ENABLED)
+    add_executable(neoqc_cuda_qc_parity_test
+        tests/test_cuda_qc.cpp
+        src/per_base_metrics.cpp
+        src/cuda/cuda_qc.cu
+    )
+    target_include_directories(neoqc_cuda_qc_parity_test PRIVATE include)
+    target_link_libraries(neoqc_cuda_qc_parity_test PRIVATE CUDA::cudart)
+    set_target_properties(neoqc_cuda_qc_parity_test PROPERTIES
+        CUDA_STANDARD 17
+        CUDA_STANDARD_REQUIRED ON
+    )
+endif()
 
 add_executable(neoqc_trimming_config_test
     tests/trimming/test_trim_config.cpp
@@ -222,6 +298,9 @@ enable_testing()
 
 add_test(NAME test_unlimited_sequence_duplication
          COMMAND neoqc_duplication_test)
+
+add_test(NAME test_per_base_metrics_cpu_reference
+         COMMAND neoqc_per_base_metrics_test)
 
 add_test(NAME test_trim_config_defaults
          COMMAND neoqc_trimming_config_test)
