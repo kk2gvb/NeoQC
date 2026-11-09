@@ -119,9 +119,9 @@ if(NOT FIRST_SHA256 STREQUAL "${EXPECTED_RULESET_SHA256}")
     )
 endif()
 
-if(NOT FIRST_NEOQC_VERSION STREQUAL "1.2.1")
+if(NOT FIRST_NEOQC_VERSION STREQUAL "1.2.2")
     message(FATAL_ERROR
-        "NEOQC_VERSION was not propagated from CMake. Expected 1.2.1, got: "
+        "NEOQC_VERSION was not propagated from CMake. Expected 1.2.2, got: "
         "${FIRST_NEOQC_VERSION}")
 endif()
 
