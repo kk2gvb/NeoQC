@@ -1,5 +1,12 @@
 # NeoQC
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/NeoQC_technical_dark.svg">
+    <img src="docs/assets/NeoQC_technical.svg" alt="NeoQC" width="900">
+  </picture>
+</p>
+
 **Быстрый и воспроизводимый контроль качества FASTQ-данных NGS.**
 
 **Текущая версия:** `1.2.1`

@@ -26,8 +26,16 @@
 #include <sstream>
 #include <charconv>
 #include <cctype>
+#include <cerrno>
 #include <system_error>
 #include <memory>
+
+#if defined(__linux__)
+#include <fcntl.h>
+#include <linux/fs.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 #ifndef NEOQC_VERSION
 #error "NEOQC_VERSION must be supplied by the build system"
@@ -2719,8 +2727,6 @@ void publishRun(
     const fs::path& stagingDir,
     const fs::path& outputDir)
 {
-    const fs::path parent = outputDir.parent_path();
-
     if (!fs::exists(stagingDir))
     {
         throw std::runtime_error(
@@ -2728,54 +2734,54 @@ void publishRun(
             stagingDir.string());
     }
 
-    const std::string runId = generateRunId();
-
-    const fs::path backupDir =
-        parent /
-        ("." + outputDir.filename().string() +
-         ".neoqc-backup-" + runId);
-
     std::error_code ec;
 
-    bool hadPreviousOutput = fs::exists(outputDir);
+    const bool hadPreviousOutput = fs::exists(outputDir, ec);
+    if (ec)
+    {
+        throw std::runtime_error(
+            "Cannot inspect existing output directory '" +
+            outputDir.string() + "': " + ec.message());
+    }
 
     if (hadPreviousOutput)
     {
-        fs::rename(outputDir, backupDir, ec);
-
-        if (ec)
+#if defined(__linux__) && defined(SYS_renameat2) && defined(RENAME_EXCHANGE)
+        if (syscall(
+                SYS_renameat2,
+                AT_FDCWD, stagingDir.c_str(),
+                AT_FDCWD, outputDir.c_str(),
+                RENAME_EXCHANGE) == -1)
         {
+            const std::error_code exchangeError(errno, std::generic_category());
             throw std::runtime_error(
-                "Cannot move previous output directory '" +
-                outputDir.string() +
-                "' to backup '" +
-                backupDir.string() +
-                "': " +
-                ec.message());
+                "Cannot atomically replace NeoQC result '" +
+                outputDir.string() + "': renameat2(RENAME_EXCHANGE) failed (" +
+                exchangeError.message() +
+                "). The previous result was left unchanged.");
         }
+
+        std::error_code cleanupError;
+        fs::remove_all(stagingDir, cleanupError);
+
+        if (cleanupError)
+        {
+            std::cerr
+                << "Warning: NeoQC result was published successfully, but "
+                << "the previous output remains at '" << stagingDir
+                << "': " << cleanupError.message() << '\n';
+        }
+        return;
+#else
+        throw std::runtime_error(
+            "Cannot atomically replace existing NeoQC result on this platform; "
+            "the previous result was left unchanged.");
+#endif
     }
 
     fs::rename(stagingDir, outputDir, ec);
-
     if (ec)
     {
-        if (hadPreviousOutput)
-        {
-            std::error_code restoreError;
-            fs::rename(backupDir, outputDir, restoreError);
-
-            if (restoreError)
-            {
-                throw std::runtime_error(
-                    "Cannot publish new NeoQC result and cannot restore "
-                    "previous output directory. "
-                    "Original publish error: " +
-                    ec.message() +
-                    "; restore error: " +
-                    restoreError.message());
-            }
-        }
-
         throw std::runtime_error(
             "Cannot publish NeoQC result '" +
             stagingDir.string() +
@@ -2783,20 +2789,6 @@ void publishRun(
             outputDir.string() +
             "': " +
             ec.message());
-    }
-
-    if (hadPreviousOutput)
-    {
-        std::error_code cleanupError;
-        fs::remove_all(backupDir, cleanupError);
-
-        if (cleanupError)
-        {
-            throw std::runtime_error(
-                "NeoQC result was published successfully, but previous "
-                "output could not be removed: " +
-                cleanupError.message());
-        }
     }
 }
 

@@ -29,11 +29,13 @@ class QcRulesTest(unittest.TestCase):
         *,
         remaining: float,
     ) -> None:
+        total_reads = 100_000
+        unique_sequences = round(total_reads * remaining / 100)
         (directory / "sequence_duplication_summary_R1.tsv").write_text(
             "source_kind\talgorithm\tsource_fastq\tprefix_length\ttotal_reads\t"
             "unique_sequences\tdeduplicated_remaining_percent\n"
             "native_fastq\tneoqc-exact-prefix-v1\tsample_R1.fastq.gz\t50\t"
-            f"10\t6\t{remaining}\n",
+            f"{total_reads}\t{unique_sequences}\t{remaining}\n",
             encoding="utf-8",
         )
 
@@ -244,6 +246,35 @@ class QcRulesTest(unittest.TestCase):
             self.assertEqual(
                 duplication["observations"]["deduplicated_remaining_percent"], 50
             )
+
+    def test_duplication_threshold_boundaries(self) -> None:
+        expected = (
+            (80, "pass"),
+            (79.999, "warning"),
+            (50, "warning"),
+            (49.999, "fail"),
+        )
+        for remaining, status in expected:
+            with self.subTest(remaining=remaining), tempfile.TemporaryDirectory(
+                prefix="neoqc-duplication-boundary-"
+            ) as temporary:
+                input_dir = Path(temporary)
+                self.write_manifest(input_dir)
+                (input_dir / "sequence_duplication_levels_R1.tsv").write_text(
+                    "duplication_level\ttotal_sequences_percent\t"
+                    "deduplicated_sequences_percent\n"
+                    "2\t40\t70\n4\t60\t30\n",
+                    encoding="utf-8",
+                )
+                self.write_native_duplication_summary(input_dir, remaining=remaining)
+
+                result = evaluate_directory(input_dir)
+                duplication = next(
+                    item
+                    for item in result["evaluations"]
+                    if item["metric_id"] == "sequence_duplication_levels"
+                )
+                self.assertEqual(duplication["qc_status"], status)
 
     def test_per_sequence_quality_threshold_boundaries(self) -> None:
         expected = ((27, "pass"), (26, "warning"), (20, "warning"), (19, "fail"))

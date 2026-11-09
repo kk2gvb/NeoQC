@@ -99,6 +99,12 @@ extract_json_string(
     FIRST_SHA256
 )
 
+extract_json_string(
+    "${INITIAL_SUMMARY}"
+    "neoqc_version"
+    FIRST_NEOQC_VERSION
+)
+
 if(NOT FIRST_STATUS STREQUAL "passed")
     message(FATAL_ERROR
         "Initial case summary status is not passed: ${FIRST_STATUS}"
@@ -111,6 +117,12 @@ if(NOT FIRST_SHA256 STREQUAL "${EXPECTED_RULESET_SHA256}")
         "Expected: ${EXPECTED_RULESET_SHA256}\n"
         "Actual:   ${FIRST_SHA256}"
     )
+endif()
+
+if(NOT FIRST_NEOQC_VERSION STREQUAL "1.2.1")
+    message(FATAL_ERROR
+        "NEOQC_VERSION was not propagated from CMake. Expected 1.2.1, got: "
+        "${FIRST_NEOQC_VERSION}")
 endif()
 
 string(LENGTH "${FIRST_SHA256}" SHA_LENGTH)
@@ -205,6 +217,23 @@ if(NOT REPEAT_SUMMARY MATCHES
     )
 endif()
 
+file(GLOB RESIDUAL_TRANSACTION_DIRECTORIES
+    "${OUT_DIR}/P001/.*.neoqc-tmp-*"
+    "${OUT_DIR}/P001/.*.neoqc-backup-*")
+if(RESIDUAL_TRANSACTION_DIRECTORIES)
+    message(FATAL_ERROR
+        "Successful repeated publication left transaction directories: "
+        "${RESIDUAL_TRANSACTION_DIRECTORIES}")
+endif()
+
+set(TUMOR_MANIFEST "${OUT_DIR}/P001/TUMOR_DNA/run_manifest.json")
+if(NOT EXISTS "${TUMOR_MANIFEST}")
+    message(FATAL_ERROR
+        "Sample manifest is missing after successful publication: "
+        "${TUMOR_MANIFEST}")
+endif()
+file(READ "${TUMOR_MANIFEST}" PRE_FAILURE_TUMOR_MANIFEST)
+
 message(STATUS
     "Repeated batch regenerated summary successfully: "
     "${FIRST_RUN_ID} -> ${SECOND_RUN_ID}"
@@ -281,6 +310,16 @@ if(FAILED_RUN_ID STREQUAL SECOND_RUN_ID)
     message(FATAL_ERROR
         "Failed batch left the previous case summary unchanged"
     )
+endif()
+
+if(NOT EXISTS "${TUMOR_MANIFEST}")
+    message(FATAL_ERROR
+        "Failed sample processing removed the previously published result")
+endif()
+file(READ "${TUMOR_MANIFEST}" POST_FAILURE_TUMOR_MANIFEST)
+if(NOT POST_FAILURE_TUMOR_MANIFEST STREQUAL PRE_FAILURE_TUMOR_MANIFEST)
+    message(FATAL_ERROR
+        "Failed sample processing changed the previously published result")
 endif()
 
 message(STATUS

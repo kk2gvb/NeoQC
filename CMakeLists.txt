@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(neoqc VERSION 1.2.0 LANGUAGES CXX)
+project(neoqc VERSION 1.2.1 LANGUAGES CXX)
 
 set(NEOQC_RULESET_FILE
     "${CMAKE_SOURCE_DIR}/config/qc_rules/fastqc-compatible-v1.json"
@@ -380,6 +380,14 @@ foreach(sheet missing_patient duplicate_sample missing_file duplicate_file diffe
         WILL_FAIL TRUE
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endforeach()
+
+add_test(
+    NAME test_sample_sheet_path_components
+    COMMAND ${CMAKE_COMMAND}
+        -DNEOQC=$<TARGET_FILE:neoqc>
+        -DTEST_ROOT=${CMAKE_BINARY_DIR}/test_sample_sheet_path_components
+        -P ${CMAKE_SOURCE_DIR}/tests/check_sample_sheet_path_components.cmake
+)
 
 # Предупреждение об отсутствии опухолевой РНК
 add_test(NAME test_sample_sheet_missing_tumor_rna_warning

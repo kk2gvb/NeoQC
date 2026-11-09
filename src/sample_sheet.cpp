@@ -1,6 +1,7 @@
 #include "../include/sample_sheet.h"
 
 #include <array>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -53,6 +54,17 @@ std::string checkedFilePath(const std::string& value, std::size_t line,
     return fs::weakly_canonical(path, ec).string();
 }
 
+bool isSafeOutputPathComponent(const std::string& value) {
+    if (value.empty() || value == "." || value == "..") return false;
+
+    return std::all_of(value.begin(), value.end(), [](unsigned char character) {
+        return (character >= 'A' && character <= 'Z')
+            || (character >= 'a' && character <= 'z')
+            || (character >= '0' && character <= '9')
+            || character == '_' || character == '-' || character == '.';
+    });
+}
+
 } // namespace
 
 std::vector<SampleSheetEntry> loadAndValidateSampleSheet(const std::string& path) {
@@ -99,6 +111,16 @@ std::vector<SampleSheetEntry> loadAndValidateSampleSheet(const std::string& path
 
         if (entry.patientId.empty()) fail(lineNumber, "patient_id is required");
         if (entry.sampleId.empty()) fail(lineNumber, "sample_id is required");
+        if (!isSafeOutputPathComponent(entry.patientId)) {
+            fail(lineNumber,
+                 "patient_id must be a safe single path component "
+                 "(ASCII letters, digits, '_', '-', or '.')");
+        }
+        if (!isSafeOutputPathComponent(entry.sampleId)) {
+            fail(lineNumber,
+                 "sample_id must be a safe single path component "
+                 "(ASCII letters, digits, '_', '-', or '.')");
+        }
         if (entry.sampleRole != "tumor" && entry.sampleRole != "normal"
             && entry.sampleRole != "tumor_rna") {
             fail(lineNumber, "sample_role must be tumor, normal, or tumor_rna");
